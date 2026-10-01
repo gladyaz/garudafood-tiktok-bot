@@ -38,7 +38,7 @@ const RULES = [
     keywords: ["et 1", "etalase 1", "etalase satu", "no 1", "nomor 1", "nomor satu", "paket 1", "paket satu", "produk 1", "produk satu", "spill et 1", "spill etalase 1", "spill etalase satu", "spill no 1", "spill nomor 1", "spill nomor satu", "spill paket 1", "spill paket satu", "spill produk 1", "spill produk satu", "ting ting", "tingting", "garuda ting ting", "garuda tingting", "ting ting pouch", "tingting pouch", "garuda ting ting pouch", "garuda tingting pouch", "peanut candy", "peanut bar candy", "spill ting ting", "spill tingting", "spill garuda ting ting", "spill garuda tingting", "spill ting ting pouch", "spill garuda ting ting pouch"],
     mediaInputs: ["PAX-1.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 52000,          // 52 detik
+    duration: 46000,          // FAILSAFE saja - video asli 40.4s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -46,7 +46,7 @@ const RULES = [
     keywords: ["et 2", "etalase 2", "etalase dua", "no 2", "nomor 2", "nomor dua", "paket 2", "paket dua", "produk 2", "produk dua", "spill et 2", "spill etalase 2", "spill etalase dua", "spill no 2", "spill nomor 2", "spill nomor dua", "spill paket 2", "spill paket dua", "spill produk 2", "spill produk dua", "gery potato", "gery potato cracker", "potato cracker", "gery kentang", "biskuit kentang", "gery biskuit kentang", "gery bbq", "bbq", "rasa bbq", "spill gery potato", "spill potato cracker", "spill gery kentang"],
     mediaInputs: ["PAX-2.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 52000,          // 52 detik
+    duration: 46000,          // FAILSAFE saja - video asli 40.3s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -54,7 +54,7 @@ const RULES = [
     keywords: ["et 3", "etalase 3", "etalase tiga", "no 3", "nomor 3", "nomor tiga", "paket 3", "paket tiga", "produk 3", "produk tiga", "spill et 3", "spill etalase 3", "spill etalase tiga", "spill no 3", "spill nomor 3", "spill nomor tiga", "spill paket 3", "spill paket tiga", "spill produk 3", "spill produk tiga", "chocolatos pillow", "chocolatos pillow 97", "chocolatos pillow 97gr", "pillow chocolatos", "pillow chocolate", "coklat pillow", "chocolatos", "spill chocolatos pillow", "spill pillow", "spill coklat pillow"],
     mediaInputs: ["PAX-3.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 52000,          // 52 detik
+    duration: 52000,          // FAILSAFE saja - video asli 46.2s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -62,7 +62,7 @@ const RULES = [
     keywords: ["et 4", "etalase 4", "etalase empat", "no 4", "nomor 4", "nomor empat", "paket 4", "paket empat", "produk 4", "produk empat", "spill et 4", "spill etalase 4", "spill etalase empat", "spill no 4", "spill nomor 4", "spill nomor empat", "spill paket 4", "spill paket empat", "spill produk 4", "spill produk empat", "chocolatos rts", "chocolatos rts mt", "chocolatos drink chocolate", "chocolatos drink matcha", "chocolatos chocolate", "chocolatos matcha", "chocolatos rts chocolate", "chocolatos rts matcha", "chocolatos 5 pcs", "chocolatos 5 sachet", "chocolatos isi 5", "spill chocolatos", "spill chocolatos chocolate", "spill chocolatos matcha", "spill minuman chocolatos", "spill minuman coklat", "spill minuman matcha"],
     mediaInputs: ["PAX-4.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 47000,          // 47 detik
+    duration: 69000,          // FAILSAFE saja - video asli 64.0s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -70,7 +70,7 @@ const RULES = [
     keywords: ["et 5", "etalase 5", "etalase lima", "no 5", "nomor 5", "nomor lima", "paket 5", "paket lima", "produk 5", "produk lima", "spill et 5", "spill etalase 5", "spill etalase lima", "spill no 5", "spill nomor 5", "spill nomor lima", "spill paket 5", "spill paket lima", "spill produk 5", "spill produk lima", "spill garuda", "spill snack garuda", "garuda", "garuda pilus", "pilus mi goreng", "garuda crunchy corn", "crunchy corn", "corn seasalt", "garuda rosta", "rosta kacang", "rosta kacang panggang", "garuda kacang atom", "kacang atom", "garuda kacang kulit", "kacang kulit", "kacang garuda", "spill pilus", "spill crunchy corn", "spill rosta", "spill kacang atom", "spill kacang kulit"],
     mediaInputs: ["PAX-5.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 50000,          // 50 detik
+    duration: 58000,          // FAILSAFE saja - video asli 52.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -78,7 +78,7 @@ const RULES = [
     keywords: ["et 6", "etalase 6", "etalase enam", "no 6", "nomor 6", "nomor enam", "paket 6", "paket enam", "produk 6", "produk enam", "spill et 6", "spill etalase 6", "spill etalase enam", "spill no 6", "spill nomor 6", "spill nomor enam", "spill paket 6", "spill paket enam", "spill produk 6", "spill produk enam", "spill gery", "spill snack gery", "gery malkist", "gery malkist coklat", "malkist coklat", "gery malkist kelapa", "malkist kelapa", "malkist tabur kelapa", "gery malkist keju", "malkist keju", "gery snack sereal", "snack sereal", "gery sereal coklat", "sereal coklat", "gery snack bantal", "snack bantal", "bantal extrude", "gery bantal", "spill malkist", "spill malkist coklat", "spill malkist kelapa", "spill malkist keju", "spill sereal", "spill sereal coklat", "spill snack bantal"],
     mediaInputs: ["PAX-6.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 37000,          // 37 detik
+    duration: 48000,          // FAILSAFE saja - video asli 42.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -86,7 +86,7 @@ const RULES = [
     keywords: ["et 7", "etalase 7", "etalase tujuh", "no 7", "nomor 7", "nomor tujuh", "paket 7", "paket tujuh", "produk 7", "produk tujuh", "spill et 7", "spill etalase 7", "spill etalase tujuh", "spill no 7", "spill nomor 7", "spill nomor tujuh", "spill paket 7", "spill paket tujuh", "spill produk 7", "spill produk tujuh", "spill chocolatos", "spill chocolatos rich", "chocolatos rich", "chocolatos wafer", "chocolatos wafer stick", "wafer stick chocolatos", "chocolatos pistachio", "chocolatos rich pistachio", "pistachio chocolatos", "chocolatos matcha", "chocolatos rich matcha", "matcha chocolatos", "chocolatos drink", "chocolatos drink rts", "drink rts kurma", "chocolatos kurma", "chocolatos drink kurma", "chocolatos pillow", "chocolatos pillow chocolate", "pillow chocolate", "chocolatos chocolate", "spill chocolatos rich wafer", "spill wafer stick", "spill pistachio", "spill matcha", "spill kurma", "spill drink kurma", "spill pillow", "spill pillow chocolate"],
     mediaInputs: ["PAX-7.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 45000,          // 45 detik
+    duration: 62000,          // FAILSAFE saja - video asli 56.7s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -94,7 +94,7 @@ const RULES = [
     keywords: ["et 8", "etalase 8", "etalase delapan", "no 8", "nomor 8", "nomor delapan", "paket 8", "paket delapan", "produk 8", "produk delapan", "spill et 8", "spill etalase 8", "spill etalase delapan", "spill no 8", "spill nomor 8", "spill nomor delapan", "spill paket 8", "spill paket delapan", "spill produk 8", "spill produk delapan", "spill dilan", "produk dilan", "dilan cookies", "dilan cookies chocolate", "cookies dilan", "dilan sandwich", "dilan sandwich chocolate", "dilan crunchy caramel", "dilan crunchy caramel chocolate", "dilan caramel", "dilan pouch", "dilan chocolate pouch", "dilan matcha", "dilan matcha crunchy caramel", "dilan matcha sandwich", "dilan sandwich matcha", "dilan waffle", "dilan waffle pandan", "waffle pandan dilan", "spill dilan cookies", "spill cookies dilan", "spill dilan sandwich", "spill sandwich dilan", "spill dilan caramel", "spill dilan pouch", "spill dilan matcha", "spill dilan waffle", "spill waffle pandan"],
     mediaInputs: ["PAX-8.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 43000,          // 43 detik
+    duration: 77000,          // FAILSAFE saja - video asli 71.6s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
@@ -102,19 +102,20 @@ const RULES = [
     keywords: ["et 9", "etalase 9", "etalase sembilan", "no 9", "nomor 9", "nomor sembilan", "paket 9", "paket sembilan", "produk 9", "produk sembilan", "spill et 9", "spill etalase 9", "spill etalase sembilan", "spill no 9", "spill nomor 9", "spill nomor sembilan", "spill paket 9", "spill paket sembilan", "spill produk 9", "spill produk sembilan", "everyday snack mix", "everyday snack", "snack mix", "paket everyday snack mix", "paket snack mix", "spill everyday snack mix", "spill everyday snack", "spill snack mix", "mau everyday snack mix", "ambil everyday snack mix", "yang everyday snack mix", "everyday mix"],
     mediaInputs: ["PAX-9.mp4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 44000,          // 44 detik
+    duration: 57000,          // FAILSAFE saja - video asli 52.0s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
     scene: SCENES.AILIVE_SKUPAXSEPULUH,
-    keywords: ["etalase 10", "etalase sepuluh", "et 10", "no 10", "nomor 10", "paket 10", "paket sepuluh", "big sharing pack", "big sharing", "sharing pack", "paket big sharing", "paket sharing", "paket besar", "paket sharing besar", "spill big sharing", "spill big sharing pack", "spill sharing pack", "spill paket sharing", "mau big sharing pack", "ambil big sharing pack", "yang big sharing pack", "big sharing pack yang mana"],
+    keywords: ["etalase 10", "etalase sepuluh", "et 10", "no 10", "nomor 10", "paket 10", "paket sepuluh", "produk 10", "produk sepuluh", "big sharing pack", "big sharing", "sharing pack", "paket big sharing", "paket sharing", "paket besar", "paket sharing besar", "spill big sharing", "spill big sharing pack", "spill sharing pack", "spill paket sharing", "mau big sharing pack", "ambil big sharing pack", "yang big sharing pack", "big sharing pack yang mana"],
     mediaInputs: ["PAX-10.mp4"],
     waitForMediaEnd: true,   // contoh: ini mau bener-bener nunggu video selesai
-    duration: 46000,          // 46 detik
+    duration: 71000,          // FAILSAFE saja - video asli 65.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
   {
     scene: SCENES.AILIVE_FAQ_STOKHABIS,
+    enabled: false, // scene FAQ belum ada di OBS -> set true untuk mengaktifkan kembali
     keywords: ["stok", "stok?", "stock", "stoknya", "stoknya?", "ready", "ready?", "redi", "redi?", "rdy", "ada", "ada?", "masih", "masih?", "masih ada", "masih ada?", "masih ready", "masih ready?", "masiada", "masiada?", "stok habis", "stok habis?", "stokhabis", "stokkosong", "kosong", "kosong?", "habis", "habis?", "abis", "abis?", "sold", "sold?", "sold out", "soldout", "sisa", "sisa berapa", "sisa berapa?", "sisaberapa", "restok", "restok?", "restock", "kapan restok", "kapan restok?", "kapan ready", "kapan ready?", "barang ready", "barang ready?", "masih kebagian", "masih kebagian?", "mau beli", "mau order", "mau pesen", "gabisa klik", "gabisa co", "kok habis", "kok habis?", "yah habis", "telat", "cek stok", "cek stok?", "cekharga", "info stok"],
     mediaInputs: ["AI LIVE_FAQ_STOKHABIS.mp4"],
     waitForMediaEnd: true,
@@ -122,6 +123,7 @@ const RULES = [
   },
   {
     scene: SCENES.AILIVE_FAQ_CO,
+    enabled: false, // scene FAQ belum ada di OBS -> set true untuk mengaktifkan kembali
     keywords: ["sudah co", "sudah co?", "sudahco", "udah co", "udah co?", "udahco", "dah co", "dahco", "co", "checkout", "cekot", "cekot?", "cekaout", "sudah bayar", "sudah bayar?", "sudahbayar", "udah bayar", "udahbayar", "lunas", "lunas?", "payment", "payment done", "sukses", "berhasil", "transaksi berhasil", "pesanan", "pesanan saya", "cek pesanan", "tolong proses", "mohon diproses", "proses ya", "proses ya?", "langsung kirim", "langsung kirim?", "dikirim kapan", "dikirim kapan?", "kapan dikirim", "kapan dikirim?", "kapan kirim", "kapan kirim?", "kirim hari ini", "kirim hari ini?", "kirim skrg", "hari ini kirim?", "lama ga", "lama ga?", "resi", "resi mana", "resi mana?", "ditunggu", "ditunggu ya", "dtunggu", "paket saya", "paket mana", "paket mana?", "uda trf", "sdh trf", "bungkus", "bungkus gan", "bungkus min"],
     mediaInputs: ["AI LIVE_FAQ_CO.mp4"],
     waitForMediaEnd: true,    // contoh: ini mau bener-bener nunggu video selesai
@@ -129,6 +131,7 @@ const RULES = [
   },
   {
     scene: SCENES.AILIVE_FAQ_ORDER,
+    enabled: false, // scene FAQ belum ada di OBS -> set true untuk mengaktifkan kembali
     keywords: ["cod", "cod?", "bisa cod", "bisa cod?", "bisacod", "bayar ditempat", "bayar ditempat?", "bayar di tempat", "bayar di tempat?", "kirim", "kirim?", "pengiriman", "pengiriman?", "ongkir", "ongkir?", "ongkos kirim", "gratis ongkir", "free ongkir", "packing", "packing?", "paking", "peking", "packing aman", "packing aman?", "aman ga", "aman ga?", "aman gak", "aman gak?", "takut pecah", "takut remuk", "takut hancur", "bubble", "bubble wrap", "pake bubble", "pake bubble?", "buble", "tebal", "kardus", "pake dus", "lokasi", "lokasi?", "dari mana", "dari mana?", "pengiriman dari mana", "dikirim dari mana", "jkt", "jakarta", "jawa", "luar jawa", "luar pulau", "kirim ke", "sampai", "nyampe", "nyampe mana", "berapa hari", "berapa hari?", "lama", "lama?", "estimasi", "kurir", "ekspedisi"],
     mediaInputs: ["AI LIVE_FAQ_ORDER"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
@@ -137,6 +140,7 @@ const RULES = [
   },
   {
     scene: SCENES.AILIVE_FAQ_ORIGINALEXPIRED,
+    enabled: false, // scene FAQ belum ada di OBS -> set true untuk mengaktifkan kembali
     keywords: ["ori", "ori?", "original", "original?", "asli", "asli?", "garuda asli", "garuda asli?", "official", "resmi", "palsu", "kw", "bukan kw", "jamin ori", "jamin asli", "expired", "expired?", "expire", "exp", "exp?", "xpired", "ed", "ed?", "tgl ed", "kapan expired", "kapan expired?", "expired kapan", "expired kapan?", "kapan exp", "kapan exp?", "expkapan", "kadaluarsa", "kadaluarsa?", "kadeluarsa", "tgl kadaluarsa", "basi", "basi?", "masih lama", "masih lama?", "barang baru", "stok baru", "fresh", "fresh?", "tengik", "alot", "halal", "halal?", "logo halal", "ada halal", "aman dimakan", "aman dikonsumsi", "kualitas", "rasa", "renyah", "enak ga", "enak ga?", "thn brp", "bulan apa", "tahun berapa"],
     mediaInputs: ["AI LIVE_FAQ_ORIGINALEXPIRED"],
     waitForMediaEnd: true,
@@ -144,6 +148,10 @@ const RULES = [
   },
   // dst...
 ];
+
+// Rule dianggap aktif kecuali ditandai enabled:false (scene-nya belum ada di OBS).
+// Definisi + keyword tetap tersimpan di RULES; cukup set enabled:true untuk mengaktifkan lagi.
+const activeRules = () => RULES.filter((r) => r.enabled !== false);
 
 
 // durasi maksimal kembali ke MAIN / cooldown (bisa diubah runtime)
@@ -558,6 +566,16 @@ function normalizeForMatching(s) {
   return wordNumberToDigit(normalizeText(s));
 }
 
+// Cocokkan frasa pada BATAS KATA, bukan substring mentah.
+// normalizeForMatching() sudah memisahkan setiap token dengan satu spasi, jadi cukup
+// membungkus kedua sisi dengan spasi. Efeknya: "etalase 10" tidak lagi cocok dengan
+// keyword "etalase 1" (dulu cocok karena substring), tapi "spill etalase 10" tetap cocok
+// dengan "etalase 10" karena batasnya tetap utuh.
+function containsPhrase(haystackNorm, needleNorm) {
+  if (!haystackNorm || !needleNorm) return false;
+  return ` ${haystackNorm} `.includes(` ${needleNorm} `);
+}
+
 // FAIL-SAFE: scene antrean gagal mulai → jangan biarkan busy/activeScene macet
 function abortSceneStart(sceneName, reason) {
   const tag = isValidSceneName(sceneName) ? "PLAY_FAILED" : "INVALID_SCENE";
@@ -643,29 +661,31 @@ function switchScene(sceneName, rule = null) {
     });
 }
 
-// OBS event: tangkap ketika media input selesai diputar
-const MEDIA_EVENTS = ["InputPlaybackEnded", "InputPlaybackStopped", "MediaEnded", "InputMediaPlaybackEnded"];
+// OBS event: media input selesai diputar.
+// obs-websocket v5 (obs-websocket-js 5.0.7) HANYA mengirim "MediaInputPlaybackEnded"
+// dengan payload { inputName, inputUuid }. Nama event lama (InputPlaybackEnded, MediaEnded, dll)
+// tidak pernah ada, sehingga media-end tidak pernah terdeteksi dan selalu jatuh ke fallback.
+obs.on("MediaInputPlaybackEnded", (data) => {
+  try {
+    const inputName = data?.inputName;
+    if (!inputName) return;
 
-MEDIA_EVENTS.forEach(ev => {
-  obs.on(ev, data => {
-    try {
-      const inputName = data?.inputName || data?.input || data?.sourceName || data?.source;
-      if (!inputName) return;
+    // Hanya input yang sedang ditunggu yang boleh mengakhiri scene.
+    // Tanpa guard ini, media lain (mis. video idle di MAIN) bisa mengakhiri scene yang sedang jalan.
+    if (!waitingMediaSet.has(inputName)) return;
 
-      if (waitingMediaSet.has(inputName)) {
-        console.log(`✅ Detected media end: ${inputName}`);
-        waitingMediaSet.delete(inputName);
-      }
+    console.log(`[MEDIA_END] input=${inputName}`);
+    waitingMediaSet.delete(inputName);
 
-      if (waitingMediaSet.size === 0 && waitingRule) {
-        // semua media untuk rule selesai
-        console.log("🎬 Semua media selesai untuk rule:", waitingRule.scene);
-        endCurrentScene("media-ended", true); // true => pakai cooldown
-      }
-    } catch (e) {
-      console.warn("Error menangani event media end", e);
-    }
-  });
+    if (waitingMediaSet.size !== 0 || !waitingRule) return;
+
+    // endCurrentScene() membersihkan fallback timer + waitingRule, jadi scene selesai
+    // tepat sekali dan fallback yang tersisa tidak bisa mengakhiri scene berikutnya.
+    // Log [PLAYBACK_END] scene=... reason=media-ended dicetak oleh finishActiveScene().
+    endCurrentScene("media-ended", true);
+  } catch (e) {
+    console.warn("Error menangani event media end", e);
+  }
 });
 
 function matchAndEnqueue(rule, nickname, via) {
@@ -688,7 +708,7 @@ function handleChat(data) {
 
   const msgNorm = normalizeForMatching(msgRaw);
 
-  for (const rule of RULES) {
+  for (const rule of activeRules()) {
     if (rule.pattern) {
       const re = new RegExp(rule.pattern, "i");
       if (re.test(msgRaw)) {
@@ -700,7 +720,7 @@ function handleChat(data) {
     if (Array.isArray(rule.keywords)) {
       for (const kw of rule.keywords) {
         const kwNorm = normalizeForMatching(kw);
-        if (msgNorm.includes(kwNorm)) {
+        if (containsPhrase(msgNorm, kwNorm)) {
           matchAndEnqueue(rule, nickname, "keyword");
           return;
         }
@@ -710,7 +730,7 @@ function handleChat(data) {
 
   // fallback fuzzy
   let best = { score: 0, rule: null };
-  for (const rule of RULES) {
+  for (const rule of activeRules()) {
     if (!Array.isArray(rule.keywords)) continue;
     for (const kw of rule.keywords) {
       const kwNorm = normalizeForMatching(kw);
@@ -925,6 +945,8 @@ if (require.main === module) {
 module.exports = {
   SCENES,
   RULES,
+  activeRules,
+  containsPhrase,
   SCENE_REPLAY_COOLDOWN_MS,
   obs,
   handleChat,
