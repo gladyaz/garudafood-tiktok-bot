@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# secrets / local config (OBS password, TikTok username)
+.env
+.env.*
+!.env.example
+
+# runtime logs (contain TikTok viewer names)
+logs/
+*.log
+
+# OS
+.DS_Store
