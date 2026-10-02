@@ -4,7 +4,7 @@
 // Based on user's prior file and requested features.
 
 require("dotenv").config();
-const { WebcastPushConnection } = require("tiktok-live-connector");
+const { WebcastPushConnection, UserOfflineError } = require("tiktok-live-connector");
 const OBSWebSocket = require("obs-websocket-js").default;
 
 // ====== CONFIG DASAR ======
@@ -918,23 +918,124 @@ async function handleCommand(chunk) {
   }
 }
 
+// =================== TIKTOK CONNECTIVITY ===================
+// Observability + reconnect. TIDAK mengubah handleChat, matching, queue/cooldown,
+// anti-spam, AutoPIN, maupun OBS. Jalur chat tetap: event -> handleChat() yang sudah ada.
+//
+// Reconnect memakai ULANG instance yang sama: setDisconnected() di konektor mengembalikan
+// state ke DISCONNECTED, sehingga connect() bisa dipanggil lagi. Karena instance-nya tidak
+// pernah diganti, listener didaftarkan tepat sekali dan tidak mungkin dobel.
+const TIKTOK_BACKOFF_MS = [2_000, 5_000, 10_000, 20_000, 30_000];
+const TIKTOK_OFFLINE_RETRY_MS = 30_000; // LIVE benar-benar offline -> jangan agresif
+
+let tiktokConn = null;
+let tiktokReconnectTimer = null;
+let tiktokAttempt = 0;        // 0 = koneksi terakhir sukses
+let tiktokConnecting = false; // guard: hanya satu upaya connect aktif
+let tiktokStopped = false;    // true setelah stopTikTok() (shutdown)
+
+function tiktokBackoffMs(attempt) {
+  const idx = Math.min(Math.max(attempt, 1), TIKTOK_BACKOFF_MS.length) - 1;
+  return TIKTOK_BACKOFF_MS[idx];
+}
+
+// .name pada UserOfflineError tetap "Error", jadi cek lewat instanceof + nama constructor.
+function isUserOfflineError(err) {
+  return err instanceof UserOfflineError || err?.constructor?.name === "UserOfflineError";
+}
+
+function scheduleTikTokReconnect(reason, offline = false) {
+  if (tiktokStopped) return;
+  if (tiktokReconnectTimer || tiktokConnecting) return; // cegah upaya ganda
+  tiktokAttempt += 1;
+  const delayMs = offline ? TIKTOK_OFFLINE_RETRY_MS : tiktokBackoffMs(tiktokAttempt);
+  console.log(`[TIKTOK_RECONNECT] attempt=${tiktokAttempt} delayMs=${delayMs} reason=${reason}`);
+  tiktokReconnectTimer = setTimeout(() => {
+    tiktokReconnectTimer = null;
+    connectTikTok();
+  }, delayMs);
+}
+
+// Didaftarkan SEKALI per instance koneksi.
+function attachTikTokListeners(conn) {
+  conn.on("chat", (data) => {
+    const user = data?.nickname ?? data?.user?.nickname ?? data?.uniqueId ?? "anon";
+    console.log(`[TIKTOK_CHAT] user=${user} comment="${data?.comment ?? ""}"`);
+    handleChat(data); // jalur produksi yang sudah ada: matching -> queue -> OBS
+  });
+
+  // Tanpa listener ini handleError() di konektor no-op, sehingga error hilang tanpa jejak.
+  conn.on("error", (e) => {
+    const msg = e?.exception?.message ?? e?.message ?? String(e ?? "");
+    console.error(`[TIKTOK_ERROR] info="${e?.info ?? ""}" msg="${msg}"`);
+  });
+
+  conn.on("disconnected", (d) => {
+    console.warn(`[TIKTOK_DISCONNECTED] code=${d?.code ?? "?"} reason="${d?.reason ?? ""}"`);
+    scheduleTikTokReconnect("disconnected");
+  });
+}
+
+async function connectTikTok() {
+  if (tiktokStopped || tiktokConnecting) return;
+  const reconnecting = tiktokAttempt > 0;
+  tiktokConnecting = true;
+  console.log(`[TIKTOK_CONNECTING] user=@${tiktokUsername}${reconnecting ? ` attempt=${tiktokAttempt}` : ""}`);
+  try {
+    const state = await tiktokConn.connect();
+    tiktokConnecting = false;
+    const roomId = tiktokConn?.roomId || state?.roomId || "(tidak terekspos)";
+    // Satu baris per peristiwa: RECONNECTED kalau ini pemulihan, CONNECTED kalau koneksi pertama.
+    console.log(`[TIKTOK_${reconnecting ? "RECONNECTED" : "CONNECTED"}] roomId=${roomId}`);
+    tiktokAttempt = 0; // reset hitungan setelah sukses
+    return state;
+  } catch (err) {
+    tiktokConnecting = false;
+    const offline = isUserOfflineError(err);
+    console.error(`[TIKTOK_ERROR] connect gagal: ${offline ? "LIVE sedang offline" : (err?.message ?? err)}`);
+    scheduleTikTokReconnect(offline ? "user-offline" : "connect-failed", offline);
+  }
+}
+
+// createConnection hanya di-inject oleh test; produksi memakai WebcastPushConnection.
+function startTikTok({ createConnection } = {}) {
+  tiktokStopped = false;
+  tiktokAttempt = 0;
+  if (!tiktokConn) {
+    tiktokConn = (createConnection || (() => new WebcastPushConnection(tiktokUsername)))();
+    attachTikTokListeners(tiktokConn);
+  }
+  return connectTikTok();
+}
+
+function stopTikTok() {
+  tiktokStopped = true;
+  if (tiktokReconnectTimer) {
+    clearTimeout(tiktokReconnectTimer);
+    tiktokReconnectTimer = null;
+  }
+}
+
 // =================== STARTUP (live only) ===================
 // Koneksi TikTok/OBS + stdin hanya jalan kalau file ini dieksekusi langsung
 // (`node index.js`). Saat di-require oleh test, tidak ada koneksi nyata.
 function startLive() {
-  const tiktok = new WebcastPushConnection(tiktokUsername);
-
-  tiktok.connect()
-    .then(() => console.log(`🎉 Terhubung ke TikTok Live @${tiktokUsername}`))
-    .catch(err => console.error("❌ Gagal connect TikTok:", err));
-
-  tiktok.on("chat", handleChat);
+  startTikTok();
 
   connectOBS();
 
   console.log("ℹ CMD control aktif. Ketik 'help' untuk perintah: next, force, force all, status, cooldown <ms>, skip <SCENE>, promote <SCENE>, help.");
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", handleCommand);
+
+  // Timer reconnect harus mati bersih saat proses berakhir.
+  const shutdown = () => {
+    stopTikTok();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  process.on("exit", stopTikTok);
 }
 
 if (require.main === module) {
@@ -951,9 +1052,30 @@ module.exports = {
   obs,
   handleChat,
   handleCommand,
+  startTikTok,
+  stopTikTok,
   enqueueTrigger,
   processQueue,
   endCurrentScene,
+  __tiktok: {
+    getState: () => ({
+      attempt: tiktokAttempt,
+      hasReconnectTimer: !!tiktokReconnectTimer,
+      connecting: tiktokConnecting,
+      stopped: tiktokStopped,
+      chatListeners: tiktokConn ? tiktokConn.listenerCount("chat") : 0,
+    }),
+    backoffMs: tiktokBackoffMs,
+    conn: () => tiktokConn,
+    reset: () => {
+      stopTikTok();
+      if (tiktokConn && typeof tiktokConn.removeAllListeners === "function") tiktokConn.removeAllListeners();
+      tiktokConn = null;
+      tiktokAttempt = 0;
+      tiktokConnecting = false;
+      tiktokStopped = false;
+    },
+  },
   __test: {
     getState: () => ({
       busy,
