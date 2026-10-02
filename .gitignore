@@ -12,3 +12,7 @@ logs/
 
 # OS
 .DS_Store
+
+# AutoPIN: browser profile (cookies/session) + debug screenshots/DOM outlines
+.autopin-profile/
+.autopin-debug/
