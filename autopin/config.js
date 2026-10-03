@@ -12,7 +12,10 @@ function readPositiveInt(raw, fallback) {
 
 function loadConfig(env = process.env) {
   return {
-    consoleUrl: env.AUTOPIN_CONSOLE_URL || "https://shop.tiktok.com/streamer/live-console",
+    // Halaman product dashboard adalah satu-satunya yang TERVERIFIKASI punya
+    // tombol Pin per produk saat LIVE berjalan. /streamer/live-console lama
+    // redirect ke halaman marketing US dan tidak pernah memuat daftar produk.
+    consoleUrl: env.AUTOPIN_CONSOLE_URL || "https://shop.tiktok.com/streamer/live/product/dashboard",
     profileDir: path.resolve(ROOT, env.AUTOPIN_PROFILE_DIR || ".autopin-profile"),
     debugDir: path.resolve(ROOT, env.AUTOPIN_DEBUG_DIR || ".autopin-debug"),
     expectedShop: env.AUTOPIN_EXPECTED_SHOP || "",
