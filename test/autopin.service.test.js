@@ -132,8 +132,55 @@ test("in-flight: identitas toko diperiksa sebelum klik, produksi tidak pernah di
   assert.deepEqual(clicks, []);
 });
 
+
+// ---- AP2.3: halaman harus di depan sebelum discraping ----
+
+test("service: halaman dibawa ke depan sebelum konsol dibuka (tab latar tidak me-render daftar produk)", async () => {
+  const order = [];
+  const page = {
+    url: () => CONSOLE,
+    isClosed: () => false,
+    bringToFront: async () => { order.push("bringToFront"); },
+  };
+  const svc = createService({
+    config: CONFIG,
+    deps: {
+      ...fakeDeps({ clicks: [], collect: async () => SNAPSHOT }),
+      getPage: async () => page,
+      openConsole: async () => { order.push("openConsole"); return { url: CONSOLE, settled: true, readyMs: 1 }; },
+    },
+  });
+
+  await svc.warmUp();
+  assert.deepEqual(order, ["bringToFront", "openConsole"]);
+});
+
+test("service: halaman tanpa bringToFront tetap jalan (tidak crash)", async () => {
+  const svc = createService({
+    config: CONFIG,
+    deps: { ...fakeDeps({ clicks: [], collect: async () => SNAPSHOT }), getPage: async () => ({ url: () => CONSOLE, isClosed: () => false }) },
+  });
+  const w = await svc.warmUp();
+  assert.equal(w.ok, true);
+});
+
+test("service: warmUp yang gagal tidak melempar, service tetap bisa dipakai", async () => {
+  const svc = createService({
+    config: CONFIG,
+    deps: { ...fakeDeps({ clicks: [], collect: async () => SNAPSHOT }), launchBrowser: async () => { throw new Error("chrome tidak ada"); } },
+  });
+  const w = await svc.warmUp();
+  assert.equal(w.ok, false);
+});
+
 test("service mendengarkan hanya di loopback, tidak terekspos ke LAN", async () => {
-  const svc = await startService({ port: 0 });
+  // deps palsu WAJIB: startService memanggil warmUp(), dan tanpa ini tes akan
+  // benar-benar membuka Chrome.
+  const svc = await startService({
+    port: 0,
+    config: CONFIG,
+    deps: fakeDeps({ clicks: [], collect: async () => SNAPSHOT }),
+  });
   try {
     const addr = svc.server.address();
     assert.equal(addr.address, "127.0.0.1");

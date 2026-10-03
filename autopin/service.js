@@ -65,6 +65,19 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     }
     browser = await d.launchBrowser(config);
     page = await d.getPage(browser);
+
+    // Profil persisten bisa memulihkan beberapa tab. Tab latar di-throttle Chrome:
+    // daftar produk yang ter-virtualisasi tidak pernah ter-render, sehingga
+    // halaman terlihat "tidak punya produk" padahal header akunnya terbaca.
+    // Halaman harus benar-benar di depan sebelum discraping.
+    if (typeof page.bringToFront === "function") {
+      try {
+        await page.bringToFront();
+      } catch {
+        /* bukan alasan untuk membatalkan: scraping tetap dicoba */
+      }
+    }
+
     const info = await d.openConsole(page, config);
     log("SERVICE_PAGE_READY", { url: info.url, settled: info.settled, readyMs: info.readyMs });
     return page;
@@ -167,13 +180,26 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     }
   });
 
+  // Dipanggil sekali saat service start: membuka browser lebih awal supaya
+  // permintaan pin PERTAMA tidak menanggung ~20 detik startup, yang pasti
+  // melewati batas waktu dispatcher di sisi bot.
+  async function warmUp() {
+    try {
+      await ensurePage();
+      return { ok: true };
+    } catch (err) {
+      log("SERVICE_WARMUP_FAILED", { detail: String(err && err.message).slice(0, 120) });
+      return { ok: false };
+    }
+  }
+
   async function stop() {
     if (browser) await d.closeBrowser(browser).catch(() => {});
     browser = null;
     page = null;
   }
 
-  return { app, handlePin, stop, __state: () => ({ latestPlayId, hasPage: !!page }) };
+  return { app, handlePin, stop, warmUp, __state: () => ({ latestPlayId, hasPage: !!page }) };
 }
 
 // Selalu loopback: /pin tidak boleh bisa dipanggil dari perangkat lain di LAN.
@@ -184,6 +210,7 @@ function startService({ port = Number(process.env.AUTOPIN_PORT) || DEFAULT_PORT,
     const server = svc.app.listen(port, LOOPBACK, () => {
       const addr = server.address();
       log("SERVICE_LISTENING", { host: addr.address, port: addr.port, dryRun: !!rest.dryRun });
+      svc.warmUp().then((w) => log("SERVICE_WARMED", { ok: w.ok }));
       resolve({ ...svc, server });
     });
   });
