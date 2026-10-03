@@ -32,11 +32,20 @@ const SCENES = {
   AILIVE_FAQ_ORIGINALEXPIRED: "AI LIVE_FAQ_ORIGINALEXPIRED",
 };
 
+// PENTING: mediaInputs berisi NAMA INPUT DI OBS, bukan nama berkas video.
+// Event MediaInputPlaybackEnded dari obs-websocket mengirim inputName (mis. "Media 3"),
+// bukan nama file (mis. "PAX-2.mp4"). Dulu nilai di sini diisi nama file, sehingga
+// tidak pernah cocok dan SETIAP scene berakhir lewat fallback timer.
+// Cara memastikan ulang kalau sumber di OBS diganti:
+//   GetSceneItemList { sceneName: "PAX-N" } -> sourceName
+// Scene PAX-5 dan PAX-10 punya dua sumber media; yang kedua ("Media 7" / "Media 12")
+// kosong tanpa berkas dan TIDAK PERNAH mengirim Playback{Started,Ended}, jadi sengaja
+// tidak ditunggu - menunggunya akan membuat scene selalu jatuh ke fallback.
 const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXSATU,
     keywords: ["et 1", "etalase 1", "etalase satu", "no 1", "nomor 1", "nomor satu", "paket 1", "paket satu", "produk 1", "produk satu", "spill et 1", "spill etalase 1", "spill etalase satu", "spill no 1", "spill nomor 1", "spill nomor satu", "spill paket 1", "spill paket satu", "spill produk 1", "spill produk satu", "ting ting", "tingting", "garuda ting ting", "garuda tingting", "ting ting pouch", "tingting pouch", "garuda ting ting pouch", "garuda tingting pouch", "peanut candy", "peanut bar candy", "spill ting ting", "spill tingting", "spill garuda ting ting", "spill garuda tingting", "spill ting ting pouch", "spill garuda ting ting pouch"],
-    mediaInputs: ["PAX-1.mp4"],
+    mediaInputs: ["Media"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 46000,          // FAILSAFE saja - video asli 40.4s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -44,7 +53,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXDUA,
     keywords: ["et 2", "etalase 2", "etalase dua", "no 2", "nomor 2", "nomor dua", "paket 2", "paket dua", "produk 2", "produk dua", "spill et 2", "spill etalase 2", "spill etalase dua", "spill no 2", "spill nomor 2", "spill nomor dua", "spill paket 2", "spill paket dua", "spill produk 2", "spill produk dua", "gery potato", "gery potato cracker", "potato cracker", "gery kentang", "biskuit kentang", "gery biskuit kentang", "gery bbq", "bbq", "rasa bbq", "spill gery potato", "spill potato cracker", "spill gery kentang"],
-    mediaInputs: ["PAX-2.mp4"],
+    mediaInputs: ["Media 3"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 46000,          // FAILSAFE saja - video asli 40.3s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -52,7 +61,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXTIGA,
     keywords: ["et 3", "etalase 3", "etalase tiga", "no 3", "nomor 3", "nomor tiga", "paket 3", "paket tiga", "produk 3", "produk tiga", "spill et 3", "spill etalase 3", "spill etalase tiga", "spill no 3", "spill nomor 3", "spill nomor tiga", "spill paket 3", "spill paket tiga", "spill produk 3", "spill produk tiga", "chocolatos pillow", "chocolatos pillow 97", "chocolatos pillow 97gr", "pillow chocolatos", "pillow chocolate", "coklat pillow", "chocolatos", "spill chocolatos pillow", "spill pillow", "spill coklat pillow"],
-    mediaInputs: ["PAX-3.mp4"],
+    mediaInputs: ["Media 4"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 52000,          // FAILSAFE saja - video asli 46.2s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -60,7 +69,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXEMPAT,
     keywords: ["et 4", "etalase 4", "etalase empat", "no 4", "nomor 4", "nomor empat", "paket 4", "paket empat", "produk 4", "produk empat", "spill et 4", "spill etalase 4", "spill etalase empat", "spill no 4", "spill nomor 4", "spill nomor empat", "spill paket 4", "spill paket empat", "spill produk 4", "spill produk empat", "chocolatos rts", "chocolatos rts mt", "chocolatos drink chocolate", "chocolatos drink matcha", "chocolatos chocolate", "chocolatos matcha", "chocolatos rts chocolate", "chocolatos rts matcha", "chocolatos 5 pcs", "chocolatos 5 sachet", "chocolatos isi 5", "spill chocolatos", "spill chocolatos chocolate", "spill chocolatos matcha", "spill minuman chocolatos", "spill minuman coklat", "spill minuman matcha"],
-    mediaInputs: ["PAX-4.mp4"],
+    mediaInputs: ["Media 5"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 69000,          // FAILSAFE saja - video asli 64.0s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -68,7 +77,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXLIMA,
     keywords: ["et 5", "etalase 5", "etalase lima", "no 5", "nomor 5", "nomor lima", "paket 5", "paket lima", "produk 5", "produk lima", "spill et 5", "spill etalase 5", "spill etalase lima", "spill no 5", "spill nomor 5", "spill nomor lima", "spill paket 5", "spill paket lima", "spill produk 5", "spill produk lima", "spill garuda", "spill snack garuda", "garuda", "garuda pilus", "pilus mi goreng", "garuda crunchy corn", "crunchy corn", "corn seasalt", "garuda rosta", "rosta kacang", "rosta kacang panggang", "garuda kacang atom", "kacang atom", "garuda kacang kulit", "kacang kulit", "kacang garuda", "spill pilus", "spill crunchy corn", "spill rosta", "spill kacang atom", "spill kacang kulit"],
-    mediaInputs: ["PAX-5.mp4"],
+    mediaInputs: ["Media 6"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 58000,          // FAILSAFE saja - video asli 52.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -76,7 +85,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXENAM,
     keywords: ["et 6", "etalase 6", "etalase enam", "no 6", "nomor 6", "nomor enam", "paket 6", "paket enam", "produk 6", "produk enam", "spill et 6", "spill etalase 6", "spill etalase enam", "spill no 6", "spill nomor 6", "spill nomor enam", "spill paket 6", "spill paket enam", "spill produk 6", "spill produk enam", "spill gery", "spill snack gery", "gery malkist", "gery malkist coklat", "malkist coklat", "gery malkist kelapa", "malkist kelapa", "malkist tabur kelapa", "gery malkist keju", "malkist keju", "gery snack sereal", "snack sereal", "gery sereal coklat", "sereal coklat", "gery snack bantal", "snack bantal", "bantal extrude", "gery bantal", "spill malkist", "spill malkist coklat", "spill malkist kelapa", "spill malkist keju", "spill sereal", "spill sereal coklat", "spill snack bantal"],
-    mediaInputs: ["PAX-6.mp4"],
+    mediaInputs: ["Media 8"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 48000,          // FAILSAFE saja - video asli 42.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -84,7 +93,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXTUJUH,
     keywords: ["et 7", "etalase 7", "etalase tujuh", "no 7", "nomor 7", "nomor tujuh", "paket 7", "paket tujuh", "produk 7", "produk tujuh", "spill et 7", "spill etalase 7", "spill etalase tujuh", "spill no 7", "spill nomor 7", "spill nomor tujuh", "spill paket 7", "spill paket tujuh", "spill produk 7", "spill produk tujuh", "spill chocolatos", "spill chocolatos rich", "chocolatos rich", "chocolatos wafer", "chocolatos wafer stick", "wafer stick chocolatos", "chocolatos pistachio", "chocolatos rich pistachio", "pistachio chocolatos", "chocolatos matcha", "chocolatos rich matcha", "matcha chocolatos", "chocolatos drink", "chocolatos drink rts", "drink rts kurma", "chocolatos kurma", "chocolatos drink kurma", "chocolatos pillow", "chocolatos pillow chocolate", "pillow chocolate", "chocolatos chocolate", "spill chocolatos rich wafer", "spill wafer stick", "spill pistachio", "spill matcha", "spill kurma", "spill drink kurma", "spill pillow", "spill pillow chocolate"],
-    mediaInputs: ["PAX-7.mp4"],
+    mediaInputs: ["Media 9"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 62000,          // FAILSAFE saja - video asli 56.7s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -92,7 +101,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXDELAPAN,
     keywords: ["et 8", "etalase 8", "etalase delapan", "no 8", "nomor 8", "nomor delapan", "paket 8", "paket delapan", "produk 8", "produk delapan", "spill et 8", "spill etalase 8", "spill etalase delapan", "spill no 8", "spill nomor 8", "spill nomor delapan", "spill paket 8", "spill paket delapan", "spill produk 8", "spill produk delapan", "spill dilan", "produk dilan", "dilan cookies", "dilan cookies chocolate", "cookies dilan", "dilan sandwich", "dilan sandwich chocolate", "dilan crunchy caramel", "dilan crunchy caramel chocolate", "dilan caramel", "dilan pouch", "dilan chocolate pouch", "dilan matcha", "dilan matcha crunchy caramel", "dilan matcha sandwich", "dilan sandwich matcha", "dilan waffle", "dilan waffle pandan", "waffle pandan dilan", "spill dilan cookies", "spill cookies dilan", "spill dilan sandwich", "spill sandwich dilan", "spill dilan caramel", "spill dilan pouch", "spill dilan matcha", "spill dilan waffle", "spill waffle pandan"],
-    mediaInputs: ["PAX-8.mp4"],
+    mediaInputs: ["Media 10"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 77000,          // FAILSAFE saja - video asli 71.6s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -100,7 +109,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXSEMBILAN,
     keywords: ["et 9", "etalase 9", "etalase sembilan", "no 9", "nomor 9", "nomor sembilan", "paket 9", "paket sembilan", "produk 9", "produk sembilan", "spill et 9", "spill etalase 9", "spill etalase sembilan", "spill no 9", "spill nomor 9", "spill nomor sembilan", "spill paket 9", "spill paket sembilan", "spill produk 9", "spill produk sembilan", "everyday snack mix", "everyday snack", "snack mix", "paket everyday snack mix", "paket snack mix", "spill everyday snack mix", "spill everyday snack", "spill snack mix", "mau everyday snack mix", "ambil everyday snack mix", "yang everyday snack mix", "everyday mix"],
-    mediaInputs: ["PAX-9.mp4"],
+    mediaInputs: ["Media 11"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     duration: 57000,          // FAILSAFE saja - video asli 52.0s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
@@ -108,7 +117,7 @@ const RULES = [
   {
     scene: SCENES.AILIVE_SKUPAXSEPULUH,
     keywords: ["etalase 10", "etalase sepuluh", "et 10", "no 10", "nomor 10", "paket 10", "paket sepuluh", "produk 10", "produk sepuluh", "big sharing pack", "big sharing", "sharing pack", "paket big sharing", "paket sharing", "paket besar", "paket sharing besar", "spill big sharing", "spill big sharing pack", "spill sharing pack", "spill paket sharing", "mau big sharing pack", "ambil big sharing pack", "yang big sharing pack", "big sharing pack yang mana"],
-    mediaInputs: ["PAX-10.mp4"],
+    mediaInputs: ["Media 13"],
     waitForMediaEnd: true,   // contoh: ini mau bener-bener nunggu video selesai
     duration: 71000,          // FAILSAFE saja - video asli 65.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     

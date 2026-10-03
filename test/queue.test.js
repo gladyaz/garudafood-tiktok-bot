@@ -408,21 +408,43 @@ test("FAQ: cukup set enabled:true untuk mengaktifkan routing FAQ kembali", async
 const mediaEnd = inputName => bot.obs.emit("MediaInputPlaybackEnded", { inputName, inputUuid: "uuid-" + inputName });
 const inputOf = scene => ruleFor(scene).mediaInputs[0];
 
-test("MEDIA: nama input di rule sama dengan nama input di OBS (PAX-N.mp4)", () => {
+// Nama-nama ini dibaca langsung dari OBS (GetSceneItemList) dan dibuktikan lewat event
+// MediaInputPlaybackEnded. Kalau sumber di OBS direname, tes ini yang pertama jatuh.
+const OBS_INPUT_PER_PAX = {
+  1: "Media", 2: "Media 3", 3: "Media 4", 4: "Media 5", 5: "Media 6",
+  6: "Media 8", 7: "Media 9", 8: "Media 10", 9: "Media 11", 10: "Media 13",
+};
+const PAX_CONST = ["SATU","DUA","TIGA","EMPAT","LIMA","ENAM","TUJUH","DELAPAN","SEMBILAN","SEPULUH"];
+const paxScene = n => SCENES[`AILIVE_SKUPAX${PAX_CONST[n - 1]}`];
+
+test("MEDIA: mediaInputs memakai nama INPUT OBS, bukan nama berkas video", () => {
   for (let n = 1; n <= 10; n++) {
-    const scene = SCENES[`AILIVE_SKUPAX${["SATU","DUA","TIGA","EMPAT","LIMA","ENAM","TUJUH","DELAPAN","SEMBILAN","SEPULUH"][n - 1]}`];
-    assert.deepEqual(ruleFor(scene).mediaInputs, [`PAX-${n}.mp4`]);
+    assert.deepEqual(ruleFor(paxScene(n)).mediaInputs, [OBS_INPUT_PER_PAX[n]]);
   }
+});
+
+test("MEDIA: tidak ada rule PAX yang menunggu nama berkas (.mp4) - itu bug lamanya", () => {
+  for (let n = 1; n <= 10; n++) {
+    for (const input of ruleFor(paxScene(n)).mediaInputs) {
+      assert.ok(!/.(mp4|mkv|mov|webm)$/i.test(input),
+        `PAX-${n} menunggu "${input}" yang berbentuk nama berkas; OBS mengirim nama input`);
+    }
+  }
+});
+
+test("MEDIA: PAX-5 dan PAX-10 hanya menunggu satu sumber (sumber kedua kosong, tidak pernah kirim event)", () => {
+  assert.deepEqual(ruleFor(paxScene(5)).mediaInputs, ["Media 6"]);
+  assert.deepEqual(ruleFor(paxScene(10)).mediaInputs, ["Media 13"]);
 });
 
 test("MEDIA: media-end mengakhiri scene dengan reason=media-ended, bukan fallback", async () => {
   await playNow("u", "etalase 1", PAX1);
-  assert.equal(inputOf(PAX1), "PAX-1.mp4");
+  assert.equal(inputOf(PAX1), "Media");
 
-  mediaEnd("PAX-1.mp4");
+  mediaEnd(inputOf(PAX1));
   await flush();
 
-  assert.ok(logs.some(l => l === "[MEDIA_END] input=PAX-1.mp4"), "harus ada log [MEDIA_END]");
+  assert.ok(logs.some(l => l === `[MEDIA_END] input=${inputOf(PAX1)}`), "harus ada log [MEDIA_END]");
   assert.ok(logs.some(l => l === `[PLAYBACK_END] scene=${PAX1} reason=media-ended`), "harus berakhir karena media-ended");
   assert.ok(!logs.some(l => l.includes("media-fallback")), "fallback tidak boleh ikut menyala");
   assert.equal(state().activeScene, null);
@@ -434,7 +456,7 @@ test("MEDIA: setelah media-end, fallback lama tidak mengakhiri scene berikutnya"
   chat("v", "etalase 8");
   assert.deepEqual(state().queue, [{ scene: PAX8, count: 1 }]);
 
-  mediaEnd("PAX-1.mp4");
+  mediaEnd(inputOf(PAX1));
   await advance(QUEUE_KICK_MS);
   assert.equal(state().activeScene, PAX8);
 
@@ -448,7 +470,7 @@ test("MEDIA: event dari input lain tidak mengakhiri scene yang sedang jalan", as
   await playNow("u", "etalase 1", PAX1);
 
   mediaEnd("MAIN.mp4");      // video idle di scene MAIN
-  mediaEnd("PAX-7.mp4");     // scene lain yang tidak sedang diputar
+  mediaEnd(inputOf(SCENES.AILIVE_SKUPAXTUJUH));     // scene lain yang tidak sedang diputar
   await flush();
 
   assert.equal(state().activeScene, PAX1);
@@ -459,14 +481,14 @@ test("MEDIA: event dari input lain tidak mengakhiri scene yang sedang jalan", as
 test("MEDIA: event ganda untuk input yang sama hanya menyelesaikan scene sekali", async () => {
   await playNow("u", "etalase 1", PAX1);
 
-  mediaEnd("PAX-1.mp4");
-  mediaEnd("PAX-1.mp4");
-  mediaEnd("PAX-1.mp4");
+  mediaEnd(inputOf(PAX1));
+  mediaEnd(inputOf(PAX1));
+  mediaEnd(inputOf(PAX1));
   await flush();
 
   assert.equal(countLogs("PLAYBACK_END"), 1);
   assert.equal(countLogs("COOLDOWN_START"), 1);
-  assert.equal(logs.filter(l => l === "[MEDIA_END] input=PAX-1.mp4").length, 1);
+  assert.equal(logs.filter(l => l === `[MEDIA_END] input=${inputOf(PAX1)}`).length, 1);
 });
 
 test("MEDIA: fallback tetap jadi jaring aman kalau event media tidak pernah datang", async () => {
@@ -576,4 +598,49 @@ test("NUMERIK: keyword nama produk tetap jalan (tidak jadi korban batas kata)", 
   assert.equal(matchedScene("gery potato cracker"), SCENES.AILIVE_SKUPAXDUA);
   assert.equal(matchedScene("big sharing pack"), PAX10);
   assert.equal(matchedScene("everyday snack mix"), SCENES.AILIVE_SKUPAXSEMBILAN);
+});
+
+// ===== Regresi bug media-end (nama input OBS vs nama berkas) =====
+// Semua kasus di bawah diamati langsung dari OBS 32.2.2 lewat probe event.
+
+test("MEDIA: video MAIN yang looping tidak boleh mengakhiri scene PAX yang sedang jalan", async () => {
+  await playNow("u", "etalase 1", PAX1);
+
+  // "Media 2" = AI LIVE_MAIN.mp4, looping, mengirim ENDED tiap putaran (~5.6s sekali)
+  mediaEnd("Media 2");
+  mediaEnd("Media 2");
+  await flush();
+
+  assert.equal(state().activeScene, PAX1, "scene PAX harus tetap jalan");
+  assert.ok(!logs.some(l => l.includes("[MEDIA_END] input=Media 2")));
+  assert.ok(!logs.some(l => l.includes("PLAYBACK_END")));
+});
+
+test("MEDIA: event dari scene SEBELUMNYA tidak mengakhiri scene yang baru mulai", async () => {
+  await playNow("u", "etalase 1", PAX1);
+  mediaEnd(inputOf(PAX1));
+  await advance(QUEUE_KICK_MS);
+
+  chat("v", "etalase 2");
+  await advance(GLOBAL_PAUSE_MS + QUEUE_KICK_MS);
+  assert.equal(state().activeScene, PAX2);
+
+  mediaEnd(inputOf(PAX1)); // event telat milik scene lama
+  await flush();
+
+  assert.equal(state().activeScene, PAX2, "PAX-2 tidak boleh ikut berakhir");
+});
+
+test("MEDIA: setiap PAX punya input OBS yang unik (tidak ada yang saling mengakhiri)", () => {
+  const all = [];
+  for (let n = 1; n <= 10; n++) all.push(...ruleFor(paxScene(n)).mediaInputs);
+  assert.equal(new Set(all).size, all.length, "nama input OBS tidak boleh dipakai dua scene");
+  assert.notEqual(inputOf(paxScene(1)), inputOf(paxScene(10)));
+});
+
+test("MEDIA: nama input MAIN tidak dipakai oleh satu pun rule PAX", () => {
+  for (let n = 1; n <= 10; n++) {
+    assert.ok(!ruleFor(paxScene(n)).mediaInputs.includes("Media 2"),
+      "Media 2 adalah video MAIN yang looping; tidak boleh ditunggu scene PAX");
+  }
 });
