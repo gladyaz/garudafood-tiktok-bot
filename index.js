@@ -193,6 +193,42 @@ let activeScene = null;
 const sceneCooldownUntil = new Map(); // sceneName -> timestamp (ms)
 let globalPauseTimer = null; // timer jeda global COOLDOWN_MS setelah balik ke MAIN
 
+// ====== AUTOPIN (AUXILIARY — tidak boleh memengaruhi playback) ======
+// Bot TIDAK memuat Puppeteer. Browser hidup di proses service terpisah
+// (autopin-service.js); di sini hanya ada klien HTTP tipis + dispatcher yang
+// menelan semua kegagalannya sendiri. Lihat autopin/scene-pin.js.
+const { createScenePin } = require("./autopin/scene-pin");
+const { loadSceneProductMap, describeSceneProductMap } = require("./autopin/scene-map");
+const { createHttpSender, serviceUrl } = require("./autopin/client");
+
+const AUTOPIN_ENABLED = String(process.env.AUTOPIN_ENABLED || "false").trim().toLowerCase() === "true";
+const AUTOPIN_TIMEOUT_MS = readNonNegativeIntEnv("AUTOPIN_TIMEOUT_MS", 8_000);
+const autopinMap = loadSceneProductMap(process.env);
+
+let scenePin = createScenePin({
+  enabled: AUTOPIN_ENABLED,
+  mapping: autopinMap,
+  timeoutMs: AUTOPIN_TIMEOUT_MS,
+  send: createHttpSender({ url: serviceUrl(process.env), timeoutMs: AUTOPIN_TIMEOUT_MS }),
+});
+
+// playId naik setiap kali sebuah scene MULAI di-switch (bukan saat di-antre dan
+// bukan saat OBS sudah balas). Urutan berdasarkan waktu permintaan inilah yang
+// membuat hasil milik scene lama bisa dikenali sebagai basi saat ada force.
+let playSeq = 0;
+const nextPlayId = () => ++playSeq;
+
+// Dipanggil HANYA setelah SetCurrentProgramScene sukses dan failsafe terpasang.
+// Sengaja tidak di-await: jalur playback tidak boleh menunggu browser.
+function dispatchAutoPin(sceneName, playId) {
+  try {
+    const p = scenePin.requestPin({ scene: sceneName, playId });
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  } catch (err) {
+    console.warn(`[AUTOPIN_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+  }
+}
+
 function isValidSceneName(sceneName) {
   return typeof sceneName === "string" && sceneName.trim() !== "";
 }
@@ -593,6 +629,10 @@ function switchScene(sceneName, rule = null) {
 
   console.log("🔁 Switch Scene →", sceneName);
 
+  // Diambil sebelum request OBS dikirim: kalau force menyalip, scene yang lebih
+  // baru punya playId lebih besar walau OBS-nya balas lebih dulu.
+  const playId = nextPlayId();
+
   obs
     .call("SetCurrentProgramScene", { sceneName })
     .then(() => {
@@ -636,6 +676,8 @@ function switchScene(sceneName, rule = null) {
           endCurrentScene("media-fallback", true);
         }, fallbackMs);
 
+        // playback sudah aman (scene aktif + failsafe terpasang) -> baru pin
+        dispatchAutoPin(sceneName, playId);
         return;
       }
 
@@ -645,6 +687,8 @@ function switchScene(sceneName, rule = null) {
 
       // pastikan busy = true selama scene jalan
       busy = true;
+
+      dispatchAutoPin(sceneName, playId);
 
       sceneDurationTimer = setTimeout(() => {
         console.log(`⌛ Durasi selesai untuk scene ${sceneName}`);
@@ -1086,6 +1130,10 @@ module.exports = {
       cooldownScenes: Array.from(sceneCooldownUntil.keys()),
       hasGlobalPauseTimer: !!globalPauseTimer,
     }),
+    // ganti dispatcher AutoPIN dengan palsu (tes integrasi tanpa browser)
+    setScenePin: fake => { scenePin = fake; },
+    autopinMap: () => ({ ...autopinMap }),
+    autopinEnabled: () => AUTOPIN_ENABLED,
     // sisipkan entry mentah ke antrean (untuk uji fail-safe entry tidak valid)
     injectAggregate: agg => sceneAggregates.push(agg),
     reset: () => {
