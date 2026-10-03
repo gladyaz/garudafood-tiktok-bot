@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/queue.test.js test/tiktok.test.js test/autopin.core.test.js test/autopin.products.test.js test/autopin.scenepin.test.js test/autopin.integration.test.js test/autopin.service.test.js test/autopin.config.test.js",
+    "test": "node --test test/queue.test.js test/tiktok.test.js test/autopin.core.test.js test/autopin.products.test.js test/autopin.scenepin.test.js test/autopin.integration.test.js test/autopin.service.test.js test/autopin.config.test.js test/autocomment.core.test.js test/autocomment.integration.test.js test/autocomment.config.test.js",
     "autopin:service": "node autopin-service.js"
   },
   "keywords": [],

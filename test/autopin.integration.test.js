@@ -61,10 +61,10 @@ beforeEach(() => {
     if (failingScenes.has(scene)) return Promise.reject(new Error("No source was found"));
     if (deferred.has(scene)) {
       return new Promise((resolve) => {
-        deferred.get(scene).release = () => {
-          obsSwitches.push(scene);
-          resolve();
-        };
+        const slot = deferred.get(scene);
+        slot.releases = slot.releases || [];
+        slot.releases.push(() => { obsSwitches.push(scene); resolve(); });
+        slot.release = () => slot.releases.shift()(); // melepas balasan yang paling lama tertahan
       });
     }
     obsSwitches.push(scene);
@@ -72,12 +72,14 @@ beforeEach(() => {
   };
 
   bot.__test.setScenePin(fakePin());
+  bot.__test.setAutoComment({ requestComment: () => Promise.resolve({ ok: false, reason: "test-noop" }) });
   bot.__test.reset();
 });
 
 afterEach(() => {
   bot.__test.reset();
   bot.__test.setScenePin(fakePin());
+  bot.__test.setAutoComment({ requestComment: () => Promise.resolve({ ok: false, reason: "test-noop" }) });
   mock.timers.reset();
   mock.restoreAll();
 });
@@ -201,7 +203,7 @@ test("AutoPIN menggantung -> scene berikutnya tetap jalan", async () => {
   assert.deepEqual(requestedScenes(), [PAX3, PAX5]);
 });
 
-test("force saat OBS masih memproses -> scene lama membawa playId lebih kecil dari scene baru", async () => {
+test("force saat OBS masih memproses -> scene lama tidak pernah dipin", async () => {
   deferred.set(PAX3, {});
   chat("a", "etalase 3");
   await advance(QUEUE_KICK_MS);
@@ -217,10 +219,11 @@ test("force saat OBS masih memproses -> scene lama membawa playId lebih kecil da
   deferred.get(PAX3).release(); // balasan OBS lama baru datang sekarang
   await flush();
 
-  assert.deepEqual(requestedScenes(), [PAX5, PAX3]);
-  const p5 = pinRequests.find((r) => r.scene === PAX5).playId;
-  const p3 = pinRequests.find((r) => r.scene === PAX3).playId;
-  assert.ok(p3 < p5, `playId scene lama (${p3}) harus lebih kecil dari scene baru (${p5})`);
+  // Scene yang sudah di-force tidak pernah benar-benar "mulai" bagi penonton:
+  // tidak boleh ada permintaan pin untuknya sama sekali, bukan sekadar stale.
+  assert.deepEqual(requestedScenes(), [PAX5]);
+  assert.ok(logs.some((l) => l.startsWith(`[AUX_SKIPPED] scene=${PAX3}`) && l.includes("scene-no-longer-active")));
+  assert.equal(state().activeScene, PAX5);
 });
 
 test("entry antrean tidak valid -> tidak ada pin, antrean tetap lanjut", async () => {
@@ -230,4 +233,26 @@ test("entry antrean tidak valid -> tidak ada pin, antrean tetap lanjut", async (
 
   assert.deepEqual(pinRequests, []);
   assert.equal(state().busy, false);
+});
+
+
+test("force saat OBS memproses, balasan OBS tiba berurutan (PAX-3 sebelum MAIN) -> di-skip dengan active=null", async () => {
+  deferred.set(PAX3, {});
+  deferred.set(MAIN, {});
+  chat("a", "etalase 3");
+  await advance(QUEUE_KICK_MS);
+  const forcing = bot.handleCommand("force"); // tidak di-await: switch MAIN-nya masih tertahan
+  await flush();
+  deferred.get(PAX3).release(); // balasan PAX-3 datang SEBELUM balasan MAIN (urutan socket nyata)
+  await flush();
+  assert.deepEqual(requestedScenes(), [], 'scene yang sudah di-force tidak boleh dipin');
+  assert.ok(logs.some((l) => l.startsWith(`[AUX_SKIPPED] scene=${PAX3}`) && l.includes("active=null")));
+  deferred.get(MAIN).release();
+  await forcing;
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, null);
+  assert.equal(state().busy, false);
+  chat("b", "etalase 5");
+  await advance(QUEUE_KICK_MS);
+  assert.deepEqual(requestedScenes(), [PAX5], 'scene berikutnya tetap normal');
 });
