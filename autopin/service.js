@@ -13,10 +13,11 @@
 const express = require("express");
 const { log, checkIdentity, createSerialRunner, normalizeTitleKey, resolveProductForPin } = require("./core");
 const { loadConfig } = require("./config");
-const { launchBrowser, getPage, openConsole, closeBrowser } = require("./browser");
-const { collectProducts, readIdentity, pinProductByTitle, readPinState } = require("./products");
+const browserMod = require("./browser");
+const productsMod = require("./products");
 
 const DEFAULT_PORT = 5055;
+const LOOPBACK = "127.0.0.1";
 
 function isExpectedConsole(actualUrl, consoleUrl) {
   try {
@@ -28,26 +29,43 @@ function isExpectedConsole(actualUrl, consoleUrl) {
   }
 }
 
-function createService({ config = loadConfig(), dryRun = false } = {}) {
+// deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
+// diperiksa tanpa membuka browser sungguhan.
+function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}) {
+  const d = {
+    launchBrowser: browserMod.launchBrowser,
+    getPage: browserMod.getPage,
+    openConsole: browserMod.openConsole,
+    closeBrowser: browserMod.closeBrowser,
+    collectProducts: productsMod.collectProducts,
+    readIdentity: productsMod.readIdentity,
+    pinProductByTitle: productsMod.pinProductByTitle,
+    readPinState: productsMod.readPinState,
+    ...deps,
+  };
+
   const runExclusive = createSerialRunner();
   let browser = null;
   let page = null;
-  // playId terbesar yang pernah diterima. Permintaan lama yang baru sempat
-  // dijalankan setelah scene berganti dibuang, bukan diklik terlambat.
+  // playId terbesar yang pernah DITERIMA (bukan yang sedang dikerjakan).
+  // Dicatat di pintu masuk, sebelum antrean, supaya pekerjaan yang sedang
+  // berjalan bisa tahu dirinya sudah tidak relevan.
   let latestPlayId = 0;
+
+  const isStale = (id) => id > 0 && id < latestPlayId;
 
   async function ensurePage() {
     if (browser && page && !page.isClosed()) return page;
     if (browser) {
       try {
-        await closeBrowser(browser);
+        await d.closeBrowser(browser);
       } catch {
         /* abaikan: kita memang sedang membangun ulang */
       }
     }
-    browser = await launchBrowser(config);
-    page = await getPage(browser);
-    const info = await openConsole(page, config);
+    browser = await d.launchBrowser(config);
+    page = await d.getPage(browser);
+    const info = await d.openConsole(page, config);
     log("SERVICE_PAGE_READY", { url: info.url, settled: info.settled, readyMs: info.readyMs });
     return page;
   }
@@ -60,7 +78,7 @@ function createService({ config = loadConfig(), dryRun = false } = {}) {
       return { ok: false, reason: "unexpected-page" };
     }
 
-    const observed = await readIdentity(p);
+    const observed = await d.readIdentity(p);
     const verdict = checkIdentity({
       expected: config.expectedShop,
       observed,
@@ -68,24 +86,33 @@ function createService({ config = loadConfig(), dryRun = false } = {}) {
     });
     if (!verdict.ok) return { ok: false, reason: `identity-${verdict.reason}` };
 
-    const snapshot = await collectProducts(p);
+    const snapshot = await d.collectProducts(p);
     if (snapshot.products.length === 0) return { ok: false, reason: "no-products-found" };
     if (!snapshot.livePinButtonsOnPage) return { ok: false, reason: "live-pin-control-not-available" };
 
     const resolved = resolveProductForPin(snapshot.products, productKey);
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
 
+    // === GERBANG TERAKHIR SEBELUM MENYENTUH UI ===
+    // Semua langkah di atas memakan waktu (halaman siap, identitas, scraping
+    // produk). Selama itu scene bisa sudah berganti. Memeriksa playId setelah
+    // klik tidak ada gunanya: produk yang salah sudah tampil ke penonton.
+    if (isStale(playId)) {
+      log("SERVICE_STALE", { scene, playId, latest: latestPlayId, phase: "before-click" });
+      return { ok: false, reason: "stale-before-click", clicked: false };
+    }
+
     if (dryRun) {
-      const probe = await pinProductByTitle(p, productKey, { dryRun: true });
+      const probe = await d.pinProductByTitle(p, productKey, { dryRun: true });
       return probe.ok
         ? { ok: true, reason: "dry-run", title: probe.title, clicked: false }
         : { ok: false, reason: probe.reason };
     }
 
-    const act = await pinProductByTitle(p, productKey, { dryRun: false });
+    const act = await d.pinProductByTitle(p, productKey, { dryRun: false });
     if (!act.ok) return { ok: false, reason: act.reason };
 
-    const after = await readPinState(p, productKey);
+    const after = await d.readPinState(p, productKey);
     log("SERVICE_PINNED", { scene, title: act.title, after: after.text });
     return { ok: true, reason: "pinned", title: act.title, state: after.text, clicked: true };
   }
@@ -95,14 +122,14 @@ function createService({ config = loadConfig(), dryRun = false } = {}) {
       return { ok: false, reason: "empty-product-key" };
     }
     const id = Number.isFinite(playId) ? playId : 0;
-    if (id && id < latestPlayId) return { ok: false, reason: "stale" };
+    if (isStale(id)) return { ok: false, reason: "stale" };
     if (id > latestPlayId) latestPlayId = id;
 
     return runExclusive(async () => {
       // Dicek lagi DI DALAM antrean: permintaan yang lebih baru bisa datang
       // selama kita menunggu giliran. Yang menang adalah yang terbaru.
-      if (id && id < latestPlayId) {
-        log("SERVICE_STALE", { scene, playId: id, latest: latestPlayId });
+      if (isStale(id)) {
+        log("SERVICE_STALE", { scene, playId: id, latest: latestPlayId, phase: "queued" });
         return { ok: false, reason: "stale" };
       }
       try {
@@ -141,7 +168,7 @@ function createService({ config = loadConfig(), dryRun = false } = {}) {
   });
 
   async function stop() {
-    if (browser) await closeBrowser(browser).catch(() => {});
+    if (browser) await d.closeBrowser(browser).catch(() => {});
     browser = null;
     page = null;
   }
@@ -149,14 +176,17 @@ function createService({ config = loadConfig(), dryRun = false } = {}) {
   return { app, handlePin, stop, __state: () => ({ latestPlayId, hasPage: !!page }) };
 }
 
-function startService({ port = Number(process.env.AUTOPIN_PORT) || DEFAULT_PORT, host = "127.0.0.1", ...rest } = {}) {
+// Selalu loopback: /pin tidak boleh bisa dipanggil dari perangkat lain di LAN.
+// Host sengaja TIDAK dibuat bisa dikonfigurasi lewat environment.
+function startService({ port = Number(process.env.AUTOPIN_PORT) || DEFAULT_PORT, ...rest } = {}) {
   const svc = createService(rest);
   return new Promise((resolve) => {
-    const server = svc.app.listen(port, host, () => {
-      log("SERVICE_LISTENING", { host, port, dryRun: !!rest.dryRun });
+    const server = svc.app.listen(port, LOOPBACK, () => {
+      const addr = server.address();
+      log("SERVICE_LISTENING", { host: addr.address, port: addr.port, dryRun: !!rest.dryRun });
       resolve({ ...svc, server });
     });
   });
 }
 
-module.exports = { createService, startService, isExpectedConsole, DEFAULT_PORT };
+module.exports = { createService, startService, isExpectedConsole, DEFAULT_PORT, LOOPBACK };

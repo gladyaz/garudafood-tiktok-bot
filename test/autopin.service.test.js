@@ -35,3 +35,110 @@ test("service: permintaan dengan playId lebih lama dibuang (latest-wins)", async
   assert.equal(r.reason, "stale");
   assert.equal(svc.__state().latestPlayId, 9);
 });
+
+// ---- AP2.1: klik tidak boleh terjadi kalau scene sudah berganti ----
+
+const { startService } = require("../autopin/service");
+
+const CONFIG = { consoleUrl: CONSOLE, expectedShop: "agen_mulia_abadi", forbiddenShops: ["garudafood"] };
+
+const SNAPSHOT = {
+  products: [
+    { number: 1, title: "Produk Uji Satu", pinButtons: 1, pinVisible: true, pinDisabled: false },
+    { number: 2, title: "Produk Uji Dua", pinButtons: 1, pinVisible: true, pinDisabled: false },
+  ],
+  livePinButtonsOnPage: 2,
+};
+
+// Browser palsu: cukup untuk menjalankan seluruh urutan gerbang tanpa Chromium.
+function fakeDeps({ clicks, collect }) {
+  return {
+    launchBrowser: async () => ({ id: "fake-browser" }),
+    getPage: async () => ({ url: () => CONSOLE, isClosed: () => false }),
+    openConsole: async () => ({ url: CONSOLE, settled: true, readyMs: 1 }),
+    closeBrowser: async () => {},
+    readIdentity: async () => ["agen_mulia_abadi"],
+    collectProducts: collect,
+    pinProductByTitle: async (_page, key) => { clicks.push(key); return { ok: true, title: key }; },
+    readPinState: async () => ({ text: "Unpin", disabled: false, buttons: 1 }),
+  };
+}
+
+const settle = async (turns = 20) => {
+  for (let i = 0; i < turns; i++) await new Promise((r) => setImmediate(r));
+};
+
+test("in-flight: permintaan lama yang SUDAH bekerja tidak pernah mengklik setelah scene baru masuk", async () => {
+  const clicks = [];
+  let releaseA = null;
+  let calls = 0;
+  const collect = async () => {
+    calls += 1;
+    if (calls === 1) await new Promise((r) => { releaseA = r; }); // A tertahan di scraping produk
+    return SNAPSHOT;
+  };
+
+  const svc = createService({ config: CONFIG, deps: fakeDeps({ clicks, collect }) });
+
+  const a = svc.handlePin({ scene: "PAX-3", productKey: "uji satu", playId: 10 });
+  await settle();
+  assert.equal(typeof releaseA, "function", "A harus sudah melewati gerbang dan sedang mengambil produk");
+  assert.deepEqual(clicks, [], "belum ada klik sebelum scene berganti");
+
+  // scene berikutnya mulai selagi A masih di tengah jalan
+  const b = svc.handlePin({ scene: "PAX-5", productKey: "uji dua", playId: 11 });
+  releaseA();
+
+  const [ra, rb] = await Promise.all([a, b]);
+
+  assert.equal(ra.ok, false);
+  assert.equal(ra.reason, "stale-before-click");
+  assert.equal(ra.clicked, false);
+  assert.equal(rb.ok, true);
+  assert.equal(rb.clicked, true);
+  assert.deepEqual(clicks, ["uji dua"], "hanya scene terbaru yang boleh menyentuh UI");
+});
+
+test("in-flight: tanpa scene baru, permintaan yang tertahan tetap boleh mengklik", async () => {
+  const clicks = [];
+  let release = null;
+  const collect = async () => {
+    if (!release) await new Promise((r) => { release = r; return r; });
+    return SNAPSHOT;
+  };
+  const svc = createService({ config: CONFIG, deps: fakeDeps({ clicks, collect }) });
+
+  const a = svc.handlePin({ scene: "PAX-3", productKey: "uji satu", playId: 10 });
+  await settle();
+  if (release) release();
+  const ra = await a;
+
+  assert.equal(ra.ok, true, "penundaan saja tidak boleh membatalkan pin");
+  assert.deepEqual(clicks, ["uji satu"]);
+});
+
+test("in-flight: identitas toko diperiksa sebelum klik, produksi tidak pernah diklik", async () => {
+  const clicks = [];
+  const svc = createService({
+    config: CONFIG,
+    deps: {
+      ...fakeDeps({ clicks, collect: async () => SNAPSHOT }),
+      readIdentity: async () => ["garudafood_officialstore"],
+    },
+  });
+  const r = await svc.handlePin({ scene: "PAX-3", productKey: "uji satu", playId: 1 });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^identity-/);
+  assert.deepEqual(clicks, []);
+});
+
+test("service mendengarkan hanya di loopback, tidak terekspos ke LAN", async () => {
+  const svc = await startService({ port: 0 });
+  try {
+    const addr = svc.server.address();
+    assert.equal(addr.address, "127.0.0.1");
+    assert.ok(addr.port > 0);
+  } finally {
+    await new Promise((r) => svc.server.close(r));
+  }
+});
