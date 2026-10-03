@@ -65,6 +65,14 @@ function checkIdentity({ expected, observed = [], forbidden = [] }) {
     : { ok: false, reason: "identity-mismatch", observed: seen.join(" | ") };
 }
 
+// Mode klik harus EKSPLISIT. Tanpa flag, mengklik mustahil.
+function decidePinMode({ confirm = false, dryRun = false } = {}) {
+  if (confirm && dryRun) return { ok: false, reason: "both-modes-given" };
+  if (confirm) return { ok: true, mode: "confirm" };
+  if (dryRun) return { ok: true, mode: "dry-run" };
+  return { ok: false, reason: "mode-flag-required" };
+}
+
 // products: [{ number, title, productId, pinControls, pinned }] dari DOM.
 // `number` adalah nomor yang TERLIHAT di UI (bukan posisi DOM).
 function resolveProduct(products, requested) {
@@ -75,6 +83,39 @@ function resolveProduct(products, requested) {
   const product = matches[0];
   if (product.pinControls === 0) return { ok: false, reason: "control-not-found", product };
   if (product.pinControls > 1) return { ok: false, reason: "ambiguous-control", product };
+  return { ok: true, product };
+}
+
+// Kunci judul ternormalisasi: identitas produk yang stabil.
+// Nomor posisi TIDAK dipakai — mengurutkan daftar menggeser nomor semua produk.
+function normalizeTitleKey(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/…+$/, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+// Resolusi target untuk aksi PIN SEBENARNYA (button[data-pin-performance-source="product_card"]).
+// Menolak: tidak ketemu, ambigu, kontrol pin LIVE tidak ada, kontrol ganda, tersembunyi, disabled.
+// Tidak pernah jatuh ke shopping_list, teks "Pin" generik, atau .pc_top_product.
+function resolveProductForPin(products, titleKey) {
+  const want = normalizeTitleKey(titleKey);
+  if (!want) return { ok: false, reason: "empty-title-key" };
+
+  const matches = products.filter((p) => normalizeTitleKey(p.title).includes(want));
+  if (matches.length === 0) return { ok: false, reason: "product-not-found" };
+  if (matches.length > 1) {
+    return { ok: false, reason: "ambiguous-product", count: matches.length };
+  }
+
+  const product = matches[0];
+  if (!product.pinButtons) return { ok: false, reason: "live-pin-control-not-available", product };
+  if (product.pinButtons > 1) return { ok: false, reason: "ambiguous-control", product };
+  if (product.pinVisible === false) return { ok: false, reason: "control-not-visible", product };
+  if (product.pinDisabled === true) return { ok: false, reason: "control-disabled", product };
   return { ok: true, product };
 }
 
@@ -109,6 +150,9 @@ module.exports = {
   parseProductNumber,
   normalizeIdentity,
   checkIdentity,
+  decidePinMode,
+  normalizeTitleKey,
+  resolveProductForPin,
   resolveProduct,
   verifyPinned,
   createSerialRunner,
