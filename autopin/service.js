@@ -15,6 +15,7 @@ const { log, checkIdentity, createSerialRunner, normalizeTitleKey, resolveProduc
 const { loadConfig } = require("./config");
 const browserMod = require("./browser");
 const productsMod = require("./products");
+const { createBrowserTransport } = require("../autocomment/browser-transport");
 
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
@@ -37,6 +38,9 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     getPage: browserMod.getPage,
     openConsole: browserMod.openConsole,
     closeBrowser: browserMod.closeBrowser,
+        // Tab kedua khusus chat. Dipisah dari halaman produk supaya scraping
+        // AutoPIN dan pemeriksaan komposer AutoComment tidak pernah berbagi DOM.
+        newPage: (b) => b.newPage(),
     collectProducts: productsMod.collectProducts,
     readIdentity: productsMod.readIdentity,
     pinProductByTitle: productsMod.pinProductByTitle,
@@ -47,6 +51,7 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
   const runExclusive = createSerialRunner();
   let browser = null;
   let page = null;
+    let chatPage = null;
   // playId terbesar yang pernah DITERIMA (bukan yang sedang dikerjakan).
   // Dicatat di pintu masuk, sebelum antrean, supaya pekerjaan yang sedang
   // berjalan bisa tahu dirinya sudah tidak relevan.
@@ -82,6 +87,35 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     log("SERVICE_PAGE_READY", { url: info.url, settled: info.settled, readyMs: info.readyMs });
     return page;
   }
+
+    // Halaman chat: tab TERPISAH di browser yang SAMA. Profil Chrome hanya bisa
+    // dipegang satu proses, jadi proses/profil kedua bukan pilihan; tab kedua
+    // memberi isolasi DOM tanpa login kedua.
+    async function ensureChatPage() {
+      if (chatPage && !chatPage.isClosed()) return chatPage;
+      await ensurePage(); // pastikan browser hidup dan sudah login
+      chatPage = await d.newPage(browser);
+      const info = await d.openConsole(chatPage, config);
+      log("SERVICE_CHAT_PAGE_READY", { url: info.url, settled: info.settled, readyMs: info.readyMs });
+      return chatPage;
+    }
+
+    // AR2A: satu-satunya mode. Transport ini tidak punya jalur mengetik/mengklik.
+    const commentTransport = createBrowserTransport({ getPage: ensureChatPage, dryRun: true });
+
+    // Diserialkan lewat runner yang SAMA dengan pin: walau halamannya beda, dua
+    // pekerjaan UI Puppeteer tidak boleh berjalan bersamaan di AR2A.
+    async function handleCommentDryRun({ text, scene, playId }) {
+      if (typeof text !== "string" || text.trim() === "") return { ok: false, reason: "empty-message" };
+      return runExclusive(async () => {
+        try {
+          return await commentTransport.send({ text, scene, playId });
+        } catch (err) {
+          log("SERVICE_COMMENT_ERROR", { scene, detail: String(err && err.message).slice(0, 120) });
+          return { ok: false, reason: "comment-dry-run-error" };
+        }
+      });
+    }
 
   // Gerbang yang sama persis dengan CLI yang sudah terverifikasi.
   async function guardedPin({ scene, productKey, playId }) {
@@ -163,6 +197,8 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
       ok: true,
       dryRun,
       pageOpen: !!(page && !page.isClosed()),
+            chatPageOpen: !!(chatPage && !chatPage.isClosed()),
+            commentTransport: "dry-run",
       latestPlayId,
       expectedShop: config.expectedShop || null,
     });
@@ -193,13 +229,31 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     }
   }
 
+    app.post("/comment/dry-run", async (req, res) => {
+      const { text, scene, playId } = req.body || {};
+      try {
+        res.json(await handleCommentDryRun({ text, scene, playId }));
+      } catch {
+        res.json({ ok: false, reason: "service-error" });
+      }
+    });
+
   async function stop() {
     if (browser) await d.closeBrowser(browser).catch(() => {});
     browser = null;
+    chatPage = null;
     page = null;
   }
 
-  return { app, handlePin, stop, warmUp, __state: () => ({ latestPlayId, hasPage: !!page }) };
+  return {
+    app,
+    handlePin,
+    handleCommentDryRun,
+    ensureChatPage,
+    stop,
+    warmUp,
+    __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage }),
+  };
 }
 
 // Selalu loopback: /pin tidak boleh bisa dipanggil dari perangkat lain di LAN.
