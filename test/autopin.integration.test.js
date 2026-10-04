@@ -222,7 +222,7 @@ test("force saat OBS masih memproses -> scene lama tidak pernah dipin", async ()
   // Scene yang sudah di-force tidak pernah benar-benar "mulai" bagi penonton:
   // tidak boleh ada permintaan pin untuknya sama sekali, bukan sekadar stale.
   assert.deepEqual(requestedScenes(), [PAX5]);
-  assert.ok(logs.some((l) => l.startsWith(`[AUX_SKIPPED] scene=${PAX3}`) && l.includes("scene-no-longer-active")));
+  assert.ok(logs.some((l) => l.startsWith(`[OBS_SWITCH_STALE] scene=${PAX3}`) && l.includes("phase=resolve")));
   assert.equal(state().activeScene, PAX5);
 });
 
@@ -246,7 +246,7 @@ test("force saat OBS memproses, balasan OBS tiba berurutan (PAX-3 sebelum MAIN) 
   deferred.get(PAX3).release(); // balasan PAX-3 datang SEBELUM balasan MAIN (urutan socket nyata)
   await flush();
   assert.deepEqual(requestedScenes(), [], 'scene yang sudah di-force tidak boleh dipin');
-  assert.ok(logs.some((l) => l.startsWith(`[AUX_SKIPPED] scene=${PAX3}`) && l.includes("active=null")));
+  assert.ok(logs.some((l) => l.startsWith(`[OBS_SWITCH_STALE] scene=${PAX3}`) && l.includes("active=null")));
   deferred.get(MAIN).release();
   await forcing;
   await advance(QUEUE_KICK_MS);

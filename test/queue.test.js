@@ -283,6 +283,10 @@ test("J: force all resets queue, active scene, playedScenes and cooldowns", asyn
     playedScenes: [],
     cooldownScenes: [],
     hasGlobalPauseTimer: false,
+    activePlayId: 0,          // force all mengakhiri generasi playback yang berlaku
+    waitingMedia: [],
+    hasFallbackTimer: false,
+    hasDurationTimer: false,
   });
 
   chat("j0", "etalase 1");

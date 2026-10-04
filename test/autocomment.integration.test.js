@@ -260,7 +260,7 @@ test("force saat OBS masih memproses -> scene lama tidak pernah dikomentari", as
   // Scene yang sudah di-force tidak pernah benar-benar "mulai" -> tidak dikomentari,
   // dan tidak menghabiskan jatah rate limit.
   assert.deepEqual(commentedScenes(), [PAX5]);
-  assert.ok(logs.some((l) => l.startsWith(`[AUX_SKIPPED] scene=${PAX3}`) && l.includes("scene-no-longer-active")));
+  assert.ok(logs.some((l) => l.startsWith(`[OBS_SWITCH_STALE] scene=${PAX3}`) && l.includes("phase=resolve")));
 });
 
 test("media-end, cooldown, dan jalur MAIN tidak berubah dengan hook AutoComment terpasang", async () => {
@@ -287,7 +287,7 @@ test("force saat OBS memproses, balasan OBS tiba berurutan (PAX-3 sebelum MAIN) 
   deferred.get(PAX3).release();
   await flush();
   assert.deepEqual(commentedScenes(), []);
-  assert.ok(logs.some((l) => l.startsWith(`[AUX_SKIPPED] scene=${PAX3}`) && l.includes("active=null")));
+  assert.ok(logs.some((l) => l.startsWith(`[OBS_SWITCH_STALE] scene=${PAX3}`) && l.includes("active=null")));
   deferred.get(MAIN).release();
   await forcing;
   await advance(QUEUE_KICK_MS);
@@ -296,25 +296,25 @@ test("force saat OBS memproses, balasan OBS tiba berurutan (PAX-3 sebelum MAIN) 
   assert.deepEqual(commentedScenes(), [PAX5]);
 });
 
-test("requesters ditangkap saat switch dimulai, bukan dibaca saat OBS membalas", async () => {
+test("balasan OBS lama untuk scene yang sama tidak dikomentari; yang baru membawa hitungan peminta yang benar", async () => {
   deferred.set(PAX3, {});
-  chat("a", "etalase 3");                 // 1 peminta, balasan OBS tertahan
+  chat("a", "etalase 3");                 // pemutaran lama, 1 peminta, balasan tertahan
   await advance(QUEUE_KICK_MS);
-  await bot.handleCommand("force all");   // reset cooldown & antrean; balasan pertama MASIH tertahan
+  await bot.handleCommand("force all");   // reset; balasan lama MASIH tertahan
   await advance(QUEUE_KICK_MS);
-  flood("z", 2, "etalase 3");             // PAX-3 diminta lagi oleh 2 penonton -> switch kedua, juga tertahan
+  flood("z", 2, "etalase 3");             // pemutaran baru untuk scene yang sama, 2 peminta
   await advance(QUEUE_KICK_MS);
   assert.equal(state().activeScene, PAX3);
 
-  deferred.get(PAX3).release();           // balasan untuk switch PERTAMA
+  deferred.get(PAX3).release();           // balasan untuk pemutaran LAMA -> basi, bukan generasi yang berlaku
+  await flush();
+  assert.deepEqual(commentRequests, []);
+  assert.ok(logs.some((l) => l.startsWith(`[OBS_SWITCH_STALE] scene=${PAX3}`) && l.includes("phase=resolve")));
+
+  deferred.get(PAX3).release();           // balasan untuk pemutaran BARU
   await flush();
   assert.equal(commentRequests.length, 1);
-  assert.equal(commentRequests[0].requesters, 1, "milik switch pertama, bukan slot yang sudah ditimpa jadi 2");
-
-  deferred.get(PAX3).release();           // balasan untuk switch kedua
-  await flush();
-  assert.equal(commentRequests[1].requesters, 2);
-  assert.ok(commentRequests[1].playId > commentRequests[0].playId);
+  assert.equal(commentRequests[0].requesters, 2, "hitungan milik pemutaran yang berlaku");
 });
 
 test("cabang durasi manual (waitForMediaEnd=false) juga memanggil kedua saudara", async () => {

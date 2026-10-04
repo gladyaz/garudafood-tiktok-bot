@@ -280,6 +280,14 @@ function dispatchAuxiliaries(sceneName, playId, requesters) {
 let playSeq = 0;
 const nextPlayId = () => ++playSeq;
 
+// Generasi playback yang SEDANG berlaku: playId dari switch yang terakhir dimulai
+// dan belum selesai / di-force / di-abort. 0 = tidak ada pemutaran yang berlaku
+// (playId valid selalu >= 1, jadi 0 tidak pernah cocok dengan permintaan lama).
+// Balasan OBS - sukses maupun gagal - yang playId-nya bukan ini adalah sisa dari
+// pemutaran lama dan harus menjadi no-op. Nama scene saja tidak cukup: setelah
+// force all, scene yang SAMA bisa diminta ulang (ABA) dan namanya cocok lagi.
+let activePlayId = 0;
+
 // Dipanggil HANYA setelah SetCurrentProgramScene sukses dan failsafe terpasang.
 // Sengaja tidak di-await: jalur playback tidak boleh menunggu browser.
 function dispatchAutoPin(sceneName, playId) {
@@ -309,6 +317,7 @@ function sceneCooldownRemaining(sceneName) {
 
 // tutup scene aktif: log selesai + mulai cooldown per-scene
 function finishActiveScene(reason) {
+  activePlayId = 0; // generasi ini berakhir: balasan OBS yang telat untuknya jadi no-op
   if (!activeScene) return;
   console.log(`[PLAYBACK_END] scene=${activeScene} reason=${reason}`);
   if (SCENE_REPLAY_COOLDOWN_MS > 0) {
@@ -695,6 +704,7 @@ function switchScene(sceneName, rule = null) {
   // Diambil sebelum request OBS dikirim: kalau force menyalip, scene yang lebih
   // baru punya playId lebih besar walau OBS-nya balas lebih dulu.
   const playId = nextPlayId();
+  activePlayId = playId; // generasi ini yang berlaku sampai selesai / di-force / di-abort
   // Ditangkap SEKARANG, bukan saat OBS membalas: slot bersama bisa sudah ditimpa
   // scene lain kalau operator menyalip selagi OBS masih memproses.
   const requesters = currentPlayRequesters;
@@ -702,6 +712,11 @@ function switchScene(sceneName, rule = null) {
   obs
     .call("SetCurrentProgramScene", { sceneName })
     .then(() => {
+      // Balasan untuk pemutaran yang sudah tidak berlaku -> no-op total.
+      if (playId !== activePlayId || (rule && activeScene !== sceneName)) {
+        console.log(`[OBS_SWITCH_STALE] scene=${sceneName} playId=${playId} currentPlayId=${activePlayId} active=${activeScene} phase=resolve`);
+        return;
+      }
       lastScene = sceneName;
 
       // bersihkan semua state & timer lama
@@ -767,8 +782,11 @@ function switchScene(sceneName, rule = null) {
     })
     .catch((err) => {
       console.error("❌ Error ganti scene:", err?.message || err);
-      // hanya lepas kalau scene ini masih yang aktif (bukan sudah di-force)
-      if (rule && activeScene === sceneName) abortSceneStart(sceneName, "obs-switch-error");
+      if (playId !== activePlayId || (rule && activeScene !== sceneName)) {
+        console.log(`[OBS_SWITCH_STALE] scene=${sceneName} playId=${playId} currentPlayId=${activePlayId} active=${activeScene} phase=reject`);
+        return;
+      }
+      if (rule) abortSceneStart(sceneName, "obs-switch-error");
     });
 }
 
@@ -902,6 +920,7 @@ async function forceAll() {
   playedScenes.clear();
   sceneCooldownUntil.clear();
   activeScene = null;
+  activePlayId = 0;
   waitingMediaSet.clear();
   waitingRule = null;
   clearAllSceneTimers();
@@ -1197,6 +1216,10 @@ module.exports = {
       playedScenes: Array.from(playedScenes),
       cooldownScenes: Array.from(sceneCooldownUntil.keys()),
       hasGlobalPauseTimer: !!globalPauseTimer,
+      activePlayId,
+      waitingMedia: Array.from(waitingMediaSet),
+      hasFallbackTimer: !!timer,
+      hasDurationTimer: !!sceneDurationTimer,
     }),
     // ganti dispatcher AutoPIN dengan palsu (tes integrasi tanpa browser)
     setScenePin: fake => { scenePin = fake; },
@@ -1219,6 +1242,7 @@ module.exports = {
       isMutedUntil.clear();
       waitingRule = null;
       activeScene = null;
+      activePlayId = 0;
       lastScene = null;
       busy = false;
     },
