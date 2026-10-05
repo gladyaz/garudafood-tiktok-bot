@@ -15,7 +15,7 @@ const { log, checkIdentity, createSerialRunner, normalizeTitleKey, resolveProduc
 const { loadConfig } = require("./config");
 const browserMod = require("./browser");
 const productsMod = require("./products");
-const { createBrowserTransport } = require("../autocomment/browser-transport");
+const { createBrowserTransport, waitForComposerReady } = require("../autocomment/browser-transport");
 const { createSendOnce } = require("../autocomment/send-once");
 const { createBrowserSender } = require("../autocomment/browser-sender");
 
@@ -40,9 +40,11 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     getPage: browserMod.getPage,
     openConsole: browserMod.openConsole,
     closeBrowser: browserMod.closeBrowser,
-        // Tab kedua khusus chat. Dipisah dari halaman produk supaya scraping
-        // AutoPIN dan pemeriksaan komposer AutoComment tidak pernah berbagi DOM.
-        newPage: (b) => b.newPage(),
+    // Tab kedua khusus chat. Dipisah dari halaman produk supaya scraping
+    // AutoPIN dan pemeriksaan komposer AutoComment tidak pernah berbagi DOM.
+    newPage: (b) => b.newPage(),
+    // Disuntikkan supaya penungguan komposer bisa diuji tanpa browser.
+    waitForComposerReady,
     collectProducts: productsMod.collectProducts,
     readIdentity: productsMod.readIdentity,
     pinProductByTitle: productsMod.pinProductByTitle,
@@ -98,19 +100,28 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // Halaman chat: tab TERPISAH di browser yang SAMA. Profil Chrome hanya bisa
     // dipegang satu proses, jadi proses/profil kedua bukan pilihan; tab kedua
     // memberi isolasi DOM tanpa login kedua.
-    async function ensureChatPage() {
-      if (chatPage && !chatPage.isClosed()) return chatPage;
-      await ensurePage(); // pastikan browser hidup dan sudah login
-      chatPage = await d.newPage(browser);
-      const info = await d.openConsole(chatPage, config);
-      log("SERVICE_CHAT_PAGE_READY", { url: info.url, settled: info.settled, readyMs: info.readyMs });
-      return chatPage;
-    }
+  async function ensureChatPage() {
+    if (chatPage && !chatPage.isClosed()) return chatPage;
+    await ensurePage(); // pastikan browser hidup dan sudah login
+    chatPage = await d.newPage(browser);
+    const info = await d.openConsole(chatPage, config);
 
-    // AR2A: satu-satunya mode. Transport ini tidak punya jalur mengetik/mengklik.
-    const commentTransport = createBrowserTransport({ getPage: ensureChatPage, dryRun: true });
+    // Komposer butuh beberapa detik sesudah halaman dimuat sebelum bisa dipakai.
+    // Menunggunya di sini membuat permintaan PERTAMA tidak lagi jatuh ke
+    // chat-input-disabled (terlihat di LIVE 2026-10-05). Murni membaca, dan
+    // tidak siap pun bukan alasan gagal: tiap permintaan punya gerbangnya sendiri.
+    const composer = await d.waitForComposerReady(chatPage, {});
+    log("SERVICE_CHAT_PAGE_READY", {
+      url: info.url, settled: info.settled, readyMs: info.readyMs,
+      composerReady: composer.ready, composerMs: composer.ms, polls: composer.polls,
+    });
+    return chatPage;
+  }
 
-      // AR3: pengirim chat yang bisa dipakai BERULANG, tapi satu kali ketik + satu
+  // AR2A: satu-satunya mode. Transport ini tidak punya jalur mengetik/mengklik.
+  const commentTransport = createBrowserTransport({ getPage: ensureChatPage, dryRun: true });
+
+  // AR3: pengirim chat yang bisa dipakai BERULANG, tapi satu kali ketik + satu
   // klik PER playId. MATI kecuali service dijalankan dengan
   // --enable-autocomment-send. Tidak ada nilai .env yang bisa menyalakannya.
   const browserSender = createBrowserSender({
@@ -345,6 +356,29 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       }
     });
 
+  // Dipanggil sekali saat service start, SESUDAH halaman produk hangat. Tab chat
+  // dibuka dan ditunggu sampai komposernya siap diperiksa, supaya scene pertama
+  // tidak menanggung cold start. Kegagalan di sini hanya dicatat: service tetap
+  // hidup dan AutoPIN tidak terganggu sama sekali.
+  async function warmUpChat() {
+    try {
+      await ensureChatPage();
+      // Halaman produk dikembalikan ke depan: daftar produk yang ter-virtualisasi
+      // hanya ter-render di tab yang aktif (lihat AP2.3).
+      if (page && typeof page.bringToFront === "function") {
+        try {
+          await page.bringToFront();
+        } catch {
+          /* bukan alasan untuk menggagalkan apa pun */
+        }
+      }
+      return { ok: true };
+    } catch (err) {
+      log("SERVICE_CHAT_WARMUP_FAILED", { detail: String(err && err.message).slice(0, 120) });
+      return { ok: false };
+    }
+  }
+
   async function stop() {
     if (browser) await d.closeBrowser(browser).catch(() => {});
     browser = null;
@@ -362,6 +396,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
         handleCommentPublishOnce,
         sendOnceStatus: () => sendOnce.status(),
     ensureChatPage,
+    warmUpChat,
     stop,
     warmUp,
     __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage }),
@@ -376,7 +411,15 @@ function startService({ port = Number(process.env.AUTOPIN_PORT) || DEFAULT_PORT,
     const server = svc.app.listen(port, LOOPBACK, () => {
       const addr = server.address();
       log("SERVICE_LISTENING", { host: addr.address, port: addr.port, dryRun: !!rest.dryRun });
-      svc.warmUp().then((w) => log("SERVICE_WARMED", { ok: w.ok }));
+      svc.warmUp()
+        .then((w) => {
+          log("SERVICE_WARMED", { ok: w.ok });
+          // Tab chat dihangatkan SESUDAH halaman produk dan berurutan, supaya
+          // tidak ada dua pekerjaan browser berbarengan saat start.
+          return svc.warmUpChat();
+        })
+        .then((c) => log("SERVICE_CHAT_WARMED", { ok: c.ok }))
+        .catch(() => {});
       resolve({ ...svc, server });
     });
   });

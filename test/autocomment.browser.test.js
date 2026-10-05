@@ -371,6 +371,8 @@ function serviceWithFakes({ pinDelay = 0, chatDelay = 0, composer = HEALTHY, pin
       launchBrowser: async () => ({ id: "fake" }),
       getPage: async () => productPage,
       newPage: async () => chat,
+      // Penunggu komposer disuntik cepat: tes tidak boleh benar-benar menunggu.
+      waitForComposerReady: async () => ({ ready: true, ms: 0, polls: 1 }),
       openConsole: async () => ({ url: CONSOLE, settled: true, readyMs: 1 }),
       closeBrowser: async () => {},
       readIdentity: async () => ["agen_mulia_abadi"],
@@ -471,6 +473,8 @@ test("service tetap hanya mendengarkan di loopback setelah AR2A", async () => {
       launchBrowser: async () => ({ id: "fake" }),
       getPage: async () => ({ url: () => "https://shop.tiktok.com/streamer/live/product/dashboard", isClosed: () => false, bringToFront: async () => {} }),
       newPage: async () => fakePage(HEALTHY),
+      // Penunggu komposer disuntik cepat: tes tidak boleh benar-benar menunggu.
+      waitForComposerReady: async () => ({ ready: true, ms: 0, polls: 1 }),
       openConsole: async () => ({ url: "x", settled: true, readyMs: 1 }),
       closeBrowser: async () => {},
       readIdentity: async () => ["agen_mulia_abadi"],

@@ -29,6 +29,11 @@ const CHAT_TEXTAREA = 'textarea[data-tid="m4b_input_textarea"]';
 const PUBLISH_ICON = 'svg[class*="arco-icon-publish"]';
 // Seberapa jauh naik dari textarea untuk menemukan blok komposer yang memuat ikon.
 const COMPOSER_SCOPE_DEPTH = 5;
+// Komposer chat tidak langsung aktif begitu halaman selesai dimuat: beberapa
+// detik pertama textarea-nya masih disabled. Tanpa menunggu, permintaan pertama
+// setiap sesi ditolak chat-input-disabled - terlihat di LIVE 2026-10-05.
+const COMPOSER_READY_TIMEOUT_MS = 15_000;
+const COMPOSER_POLL_MS = 500;
 const UI_MAX_LENGTH = 100; // batas yang terlihat di UI ("0/100")
 
 // Dijalankan DI DALAM halaman. Mencari kontrol kirim dengan bertolak dari
@@ -197,6 +202,40 @@ function decideDryRun(text, composer, { uiMax = UI_MAX_LENGTH } = {}) {
   return { ok: true };
 }
 
+// Menunggu komposer siap diperiksa. MURNI MEMBACA: satu-satunya hal yang
+// dilakukannya adalah menjalankan pemeriksa yang sama berulang kali. Tidak ada
+// focus, ketik, klik, maupun navigasi. Selalu berbatas waktu, dan tidak pernah
+// melempar ke pemanggil - kegagalan dilaporkan sebagai { ready:false }.
+async function waitForComposerReady(page, {
+  timeoutMs = COMPOSER_READY_TIMEOUT_MS,
+  pollMs = COMPOSER_POLL_MS,
+  uiMax = UI_MAX_LENGTH,
+  evaluateInPage = inspectComposerInPage,
+  now = () => Date.now(),
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  const sel = { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax, depth: COMPOSER_SCOPE_DEPTH };
+  const started = now();
+  let polls = 0;
+  let last = null;
+
+  for (;;) {
+    polls += 1;
+    try {
+      last = await page.evaluate(evaluateInPage, sel);
+      if (last && last.foundTextarea && last.textareaVisible && last.textareaDisabled !== true) {
+        return { ready: true, ms: now() - started, polls, composer: last };
+      }
+    } catch (err) {
+      last = { error: String(err && err.message).slice(0, 80) };
+    }
+    if (now() - started >= timeoutMs) {
+      return { ready: false, reason: "composer-not-ready", ms: now() - started, polls, composer: last };
+    }
+    await sleep(pollMs);
+  }
+}
+
 function createBrowserTransport({
   getPage,
   dryRun = true,
@@ -260,6 +299,9 @@ module.exports = {
   createBrowserTransport,
   inspectComposerInPage,
   findPublishControlInPage,
+  waitForComposerReady,
+  COMPOSER_READY_TIMEOUT_MS,
+  COMPOSER_POLL_MS,
   decideDryRun,
   CHAT_TEXTAREA,
   PUBLISH_ICON,

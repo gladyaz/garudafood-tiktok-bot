@@ -408,6 +408,8 @@ function serviceAR3({ allowAutoCommentSend = false, chat = chatPage({ typeWrites
         launchBrowser: async () => ({ id: "fake" }),
         getPage: async () => ({ url: () => CONSOLE, isClosed: () => false, bringToFront: async () => {} }),
         newPage: async () => chat,
+        // Penunggu komposer disuntik cepat: tes tidak boleh benar-benar menunggu.
+        waitForComposerReady: async () => ({ ready: true, ms: 0, polls: 1 }),
         openConsole: async () => ({ url: CONSOLE, settled: true, readyMs: 1 }),
         closeBrowser: async () => {},
         readIdentity: async () => [SHOP],
