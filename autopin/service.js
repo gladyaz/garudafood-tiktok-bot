@@ -16,6 +16,7 @@ const { loadConfig } = require("./config");
 const browserMod = require("./browser");
 const productsMod = require("./products");
 const { createBrowserTransport } = require("../autocomment/browser-transport");
+const { createSendOnce } = require("../autocomment/send-once");
 
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
@@ -32,7 +33,7 @@ function isExpectedConsole(actualUrl, consoleUrl) {
 
 // deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
 // diperiksa tanpa membuka browser sungguhan.
-function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}) {
+function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, deps = {} } = {}) {
   const d = {
     launchBrowser: browserMod.launchBrowser,
     getPage: browserMod.getPage,
@@ -102,6 +103,17 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
 
     // AR2A: satu-satunya mode. Transport ini tidak punya jalur mengetik/mengklik.
     const commentTransport = createBrowserTransport({ getPage: ensureChatPage, dryRun: true });
+
+      // AR2B: jalur kirim sungguhan sekali pakai. MATI kecuali service dijalankan
+      // dengan --allow-comment-send-once. Tidak ada variabel environment yang bisa
+      // menyalakannya, supaya tidak pernah tertinggal aktif di .env siapa pun.
+      const sendOnce = createSendOnce({
+        getPage: ensureChatPage,
+        allowed: allowCommentSendOnce === true,
+        config,
+        readIdentity: (p) => d.readIdentity(p),
+        checkIdentity,
+      });
 
     // Diserialkan lewat runner yang SAMA dengan pin: walau halamannya beda, dua
     // pekerjaan UI Puppeteer tidak boleh berjalan bersamaan di AR2A.
@@ -189,6 +201,34 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     });
   }
 
+    // Dua langkah TERPISAH, dua persetujuan terpisah: mengetik berhenti sebelum
+    // klik, dan klik butuh permintaan tersendiri. Keduanya lewat runner serial
+    // yang sama dengan pin, jadi tidak ada dua pekerjaan UI berbarengan.
+    async function handleCommentSendOnce(body = {}) {
+      return runExclusive(async () => {
+        try {
+          return await sendOnce.prepare({ text: body.text, confirm: body.confirm });
+        } catch (err) {
+          log("SERVICE_SEND_ONCE_ERROR", { stage: "prepare", detail: String(err && err.message).slice(0, 120) });
+          return { ok: false, reason: "send-once-error" };
+        }
+      });
+    }
+
+    async function handleCommentPublishOnce(body = {}) {
+      return runExclusive(async () => {
+        try {
+          const r = await sendOnce.publish({ confirm: body.confirm });
+          if (!r.ok) return r;
+          const after = await sendOnce.observeAfterClick();
+          return { ...r, after };
+        } catch (err) {
+          log("SERVICE_SEND_ONCE_ERROR", { stage: "publish", detail: String(err && err.message).slice(0, 120) });
+          return { ok: false, reason: "send-once-error" };
+        }
+      });
+    }
+
   const app = express();
   app.use(express.json({ limit: "16kb" }));
 
@@ -197,8 +237,9 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
       ok: true,
       dryRun,
       pageOpen: !!(page && !page.isClosed()),
-            chatPageOpen: !!(chatPage && !chatPage.isClosed()),
-            commentTransport: "dry-run",
+      chatPageOpen: !!(chatPage && !chatPage.isClosed()),
+      commentTransport: "dry-run",
+      commentSendOnce: sendOnce.status(),
       latestPlayId,
       expectedShop: config.expectedShop || null,
     });
@@ -238,6 +279,22 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
       }
     });
 
+    app.post("/comment/send-once", async (req, res) => {
+      try {
+        res.json(await handleCommentSendOnce(req.body || {}));
+      } catch {
+        res.json({ ok: false, reason: "service-error" });
+      }
+    });
+
+    app.post("/comment/send-once/publish", async (req, res) => {
+      try {
+        res.json(await handleCommentPublishOnce(req.body || {}));
+      } catch {
+        res.json({ ok: false, reason: "service-error" });
+      }
+    });
+
   async function stop() {
     if (browser) await d.closeBrowser(browser).catch(() => {});
     browser = null;
@@ -249,6 +306,9 @@ function createService({ config = loadConfig(), dryRun = false, deps = {} } = {}
     app,
     handlePin,
     handleCommentDryRun,
+        handleCommentSendOnce,
+        handleCommentPublishOnce,
+        sendOnceStatus: () => sendOnce.status(),
     ensureChatPage,
     stop,
     warmUp,
