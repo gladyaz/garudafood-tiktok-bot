@@ -47,6 +47,7 @@ const {
 } = require("./browser-transport");
 const { readComposerTextInPage, resolvePublishElementInPage } = require("./send-once");
 const { planTimeouts } = require("./timeouts");
+const { createStepTimer } = require("./step-timer");
 
 // Berapa playId terakhir yang diingat. Cukup untuk satu sesi LIVE (ratusan
 // scene) dan tetap terbatas supaya memori tidak tumbuh tanpa batas.
@@ -206,7 +207,27 @@ function createBrowserSender({
     }
   }
 
-  async function send({ text, scene, playId }) {
+  // Satu-satunya titik yang mencetak timing, dan ia di finally: hasil sukses,
+  // penolakan, maupun error sama-sama terukur. finally tanpa return/throw tidak
+  // mengubah apa pun yang dikembalikan attempt().
+  async function send(req) {
+    const timer = createStepTimer({ now });
+    try {
+      return await attempt(req, timer);
+    } finally {
+      // Permintaan yang ditolak sebelum menyentuh halaman tidak menghasilkan
+      // tahap apa pun; tidak perlu baris kosong yang bikin log berisik.
+      if (timer.any()) {
+        const id = Number.isFinite(req && req.playId) ? req.playId : "-";
+        log(
+          "[AUTOCOMMENT_SEND_TIMING] scene=" + (req && req.scene) +
+          " playId=" + id + " " + timer.describe()
+        );
+      }
+    }
+  }
+
+  async function attempt({ text, scene, playId }, timer) {
     if (!armed) return REFUSE("real-comment-send-disabled");
 
     const id = Number.isFinite(playId) ? playId : null;
@@ -227,7 +248,7 @@ function createBrowserSender({
 
     let p;
     try {
-      p = await getPage();
+      p = await timer.step("getPage", () => getPage());
       if (!p) throw new Error("chat-page-unavailable");
       if (typeof p.isClosed === "function" && p.isClosed()) throw new Error("chat-page-closed");
     } catch (err) {
@@ -235,7 +256,7 @@ function createBrowserSender({
     }
 
     // Identitas: header akun saja, tidak pernah teks produk.
-    const observed = await readIdentity(p);
+    const observed = await timer.step("identity", () => readIdentity(p));
     const verdict = checkIdentity({
       expected: config.expectedShop,
       observed,
@@ -246,7 +267,7 @@ function createBrowserSender({
       return REFUSE(`identity-${verdict.reason}`);
     }
 
-    const before = await inspect(p);
+    const before = await timer.step("inspect-before", () => inspect(p));
     const ready = decideDryRun(text, before, { uiMax: maxLength });
     if (!ready.ok) {
       log(`[AUTOCOMMENT_SEND_REFUSED] scene=${scene} playId=${id} reason=${ready.reason}`);
@@ -283,33 +304,35 @@ function createBrowserSender({
     // ini hanya jalur basi yang membersihkan, sehingga Phase 21 meninggalkan 33
     // karakter menggantung di kotak chat LIVE.
     const bail = async (reason, extra) => {
-      const cleanup = await clearOwnText(p, text);
+      const cleanup = await timer.step("cleanup", () => clearOwnText(p, text));
       return REFUSE(reason, { clicked: false, cleared: cleanup.cleared, ...extra });
     };
 
     try {
-      await bounded(p.focus(CHAT_TEXTAREA), "focus");
+      await timer.step("focus", () => bounded(p.focus(CHAT_TEXTAREA), "focus"));
       // Bersihkan isi lama lewat seleksi + hapus. Mengisi el.value langsung
       // tidak dilihat React, sehingga tombol kirim tidak akan pernah aktif.
-      await bounded(p.keyboard.down("Control"), "selectall");
-      await bounded(p.keyboard.press("KeyA"), "selectall");
-      await bounded(p.keyboard.up("Control"), "selectall");
-      await bounded(p.keyboard.press("Backspace"), "clear");
+      await timer.step("clear", async () => {
+        await bounded(p.keyboard.down("Control"), "selectall");
+        await bounded(p.keyboard.press("KeyA"), "selectall");
+        await bounded(p.keyboard.up("Control"), "selectall");
+        await bounded(p.keyboard.press("Backspace"), "clear");
+      });
       // Satu kali ketik. TIDAK ADA Enter: pengiriman hanya lewat klik.
-      await bounded(p.type(CHAT_TEXTAREA, text, { delay: 25 }), "type");
+      await timer.step("type", () => bounded(p.type(CHAT_TEXTAREA, text, { delay: 25 }), "type"));
     } catch (err) {
       const detail = String(err && err.message).slice(0, 80);
       log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=type detail=${detail}`);
       return bail("type-failed", { detail });
     }
 
-    const typed = await bounded(readText(p), "verify").catch(() => undefined);
+    const typed = await timer.step("verify", () => bounded(readText(p), "verify")).catch(() => undefined);
     if (typed !== text) {
       log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=verify reason=typed-text-mismatch`);
       return bail("typed-text-mismatch", { typed });
     }
 
-    const after = await bounded(inspect(p), "inspect").catch(() => null);
+    const after = await timer.step("inspect-after", () => bounded(inspect(p), "inspect")).catch(() => null);
     if (!after || !after.foundPublishControl) {
       log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=verify reason=publish-control-not-found`);
       return bail("publish-control-not-found", { composer: after });
@@ -321,31 +344,34 @@ function createBrowserSender({
 
     // Gerbang basi #2: tepat sebelum klik. Scene bisa berganti selama mengetik,
     // dan pesan scene lama TIDAK BOLEH muncul setelah scene baru mengambil alih.
-    if (stale(id)) {
-      const cleanup = await clearOwnText(p, text);
+    if (timer.sync("stale", () => stale(id))) {
+      const cleanup = await timer.step("cleanup", () => clearOwnText(p, text));
       log(`[AUTOCOMMENT_SEND_STALE] scene=${scene} playId=${id} phase=before-click cleared=${cleanup.cleared}`);
       return REFUSE("stale", { clicked: false, cleared: cleanup.cleared });
     }
 
     let handle = null;
     try {
-      handle = await bounded(
-        p.evaluateHandle(resolvePublishElementInPage, {
-          textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, depth: COMPOSER_SCOPE_DEPTH,
-        }),
-        "resolve-publish"
+      handle = await timer.step("resolve-publish", () =>
+        bounded(
+          p.evaluateHandle(resolvePublishElementInPage, {
+            textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, depth: COMPOSER_SCOPE_DEPTH,
+          }),
+          "resolve-publish"
+        )
       );
       const el = handle && typeof handle.asElement === "function" ? handle.asElement() : null;
       if (!el) {
         log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=click reason=publish-control-not-found`);
         return await bail("publish-control-not-found");
       }
-      await bounded(el.click(), "click"); // SATU klik. Tanpa retry, tanpa Enter, tanpa klik kedua.
+      // SATU klik. Tanpa retry, tanpa Enter, tanpa klik kedua.
+      await timer.step("click", () => bounded(el.click(), "click"));
     } catch (err) {
       const detail = String(err && err.message).slice(0, 80);
       log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=click detail=${detail}`);
       // TIDAK menyimpulkan gagal, dan TIDAK mengirim ulang: baca keadaannya.
-      return await reconcile({ p, text, scene, id, detail });
+      return await reconcile({ p, text, scene, id, detail, timer });
     } finally {
       if (handle && typeof handle.dispose === "function") {
         try {
@@ -360,7 +386,7 @@ function createBrowserSender({
     // bukan bukti sampai ke penonton. Karena itu sent tetap "unknown".
     let composerCleared = null;
     try {
-      const leftover = await bounded(readText(p), "after-click");
+      const leftover = await timer.step("after-click", () => bounded(readText(p), "after-click"));
       composerCleared = isEmptyText(leftover);
     } catch {
       composerCleared = null;
@@ -371,15 +397,18 @@ function createBrowserSender({
   }
 
   // Jendela rekonsiliasi: read-only, berbatas waktu, nol retry.
-  async function reconcile({ p, text, scene, id, detail }) {
-    const r = await reconcileClickOutcome(p, text, {
-      inspect,
-      readText,
-      windowMs: timeouts.reconcileWindowMs,
-      pollMs: timeouts.reconcilePollMs,
-      now,
-      sleep,
-    });
+  async function reconcile({ p, text, scene, id, detail, timer }) {
+    const t = timer || createStepTimer({ now });
+    const r = await t.step("reconcile", () =>
+      reconcileClickOutcome(p, text, {
+        inspect,
+        readText,
+        windowMs: timeouts.reconcileWindowMs,
+        pollMs: timeouts.reconcilePollMs,
+        now,
+        sleep,
+      })
+    );
 
     const head = `[AUTOCOMMENT_SEND_RECONCILED] scene=${scene} playId=${id} outcome=${r.outcome} polls=${r.polls} ms=${r.ms}`;
 
@@ -403,7 +432,7 @@ function createBrowserSender({
     if (r.outcome === OUTCOME.NOT_SENT) {
       // Teks kita masih utuh dan tombol masih hidup: kliknya tidak mendarat.
       // Hanya di sini pembersihan jelas benar.
-      const cleanup = await clearOwnText(p, text);
+      const cleanup = await t.step("cleanup", () => clearOwnText(p, text));
       log(`${head} cleared=${cleanup.cleared}`);
       return REFUSE("not-sent", {
         clicked: false,
@@ -417,7 +446,7 @@ function createBrowserSender({
     // SUDAH terbukti aman: clearOwnText membaca ulang dan hanya menghapus kalau
     // isinya persis teks kita. Teks orang lain, teks separuh, maupun komposer
     // kosong tidak tersentuh.
-    const cleanup = await clearOwnText(p, text);
+    const cleanup = await t.step("cleanup", () => clearOwnText(p, text));
     log(`${head} cleared=${cleanup.cleared} note="hasil tidak dapat disimpulkan, tidak ada kirim ulang"`);
     return REFUSE("ambiguous", {
       clicked: "unknown",
