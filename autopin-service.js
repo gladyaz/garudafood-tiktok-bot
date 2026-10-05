@@ -5,6 +5,11 @@
 //   node autopin-service.js                 jalankan service (akan mengklik)
 //   node autopin-service.js --dry-run       resolusi target saja, TIDAK mengklik
 //
+//   node autopin-service.js --enable-autocomment-send
+//       AR3: mengizinkan AutoComment mengirim chat otomatis, dan HANYA setelah
+//       pin terkonfirmasi. Satu ketik + satu klik per playId, tanpa retry.
+//       Tanpa flag ini /comment/send menolak: real-comment-send-disabled.
+//
 //   node autopin-service.js --allow-comment-send-once
 //       AR2B: mengizinkan TEPAT SATU percobaan kirim chat sungguhan (satu kali
 //       ketik + satu kali klik) selama umur proses ini. Tanpa flag ini jalur
@@ -25,7 +30,15 @@ async function main(argv) {
   // environment. Tanpa flag ini, /comment/send-once menolak dengan
   // real-comment-send-disabled.
   const allowCommentSendOnce = argv.includes("--allow-comment-send-once");
-  const svc = await startService({ dryRun, allowCommentSendOnce });
+// AR3: otorisasi chat otomatis. HANYA dari baris perintah.
+// AUTOCOMMENT_ENABLED=true di .env TIDAK cukup, dan memang tidak boleh cukup.
+const allowAutoCommentSend = argv.includes("--enable-autocomment-send");
+  const svc = await startService({ dryRun, allowCommentSendOnce, allowAutoCommentSend });
+  if (allowAutoCommentSend) {
+    log("SERVICE_AUTOCOMMENT_SEND_ARMED", {
+      note: "chat otomatis boleh dikirim SESUDAH pin terkonfirmasi: satu ketik + satu klik per playId, tanpa retry",
+    });
+  }
   if (allowCommentSendOnce) {
     log("SERVICE_SEND_ONCE_ARMED", {
       note: "satu percobaan ketik + satu klik untuk SELURUH umur proses ini; tidak ada retry",

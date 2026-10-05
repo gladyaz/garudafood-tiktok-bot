@@ -108,7 +108,7 @@ test("PAX-1 mulai -> tepat satu pesan terencana dengan teks yang benar", async (
   assert.equal(r.ok, true);
   assert.equal(r.reason, "dry-run");
   assert.equal(seen.length, 1);
-  assert.deepEqual(seen[0], { text: "Etalase 1 sudah aku pin ya kak 🛒", scene: "PAX-1", playId: 4 });
+  assert.deepEqual(seen[0], { text: "Etalase 1 sudah aku pin ya kak 🛒", scene: "PAX-1", playId: 4, pin: undefined });
   assert.match(tag("AUTOCOMMENT_REQUEST")[0], /scene=PAX-1 playId=4 requesters=1/);
   assert.equal(tag("AUTOCOMMENT_DRYRUN").length, 1);
 });
@@ -287,7 +287,7 @@ test("kiriman yang gagal tetap dihitung ke rate limit (tidak ada celah retry)", 
 
 test("__state melaporkan konfigurasi untuk audit", () => {
   const ac = make({ maxPerMinute: 4, minIntervalMs: 2_500 });
-  assert.deepEqual(ac.__state(), { enabled: true, latestPlayId: 0, handled: 0, sentInWindow: 0, lastSentAt: -Infinity, maxPerMinute: 4, minIntervalMs: 2_500 });
+  assert.deepEqual(ac.__state(), { enabled: true, pinPolicy: "ignore", latestPlayId: 0, handled: 0, sentInWindow: 0, lastSentAt: -Infinity, maxPerMinute: 4, minIntervalMs: 2_500 });
 });
 
 

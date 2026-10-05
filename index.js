@@ -222,21 +222,31 @@ let scenePin = createScenePin({
 });
 
 // ====== AUTOCOMMENT (AUXILIARY - saudara AutoPIN, bukan bawahannya) ======
-// AR1: transport HANYA dry-run. Tidak ada browser, HTTP, maupun TikTok di sini;
-// pesan cuma dicatat ke log. Dipicu oleh scene start yang sama dengan AutoPIN,
-// tapi tidak bergantung pada hasil AutoPIN: video tetap tayang walau pin gagal.
-const { createAutoComment, createDryRunTransport } = require("./autocomment/core");
+// Bot TIDAK memuat Puppeteer. Browser hidup di proses service terpisah; di sini
+// hanya ada klien HTTP tipis. Dipicu oleh scene start yang sama dengan AutoPIN,
+// tapi kegagalannya tidak pernah menyentuh playback.
+const { createAutoComment, PIN_POLICY } = require("./autocomment/core");
+const { loadConfig: loadAutoCommentConfig, TRANSPORTS } = require("./autocomment/config");
+const { createCommentSender } = require("./autocomment/client");
+const { inspectPinResult } = require("./autopin/pin-result");
 
-const { loadConfig: loadAutoCommentConfig } = require("./autocomment/config");
-
-// Default-nya (enabled=false, batas internal konservatif) diuji di
-// test/autocomment.config.test.js, jadi tidak bergantung pada .env siapa pun.
+// Default-nya (enabled=false, transport dry-run, batas internal konservatif)
+// diuji di test/autocomment.config.test.js, jadi tidak bergantung pada .env
+// siapa pun. Mengirim chat sungguhan BUTUH DUA LAPIS: transport=browser di sini,
+// DAN service yang dijalankan dengan --enable-autocomment-send.
 const autocommentConfig = loadAutoCommentConfig(process.env);
 const AUTOCOMMENT_ENABLED = autocommentConfig.enabled;
+const AUTOCOMMENT_TRANSPORT = autocommentConfig.transport;
 
 let autoComment = createAutoComment({
   enabled: AUTOCOMMENT_ENABLED,
-  send: createDryRunTransport(), // AR1: tidak pernah mengirim ke mana pun
+  // Kalimat "sudah aku pin" adalah KLAIM ke penonton. Saat transport browser,
+  // klaim itu hanya boleh terucap kalau produknya TERBUKTI ter-pin. Saat
+  // dry-run cukup AutoPIN yang ok: tidak ada yang sampai ke penonton, dan
+  // gladi bersihnya tetap setia pada urutan sungguhan.
+  pinPolicy: AUTOCOMMENT_TRANSPORT === TRANSPORTS.BROWSER ? PIN_POLICY.CONFIRMED : PIN_POLICY.OK,
+  inspectPin: inspectPinResult,
+  send: createCommentSender({ mode: AUTOCOMMENT_TRANSPORT, timeoutMs: autocommentConfig.timeoutMs }),
   maxPerMinute: autocommentConfig.maxPerMinute,
   minIntervalMs: autocommentConfig.minIntervalMs,
   timeoutMs: autocommentConfig.timeoutMs,
@@ -249,12 +259,21 @@ const realAutoCommentState = autoComment.__state;
 // Diisi processQueue() tepat sebelum processTrigger(); 0 untuk switch operator.
 let currentPlayRequesters = 0;
 
-// Dipanggil HANYA setelah SetCurrentProgramScene sukses dan failsafe terpasang,
-// tepat setelah dispatchAutoPin(). Tidak di-await: playback tidak menunggu.
-function dispatchAutoComment(sceneName, playId, requesters) {
+// AutoPIN dijalankan lebih dulu, lalu HASILNYA menentukan apakah AutoComment
+// berhak bicara. Dijalankan sebagai satu tugas latar: jalur playback tidak
+// pernah menunggu browser, dan kegagalan di sini tidak punya jalan untuk
+// menyentuh busy / activeScene / cooldown / timer / antrean.
+async function runAuxiliaries(sceneName, playId, requesters) {
+  let pin;
   try {
-    const p = autoComment.requestComment({ scene: sceneName, playId, requesters });
-    if (p && typeof p.catch === "function") p.catch(() => {});
+    pin = await scenePin.requestPin({ scene: sceneName, playId });
+  } catch (err) {
+    console.warn(`[AUTOPIN_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+    pin = { ok: false, reason: "dispatch-threw" };
+  }
+
+  try {
+    await autoComment.requestComment({ scene: sceneName, playId, requesters, pin });
   } catch (err) {
     console.warn(`[AUTOCOMMENT_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
   }
@@ -270,8 +289,13 @@ function dispatchAuxiliaries(sceneName, playId, requesters) {
     console.log(`[AUX_SKIPPED] scene=${sceneName} playId=${playId} reason=scene-no-longer-active active=${activeScene}`);
     return;
   }
-  dispatchAutoPin(sceneName, playId);
-  dispatchAutoComment(sceneName, playId, requesters);
+  // fire-and-forget: hasilnya tidak pernah ditunggu oleh playback.
+  try {
+    const task = runAuxiliaries(sceneName, playId, requesters);
+    if (task && typeof task.catch === "function") task.catch(() => {});
+  } catch (err) {
+    console.warn(`[AUX_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+  }
 }
 
 // playId naik setiap kali sebuah scene MULAI di-switch (bukan saat di-antre dan
@@ -290,15 +314,6 @@ let activePlayId = 0;
 
 // Dipanggil HANYA setelah SetCurrentProgramScene sukses dan failsafe terpasang.
 // Sengaja tidak di-await: jalur playback tidak boleh menunggu browser.
-function dispatchAutoPin(sceneName, playId) {
-  try {
-    const p = scenePin.requestPin({ scene: sceneName, playId });
-    if (p && typeof p.catch === "function") p.catch(() => {});
-  } catch (err) {
-    console.warn(`[AUTOPIN_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
-  }
-}
-
 function isValidSceneName(sceneName) {
   return typeof sceneName === "string" && sceneName.trim() !== "";
 }
@@ -1226,6 +1241,7 @@ module.exports = {
     // ganti dispatcher AutoComment dengan palsu (tes integrasi tanpa transport)
     setAutoComment: fake => { autoComment = fake; },
     autocommentEnabled: () => AUTOCOMMENT_ENABLED,
+    autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
     autocommentRealState: () => realAutoCommentState(),
     autopinMap: () => ({ ...autopinMap }),
     autopinEnabled: () => AUTOPIN_ENABLED,

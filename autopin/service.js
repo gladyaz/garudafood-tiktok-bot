@@ -17,6 +17,7 @@ const browserMod = require("./browser");
 const productsMod = require("./products");
 const { createBrowserTransport } = require("../autocomment/browser-transport");
 const { createSendOnce } = require("../autocomment/send-once");
+const { createBrowserSender } = require("../autocomment/browser-sender");
 
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
@@ -33,7 +34,7 @@ function isExpectedConsole(actualUrl, consoleUrl) {
 
 // deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
 // diperiksa tanpa membuka browser sungguhan.
-function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, deps = {} } = {}) {
+function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, deps = {} } = {}) {
   const d = {
     launchBrowser: browserMod.launchBrowser,
     getPage: browserMod.getPage,
@@ -59,6 +60,11 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   let latestPlayId = 0;
 
   const isStale = (id) => id > 0 && id < latestPlayId;
+  // Generasi scene dipakai BERSAMA oleh pin dan komentar: begitu scene baru
+  // mulai, pekerjaan chat milik scene lama ikut basi, bukan cuma pin-nya.
+  const noteScenePlayId = (id) => {
+    if (Number.isFinite(id) && id > latestPlayId) latestPlayId = id;
+  };
 
   async function ensurePage() {
     if (browser && page && !page.isClosed()) return page;
@@ -104,7 +110,39 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // AR2A: satu-satunya mode. Transport ini tidak punya jalur mengetik/mengklik.
     const commentTransport = createBrowserTransport({ getPage: ensureChatPage, dryRun: true });
 
-      // AR2B: jalur kirim sungguhan sekali pakai. MATI kecuali service dijalankan
+      // AR3: pengirim chat yang bisa dipakai BERULANG, tapi satu kali ketik + satu
+  // klik PER playId. MATI kecuali service dijalankan dengan
+  // --enable-autocomment-send. Tidak ada nilai .env yang bisa menyalakannya.
+  const browserSender = createBrowserSender({
+    getPage: ensureChatPage,
+    allowed: allowAutoCommentSend === true,
+    config,
+    readIdentity: (p) => d.readIdentity(p),
+    checkIdentity,
+    isStale,
+  });
+
+  async function handleCommentSend({ text, scene, playId }) {
+    if (allowAutoCommentSend !== true) return { ok: false, reason: "real-comment-send-disabled" };
+    const id = Number.isFinite(playId) ? playId : 0;
+    if (isStale(id)) return { ok: false, reason: "stale" };
+    noteScenePlayId(id);
+    return runExclusive(async () => {
+      // Diperiksa lagi di dalam antrean: scene bisa berganti selagi menunggu giliran.
+      if (isStale(id)) {
+        log("SERVICE_COMMENT_STALE", { scene, playId: id, latest: latestPlayId, phase: "queued" });
+        return { ok: false, reason: "stale" };
+      }
+      try {
+        return await browserSender.send({ text, scene, playId: id });
+      } catch (err) {
+        log("SERVICE_COMMENT_ERROR", { scene, detail: String(err && err.message).slice(0, 120) });
+        return { ok: false, reason: "comment-send-error" };
+      }
+    });
+  }
+
+  // AR2B: jalur kirim sungguhan sekali pakai. MATI kecuali service dijalankan
       // dengan --allow-comment-send-once. Tidak ada variabel environment yang bisa
       // menyalakannya, supaya tidak pernah tertinggal aktif di .env siapa pun.
       const sendOnce = createSendOnce({
@@ -119,6 +157,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // pekerjaan UI Puppeteer tidak boleh berjalan bersamaan di AR2A.
     async function handleCommentDryRun({ text, scene, playId }) {
       if (typeof text !== "string" || text.trim() === "") return { ok: false, reason: "empty-message" };
+      noteScenePlayId(Number.isFinite(playId) ? playId : 0);
       return runExclusive(async () => {
         try {
           return await commentTransport.send({ text, scene, playId });
@@ -182,7 +221,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     }
     const id = Number.isFinite(playId) ? playId : 0;
     if (isStale(id)) return { ok: false, reason: "stale" };
-    if (id > latestPlayId) latestPlayId = id;
+    noteScenePlayId(id);
 
     return runExclusive(async () => {
       // Dicek lagi DI DALAM antrean: permintaan yang lebih baru bisa datang
@@ -240,6 +279,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       chatPageOpen: !!(chatPage && !chatPage.isClosed()),
       commentTransport: "dry-run",
       commentSendOnce: sendOnce.status(),
+      autoCommentSend: allowAutoCommentSend === true ? "enabled" : "disabled",
+      autoCommentAttempts: browserSender.__state().attempts,
       latestPlayId,
       expectedShop: config.expectedShop || null,
     });
@@ -279,7 +320,16 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       }
     });
 
-    app.post("/comment/send-once", async (req, res) => {
+    app.post("/comment/send", async (req, res) => {
+    const { text, scene, playId } = req.body || {};
+    try {
+      res.json(await handleCommentSend({ text, scene, playId }));
+    } catch {
+      res.json({ ok: false, reason: "service-error" });
+    }
+  });
+
+  app.post("/comment/send-once", async (req, res) => {
       try {
         res.json(await handleCommentSendOnce(req.body || {}));
       } catch {
@@ -306,6 +356,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     app,
     handlePin,
     handleCommentDryRun,
+    handleCommentSend,
+    noteScenePlayId,
         handleCommentSendOnce,
         handleCommentPublishOnce,
         sendOnceStatus: () => sendOnce.status(),

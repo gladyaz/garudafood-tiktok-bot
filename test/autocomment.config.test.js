@@ -50,5 +50,5 @@ test("config: nilai kosong / tidak diisi tidak memicu peringatan", () => {
 
 test("config: tidak pernah memuat nilai rahasia atau transport", () => {
   const keys = Object.keys(loadConfig({ OBS_PASSWORD: "x", TIKTOK_USERNAME: "y", AUTOCOMMENT_ENABLED: "true" }));
-  assert.deepEqual(keys.sort(), ["enabled", "maxPerMinute", "minIntervalMs", "timeoutMs"]);
+  assert.deepEqual(keys.sort(), ["enabled", "maxPerMinute", "minIntervalMs", "timeoutMs", "transport"]);
 });

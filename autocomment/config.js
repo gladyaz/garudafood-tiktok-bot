@@ -3,8 +3,13 @@
 // diuji langsung (loadConfig({}).enabled === false) tanpa bergantung pada .env
 // milik siapa pun. Tidak ada nilai rahasia di sini.
 
+// Mode transport yang dikenal. Nilai lain TIDAK PERNAH diartikan sebagai
+// "browser"; yang tidak dikenal jatuh ke dry-run (aman) dan diperingatkan.
+const TRANSPORTS = Object.freeze({ DRY_RUN: "dry-run", BROWSER: "browser" });
+
 const DEFAULTS = Object.freeze({
   enabled: false,
+  transport: TRANSPORTS.DRY_RUN,
   // Batas internal konservatif, BUKAN limit resmi TikTok (angka resminya tidak diketahui).
   maxPerMinute: 6,
   minIntervalMs: 5_000,
@@ -25,13 +30,24 @@ function readNonNegativeInt(name, raw, fallback, warn) {
   return fallback;
 }
 
+// Mengirim sungguhan TIDAK PERNAH cukup dengan nilai di .env: service juga
+// harus dijalankan dengan --enable-autocomment-send. Dua lapis, sengaja.
+function readTransport(raw, warn) {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "") return DEFAULTS.transport;
+  if (v === TRANSPORTS.DRY_RUN || v === TRANSPORTS.BROWSER) return v;
+  warn("\u26a0 AUTOCOMMENT_TRANSPORT=\"" + String(raw) + "\" tidak dikenal -> pakai " + DEFAULTS.transport);
+  return DEFAULTS.transport;
+}
+
 function loadConfig(env = process.env, { warn = console.warn } = {}) {
   return {
     enabled: readFlag(env.AUTOCOMMENT_ENABLED),
+    transport: readTransport(env.AUTOCOMMENT_TRANSPORT, warn),
     maxPerMinute: readNonNegativeInt("AUTOCOMMENT_MAX_PER_MINUTE", env.AUTOCOMMENT_MAX_PER_MINUTE, DEFAULTS.maxPerMinute, warn),
     minIntervalMs: readNonNegativeInt("AUTOCOMMENT_MIN_INTERVAL_MS", env.AUTOCOMMENT_MIN_INTERVAL_MS, DEFAULTS.minIntervalMs, warn),
     timeoutMs: readNonNegativeInt("AUTOCOMMENT_TIMEOUT_MS", env.AUTOCOMMENT_TIMEOUT_MS, DEFAULTS.timeoutMs, warn),
   };
 }
 
-module.exports = { loadConfig, DEFAULTS };
+module.exports = { loadConfig, DEFAULTS, TRANSPORTS };

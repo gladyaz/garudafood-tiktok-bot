@@ -40,8 +40,18 @@ function brief(err) {
   return msg.slice(0, 120).replace(/\s+/g, " ");
 }
 
+// Seberapa keras bukti pin dituntut sebelum sebuah komentar boleh dikirim:
+//   "ignore"    - tidak diperiksa (dipakai unit test logika lain)
+//   "ok"        - AutoPIN harus ok (dipakai saat transport dry-run)
+//   "confirmed" - produk harus TERBUKTI ter-pin (wajib saat transport browser)
+// Kalimat "sudah aku pin" adalah klaim ke penonton; "confirmed" yang menjaganya
+// tidak pernah terucap tanpa bukti.
+const PIN_POLICY = Object.freeze({ IGNORE: "ignore", OK: "ok", CONFIRMED: "confirmed" });
+
 function createAutoComment({
   enabled = false,
+  pinPolicy = PIN_POLICY.IGNORE,
+  inspectPin = () => ({ confirmed: false, reason: "no-pin-inspector" }),
   send,
   format = formatSceneMessage,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -117,6 +127,23 @@ function createAutoComment({
         rememberPlayId(playId);
       }
 
+      // 3.5 Bukti pin. Dicek SEBELUM pesan dibentuk dan sebelum jatah rate
+      // limit terpakai, supaya penolakan di sini tidak membakar kuota.
+      if (pinPolicy !== PIN_POLICY.IGNORE) {
+        const pin = req.pin;
+        let gate;
+        if (pinPolicy === PIN_POLICY.CONFIRMED) {
+          const v = inspectPin(pin);
+          gate = v.confirmed ? null : v.reason || "pin-not-confirmed";
+        } else {
+          gate = pin && pin.ok === true ? null : (pin && pin.reason ? "pin-" + pin.reason : "pin-not-ok");
+        }
+        if (gate) {
+          log(`[AUTOCOMMENT_SKIPPED] scene=${scene} playId=${playId} reason=${gate}`);
+          return Promise.resolve(done(false, gate));
+        }
+      }
+
       // 4. Pesan deterministik; scene tanpa nomor etalase -> diam.
       const formatted = format(scene);
       if (!formatted || !formatted.ok) {
@@ -147,7 +174,7 @@ function createAutoComment({
 
       let sent;
       try {
-        sent = Promise.resolve(send({ text, scene, playId }));
+        sent = Promise.resolve(send({ text, scene, playId, pin: req.pin }));
       } catch (err) {
         log(`[AUTOCOMMENT_FAILED] scene=${scene} playId=${playId} reason=send-threw detail=${brief(err)}`);
         return Promise.resolve(done(false, "send-threw"));
@@ -204,6 +231,7 @@ function createAutoComment({
     // untuk tes/diagnostik; bukan bagian dari jalur playback
     __state: () => ({
       enabled,
+      pinPolicy,
       latestPlayId,
       handled: handledPlayIds.size,
       sentInWindow: sentAt.length,
@@ -216,6 +244,7 @@ function createAutoComment({
 
 module.exports = {
   createAutoComment,
+  PIN_POLICY,
   createDryRunTransport,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_PER_MINUTE,
