@@ -1113,15 +1113,24 @@ function attachTikTokListeners(conn) {
   conn.on("chat", (data) => {
     const user = data?.nickname ?? data?.user?.nickname ?? data?.uniqueId ?? "anon";
     console.log(`[TIKTOK_CHAT] user=${user} comment="${data?.comment ?? ""}"`);
-    // Kegagalan gerbang tidak boleh menelan chat: kalau ia melempar, pesan
-    // diteruskan seperti perilaku lama.
-    let verdict = { ok: true };
+    // Gerbang ini FAIL-CLOSED. Kalau ia melempar, pesan DIBUANG dan tidak pernah
+    // sampai ke handleChat(). Arah kegagalannya disengaja, dan alasannya langsung
+    // dari insiden Phase 21: satu chat yang lolos tanpa tersaring bisa berujung
+    // pada klik Pin nyata plus pesan nyata ke penonton, dan keduanya tidak bisa
+    // ditarik kembali. Kehilangan satu trigger hanya berarti penonton mengulang
+    // komentarnya.
+    //
+    // Verdict yang bukan { ok: true } persis juga dibuang: gerbang yang
+    // mengembalikan bentuk tak terduga diperlakukan sebagai gerbang yang rusak,
+    // bukan sebagai izin lewat.
+    let verdict;
     try {
       verdict = chatGate.accept(data);
     } catch (err) {
-      console.warn(`[TIKTOK_CHAT_GATE_ERROR] msg="${String(err && err.message).slice(0, 80)}"`);
+      console.warn(`[TIKTOK_CHAT_GATE_ERROR] msg="${String(err && err.message).slice(0, 80)}" action=drop`);
+      return;
     }
-    if (!verdict.ok) return;
+    if (!verdict || verdict.ok !== true) return;
     handleChat(data); // jalur produksi yang sudah ada: matching -> queue -> OBS
   });
 

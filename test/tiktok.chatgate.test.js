@@ -174,6 +174,39 @@ test("reconnect: backlog diantar ulang lagi, dan ditolak lagi", () => {
 
 const flush = () => new Promise((r) => setImmediate(r));
 
+// Mendorong waktu maju melewati timer "allow merge" 50ms plus switchScene, supaya
+// rantai scene -> AutoPIN -> AutoComment BENAR-BENAR sempat jalan. Tanpa ini,
+// pernyataan "0 AutoPIN" cuma berarti belum ada waktu, bukan benar-benar nol.
+async function settle() {
+  for (let i = 0; i < 6; i++) {
+    mock.timers.tick(100);
+    await flush();
+    await flush();
+  }
+}
+
+// AutoPIN dan AutoComment palsu yang MENCATAT setiap permintaan, supaya bisa
+// dibuktikan keduanya tidak pernah tersentuh.
+function countingAux() {
+  const pins = [];
+  const comments = [];
+  bot.__test.setScenePin({
+    requestPin: (req) => {
+      pins.push(req);
+      return Promise.resolve({ ok: false, reason: "test-noop" });
+    },
+  });
+  bot.__test.setAutoComment({
+    requestComment: (req) => {
+      comments.push(req);
+      return Promise.resolve({ ok: false, reason: "test-noop" });
+    },
+  });
+  return { pins, comments };
+}
+
+const brokenGate = (accept) => ({ accept, markConnected() {}, markDisconnected() {}, __state: () => ({}) });
+
 // Konektor yang meniru perilaku nyata: riwayat chat diantar SEBELUM connect() selesai.
 class BacklogConn extends EventEmitter {
   constructor(backlog = []) {
@@ -209,6 +242,7 @@ beforeEach(() => {
 afterEach(() => {
   bot.__tiktok.reset();
   bot.__test.reset();
+  mock.timers.reset();
   mock.restoreAll();
 });
 
@@ -260,24 +294,93 @@ test("sesudah gerbang: komentar penonton yang BENAR-BENAR baru tetap menyalakan 
   );
 });
 
-test("gerbang yang melempar tidak menelan chat: perilaku lama dipertahankan", async () => {
+// ---------- fail-closed ----------
+//
+// Gerbang yang rusak TIDAK boleh menjadi pintu terbuka. Satu chat yang lolos
+// tanpa tersaring bisa berujung pada klik Pin nyata plus pesan nyata ke penonton,
+// dan keduanya tidak bisa ditarik kembali - persis kerusakan Phase 21. Kehilangan
+// satu trigger hanya berarti penonton mengulang komentarnya.
+
+test("FAIL-CLOSED: gerbang melempar -> 0 MATCH, 0 QUEUE, 0 scene, 0 AutoPIN, 0 AutoComment", async () => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  const aux = countingAux();
   const conn = new BacklogConn();
   await bot.startTikTok({ createConnection: () => conn });
-  bot.__test.setChatGate({
-    accept: () => {
-      throw new Error("gerbang rusak");
-    },
-    markConnected() {},
-    markDisconnected() {},
-    __state: () => ({}),
-  });
+  bot.__test.setChatGate(brokenGate(() => {
+    throw new Error("gerbang rusak");
+  }));
 
   conn.emit("chat", { uniqueId: "lincoln", nickname: "lincoln", comment: "spill etalase 4", msgId: "x1" });
-  await flush();
+  await settle();
 
-  assert.ok(logs.some((l) => l.startsWith("[TIKTOK_CHAT_GATE_ERROR]")), "kerusakan terlihat");
-  assert.ok(
-    obsSwitches.length === 1 || bot.__test.getState().queue.length === 1,
-    "chat tetap diteruskan saat gerbang gagal"
-  );
+  const err = logs.find((l) => l.startsWith("[TIKTOK_CHAT_GATE_ERROR]"));
+  assert.ok(err, "kerusakan gerbang harus terlihat, tidak boleh senyap");
+  assert.ok(err.includes("action=drop"), "log menyebut pesannya DIBUANG: " + err);
+
+  assert.deepEqual(logs.filter((l) => l.startsWith("[MATCH]")), [], "0 MATCH");
+  assert.deepEqual(logs.filter((l) => l.startsWith("[QUEUE]")), [], "0 QUEUE");
+  assert.deepEqual(obsSwitches, [], "0 perpindahan scene");
+  assert.deepEqual(bot.__test.getState().queue, [], "antrean tetap kosong");
+  assert.equal(bot.__test.getState().busy, false, "tidak pernah menjadi sibuk");
+  assert.equal(bot.__test.getState().activeScene, null);
+  assert.deepEqual(aux.pins, [], "0 AutoPIN");
+  assert.deepEqual(aux.comments, [], "0 AutoComment");
+});
+
+test("KONTROL POSITIF: chat sah tetap sampai ke AutoPIN dan AutoComment", async () => {
+  // Tanpa tes ini, angka 0 di tes sebelumnya tidak membuktikan apa pun: bisa jadi
+  // rantainya memang tidak pernah jalan di harness ini.
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  const aux = countingAux();
+  const conn = new BacklogConn();
+  await bot.startTikTok({ createConnection: () => conn });
+
+  conn.emit("chat", { uniqueId: "lincoln", nickname: "lincoln", comment: "spill etalase 4", msgId: "ok-1" });
+  await settle();
+
+  assert.ok(logs.some((l) => l.startsWith("[MATCH]")), "chat sah tetap cocok");
+  assert.deepEqual(obsSwitches.length, 1, "tepat satu perpindahan scene");
+  assert.equal(aux.pins.length, 1, "AutoPIN diminta tepat sekali");
+  assert.equal(aux.comments.length, 1, "AutoComment diminta tepat sekali");
+});
+
+test("FAIL-CLOSED: verdict yang bukan { ok: true } persis juga dibuang", async () => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+
+  for (const bad of [undefined, null, {}, { ok: "true" }, { ok: 1 }, { ok: false }, "lanjut", 1]) {
+    const label = " verdict=" + JSON.stringify(bad);
+    bot.__tiktok.reset();
+    bot.__test.reset();
+    obsSwitches.length = 0;
+
+    const aux = countingAux();
+    const conn = new BacklogConn();
+    await bot.startTikTok({ createConnection: () => conn });
+    bot.__test.setChatGate(brokenGate(() => bad));
+
+    conn.emit("chat", { uniqueId: "lincoln", nickname: "lincoln", comment: "spill etalase 4", msgId: "b1" });
+    await settle();
+
+    assert.deepEqual(obsSwitches, [], "0 scene," + label);
+    assert.deepEqual(aux.pins, [], "0 AutoPIN," + label);
+    assert.deepEqual(aux.comments, [], "0 AutoComment," + label);
+  }
+});
+
+test("FAIL-CLOSED: penolakan biasa dari gerbang nyata juga nol aksi", async () => {
+  // Bukan hanya gerbang rusak: penolakan sah (backlog, kembar, pesan sendiri)
+  // harus berhenti di titik yang sama, sebelum handleChat.
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  const aux = countingAux();
+  const backlog = [{ uniqueId: "lincoln", nickname: "lincoln", comment: "spill etalase 4", msgId: "p-a" }];
+  const conn = new BacklogConn(backlog);
+  await bot.startTikTok({ createConnection: () => conn });
+
+  for (const e of backlog) conn.emit("chat", e); // antaran ulang
+  conn.emit("chat", { uniqueId: SELF, nickname: "Agen Mulia Abadi", comment: "spill etalase 4", msgId: "p-self" });
+  await settle();
+
+  assert.deepEqual(obsSwitches, [], "0 scene");
+  assert.deepEqual(aux.pins, [], "0 AutoPIN");
+  assert.deepEqual(aux.comments, [], "0 AutoComment");
 });
