@@ -229,6 +229,8 @@ const { createAutoComment, PIN_POLICY } = require("./autocomment/core");
 const { loadConfig: loadAutoCommentConfig, TRANSPORTS } = require("./autocomment/config");
 const { createCommentSender } = require("./autocomment/client");
 const { inspectPinResult } = require("./autopin/pin-result");
+const { createChatGate } = require("./tiktok/chat-gate");
+const { createInstanceLock } = require("./runtime/single-instance");
 
 // Default-nya (enabled=false, transport dry-run, batas internal konservatif)
 // diuji di test/autocomment.config.test.js, jadi tidak bergantung pada .env
@@ -1101,11 +1103,25 @@ function scheduleTikTokReconnect(reason, offline = false) {
   }, delayMs);
 }
 
+// Gerbang penerimaan chat: menolak pesan sendiri, pesan kembar, dan backlog yang
+// diantar ulang konektor saat connect. Lihat tiktok/chat-gate.js untuk bukti
+// insiden yang melahirkannya.
+let chatGate = createChatGate({ selfIdentities: [tiktokUsername] });
+
 // Didaftarkan SEKALI per instance koneksi.
 function attachTikTokListeners(conn) {
   conn.on("chat", (data) => {
     const user = data?.nickname ?? data?.user?.nickname ?? data?.uniqueId ?? "anon";
     console.log(`[TIKTOK_CHAT] user=${user} comment="${data?.comment ?? ""}"`);
+    // Kegagalan gerbang tidak boleh menelan chat: kalau ia melempar, pesan
+    // diteruskan seperti perilaku lama.
+    let verdict = { ok: true };
+    try {
+      verdict = chatGate.accept(data);
+    } catch (err) {
+      console.warn(`[TIKTOK_CHAT_GATE_ERROR] msg="${String(err && err.message).slice(0, 80)}"`);
+    }
+    if (!verdict.ok) return;
     handleChat(data); // jalur produksi yang sudah ada: matching -> queue -> OBS
   });
 
@@ -1117,6 +1133,7 @@ function attachTikTokListeners(conn) {
 
   conn.on("disconnected", (d) => {
     console.warn(`[TIKTOK_DISCONNECTED] code=${d?.code ?? "?"} reason="${d?.reason ?? ""}"`);
+    chatGate.markDisconnected(); // backlog akan diantar ulang saat reconnect
     scheduleTikTokReconnect("disconnected");
   });
 }
@@ -1132,6 +1149,9 @@ async function connectTikTok() {
     const roomId = tiktokConn?.roomId || state?.roomId || "(tidak terekspos)";
     // Satu baris per peristiwa: RECONNECTED kalau ini pemulihan, CONNECTED kalau koneksi pertama.
     console.log(`[TIKTOK_${reconnecting ? "RECONNECTED" : "CONNECTED"}] roomId=${roomId}`);
+    // Baru DI SINI chat dianggap live. Apa pun yang tiba sebelum titik ini adalah
+    // riwayat yang diantar konektor, dan sudah dicatat supaya antaran ulangnya tertolak.
+    chatGate.markConnected();
     tiktokAttempt = 0; // reset hitungan setelah sukses
     return state;
   } catch (err) {
@@ -1161,11 +1181,31 @@ function stopTikTok() {
   }
 }
 
+// Satu-satunya tempat baris [AUTOCOMMENT_CONFIG] dibentuk, supaya nilainya tidak
+// bisa lagi menyimpang dari konfigurasi yang benar-benar dipakai.
+function autocommentConfigLine(
+  cfg = autocommentConfig,
+  enabled = AUTOCOMMENT_ENABLED,
+  transport = AUTOCOMMENT_TRANSPORT
+) {
+  return `[AUTOCOMMENT_CONFIG] enabled=${enabled} maxPerMinute=${cfg.maxPerMinute} minIntervalMs=${cfg.minIntervalMs} timeoutMs=${cfg.timeoutMs} transport=${transport}`;
+}
+
 // =================== STARTUP (live only) ===================
 // Koneksi TikTok/OBS + stdin hanya jalan kalau file ini dieksekusi langsung
 // (`node index.js`). Saat di-require oleh test, tidak ada koneksi nyata.
 function startLive() {
-  console.log(`[AUTOCOMMENT_CONFIG] enabled=${AUTOCOMMENT_ENABLED} maxPerMinute=${autocommentConfig.maxPerMinute} minIntervalMs=${autocommentConfig.minIntervalMs} timeoutMs=${autocommentConfig.timeoutMs} transport=dry-run`);
+  // Lebih dulu dari apa pun: kalau ada bot lain yang masih hidup, proses ini
+  // tidak boleh ikut menyentuh OBS, TikTok, maupun service AutoPIN. Insiden
+  // Phase 21 terjadi justru karena tiga bot berjalan bersamaan.
+  const lock = createInstanceLock({ script: "index.js" });
+  const locked = lock.acquire();
+  if (!locked.ok) {
+    console.error("❌ Bot lain masih berjalan. Proses ini berhenti supaya tidak ada aksi ganda ke akun TikTok.");
+    process.exit(1);
+  }
+
+  console.log(autocommentConfigLine());
   startTikTok();
 
   connectOBS();
@@ -1177,11 +1217,15 @@ function startLive() {
   // Timer reconnect harus mati bersih saat proses berakhir.
   const shutdown = () => {
     stopTikTok();
+    lock.release();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
-  process.on("exit", stopTikTok);
+  process.on("exit", () => {
+    stopTikTok();
+    lock.release();
+  });
 }
 
 if (require.main === module) {
@@ -1220,6 +1264,7 @@ module.exports = {
       tiktokAttempt = 0;
       tiktokConnecting = false;
       tiktokStopped = false;
+      chatGate = createChatGate({ selfIdentities: [tiktokUsername] });
     },
   },
   __test: {
@@ -1242,6 +1287,10 @@ module.exports = {
     setAutoComment: fake => { autoComment = fake; },
     autocommentEnabled: () => AUTOCOMMENT_ENABLED,
     autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
+    autocommentConfigLine,
+    // ganti gerbang chat dengan palsu, atau baca hitungan penolakannya
+    setChatGate: fake => { chatGate = fake; },
+    chatGateState: () => chatGate.__state(),
     autocommentRealState: () => realAutoCommentState(),
     autopinMap: () => ({ ...autopinMap }),
     autopinEnabled: () => AUTOPIN_ENABLED,

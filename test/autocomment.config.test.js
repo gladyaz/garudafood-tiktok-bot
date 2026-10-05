@@ -52,3 +52,32 @@ test("config: tidak pernah memuat nilai rahasia atau transport", () => {
   const keys = Object.keys(loadConfig({ OBS_PASSWORD: "x", TIKTOK_USERNAME: "y", AUTOCOMMENT_ENABLED: "true" }));
   assert.deepEqual(keys.sort(), ["enabled", "maxPerMinute", "minIntervalMs", "timeoutMs", "transport"]);
 });
+
+// ---------- baris [AUTOCOMMENT_CONFIG] ----------
+//
+// Regresi insiden LIVE 2026-10-05 (Phase 21). Baris ini dulu mencetak
+// "transport=dry-run" secara hardcoded, sehingga bot-p21.log:2 menyatakan dry-run
+// padahal bot itu BENAR-BENAR mengirim chat lewat browser. Di sistem yang bisa
+// posting ke publik, log yang menyesatkan sama bahayanya dengan bug.
+
+process.env.DOTENV_CONFIG_QUIET = "true";
+const bot = require("../index.js");
+const line = bot.__test.autocommentConfigLine;
+const CFG = { maxPerMinute: 6, minIntervalMs: 5000, timeoutMs: 8000 };
+
+test("log config: transport yang dicetak adalah transport yang BENAR-BENAR dipakai", () => {
+  assert.ok(line(CFG, true, "browser").includes("transport=browser"), line(CFG, true, "browser"));
+  assert.ok(line(CFG, false, "dry-run").includes("transport=dry-run"));
+  // Pengaman inti: "browser" tidak boleh pernah tersamarkan sebagai dry-run.
+  assert.ok(!line(CFG, true, "browser").includes("transport=dry-run"));
+});
+
+test("log config: enabled dan seluruh batas ikut tercetak apa adanya", () => {
+  const l = line({ maxPerMinute: 3, minIntervalMs: 7000, timeoutMs: 9000 }, true, "browser");
+  assert.equal(l, "[AUTOCOMMENT_CONFIG] enabled=true maxPerMinute=3 minIntervalMs=7000 timeoutMs=9000 transport=browser");
+});
+
+test("log config: nilai bawaan proses ini mencerminkan .env yang sedang aktif", () => {
+  assert.ok(line().includes("enabled=" + bot.__test.autocommentEnabled()));
+  assert.ok(line().includes("transport=" + bot.__test.autocommentTransport()));
+});
