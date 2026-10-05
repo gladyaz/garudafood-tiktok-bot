@@ -345,7 +345,9 @@ test("timing: satu baris per permintaan, memuat seluruh tahap jalur sukses", asy
 
   assert.equal(timing().length, 1);
   const line = timing()[0];
-  assert.ok(line.startsWith("[AUTOCOMMENT_SEND_TIMING] scene=PAX-1 playId=1 total="), line);
+  assert.ok(line.startsWith("[AUTOCOMMENT_SEND_TIMING] scene=PAX-1 playId=1 strategy="), line);
+  assert.ok(/ strategy=(handle|dom|mouse) /.test(line), "strategi klik harus ikut dilaporkan: " + line);
+  assert.ok(/ total=\d+ms /.test(line), line);
   for (const name of [
     "getPage", "identity", "inspect-before", "focus", "clear", "type",
     "verify", "inspect-after", "stale", "resolve-publish", "click", "after-click",
@@ -360,7 +362,7 @@ test("timing: tahap dilaporkan dalam urutan alur, supaya mudah dibaca dan di-gre
 
   const names = timing()[0]
     .split(" ")
-    .filter((p) => p.includes("=") && !p.startsWith("total") && !p.startsWith("scene") && !p.startsWith("playId"))
+    .filter((p) => p.includes("=") && !["total", "scene", "playId", "strategy"].includes(p.split("=")[0]))
     .map((p) => p.split("=")[0]);
 
   const expected = STEP_ORDER.filter((n) => names.includes(n));

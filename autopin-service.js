@@ -23,6 +23,22 @@ require("dotenv").config({ quiet: true });
 
 const { log } = require("./autopin/core");
 const { startService } = require("./autopin/service");
+const { STRATEGIES } = require("./autocomment/click-strategy");
+
+// --click-strategy=<handle|dom|mouse>. Nilai tak dikenal TIDAK diam-diam
+// diartikan sebagai salah satu strategi: ia ditolak, dan prosesnya berhenti.
+function parseClickStrategy(argv) {
+  const arg = argv.find((a) => a.startsWith("--click-strategy="));
+  if (!arg) return STRATEGIES.HANDLE;
+  const v = arg.slice("--click-strategy=".length).trim().toLowerCase();
+  if (!Object.values(STRATEGIES).includes(v)) {
+    console.error(
+      `--click-strategy="${v}" tidak dikenal. Pilihan: ${Object.values(STRATEGIES).join(", ")}`
+    );
+    process.exit(1);
+  }
+  return v;
+}
 
 async function main(argv) {
   const dryRun = argv.includes("--dry-run");
@@ -33,12 +49,17 @@ async function main(argv) {
 // AR3: otorisasi chat otomatis. HANYA dari baris perintah.
 // AUTOCOMMENT_ENABLED=true di .env TIDAK cukup, dan memang tidak boleh cukup.
 const allowAutoCommentSend = argv.includes("--enable-autocomment-send");
-  const svc = await startService({ dryRun, allowCommentSendOnce, allowAutoCommentSend });
+  // Strategi klik HANYA dari baris perintah, sama sekali tidak dari environment:
+  // tidak ada berkas .env yang boleh mengubah cara sesuatu diklik di akun
+  // sungguhan. Tanpa flag ini, default-nya jalur warisan yang tidak berubah.
+  const clickStrategy = parseClickStrategy(argv);
+  const svc = await startService({ dryRun, allowCommentSendOnce, allowAutoCommentSend, clickStrategy });
   if (allowAutoCommentSend) {
     log("SERVICE_AUTOCOMMENT_SEND_ARMED", {
       note: "chat otomatis boleh dikirim SESUDAH pin terkonfirmasi: satu ketik + satu klik per playId, tanpa retry",
     });
   }
+  log("SERVICE_CLICK_STRATEGY", { strategy: clickStrategy });
   if (allowCommentSendOnce) {
     log("SERVICE_SEND_ONCE_ARMED", {
       note: "satu percobaan ketik + satu klik untuk SELURUH umur proses ini; tidak ada retry",

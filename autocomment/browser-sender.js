@@ -45,9 +45,10 @@ const {
   inspectComposerInPage, decideDryRun,
   CHAT_TEXTAREA, PUBLISH_ICON, UI_MAX_LENGTH, COMPOSER_SCOPE_DEPTH,
 } = require("./browser-transport");
-const { readComposerTextInPage, resolvePublishElementInPage } = require("./send-once");
+const { readComposerTextInPage } = require("./send-once");
 const { planTimeouts } = require("./timeouts");
 const { createStepTimer } = require("./step-timer");
+const { createClickStrategy, STRATEGIES } = require("./click-strategy");
 
 // Berapa playId terakhir yang diingat. Cukup untuk satu sesi LIVE (ratusan
 // scene) dan tetap terbatas supaya memori tidak tumbuh tanpa batas.
@@ -151,6 +152,10 @@ function createBrowserSender({
   isStale,                      // (playId) => boolean, generasi scene milik service
   maxLength = UI_MAX_LENGTH,
   timeouts = planTimeouts({}),
+  // Pilihan strategi klik. SENGAJA tidak dibaca dari environment: tidak ada
+  // berkas .env yang boleh mengubah cara sesuatu diklik di akun sungguhan.
+  // Default tetap jalur warisan sampai satu run LIVE memilih penggantinya.
+  clickStrategy = STRATEGIES.HANDLE,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   setTimeoutFn = setTimeout,
@@ -221,7 +226,7 @@ function createBrowserSender({
         const id = Number.isFinite(req && req.playId) ? req.playId : "-";
         log(
           "[AUTOCOMMENT_SEND_TIMING] scene=" + (req && req.scene) +
-          " playId=" + id + " " + timer.describe()
+          " playId=" + id + " strategy=" + clickStrategy + " " + timer.describe()
         );
       }
     }
@@ -350,36 +355,27 @@ function createBrowserSender({
       return REFUSE("stale", { clicked: false, cleared: cleanup.cleared });
     }
 
-    let handle = null;
+    // Satu instance per permintaan: lapis kedua di atas jatah per-playId, yang
+    // menjamin satu playId tidak pernah menghasilkan dua percobaan klik.
+    const clicker = createClickStrategy({ strategy: clickStrategy, depth: COMPOSER_SCOPE_DEPTH, logger: log });
+    let clicked;
     try {
-      handle = await timer.step("resolve-publish", () =>
-        bounded(
-          p.evaluateHandle(resolvePublishElementInPage, {
-            textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, depth: COMPOSER_SCOPE_DEPTH,
-          }),
-          "resolve-publish"
-        )
-      );
-      const el = handle && typeof handle.asElement === "function" ? handle.asElement() : null;
-      if (!el) {
-        log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=click reason=publish-control-not-found`);
-        return await bail("publish-control-not-found");
-      }
-      // SATU klik. Tanpa retry, tanpa Enter, tanpa klik kedua.
-      await timer.step("click", () => bounded(el.click(), "click"));
+      // SATU percobaan klik. Tanpa retry, tanpa Enter, dan TANPA mencoba
+      // strategi lain kalau yang ini gagal.
+      clicked = await clicker.click({ page: p, bounded, timer });
     } catch (err) {
       const detail = String(err && err.message).slice(0, 80);
-      log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=click detail=${detail}`);
-      // TIDAK menyimpulkan gagal, dan TIDAK mengirim ulang: baca keadaannya.
+      log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=click strategy=${clicker.name} detail=${detail}`);
+      // Hasilnya TIDAK DIKETAHUI: jangan simpulkan gagal, jangan kirim ulang,
+      // jangan ganti strategi. Baca keadaan komposernya.
       return await reconcile({ p, text, scene, id, detail, timer });
-    } finally {
-      if (handle && typeof handle.dispose === "function") {
-        try {
-          await handle.dispose();
-        } catch {
-          /* abaikan */
-        }
-      }
+    }
+    if (!clicked || clicked.ok !== true) {
+      const reason = (clicked && clicked.reason) || "publish-control-not-found";
+      log(`[AUTOCOMMENT_SEND_FAILED] scene=${scene} playId=${id} stage=click strategy=${clicker.name} reason=${reason}`);
+      // Keadaan elemen yang menolak berarti kita TAHU tidak ada klik yang
+      // terjadi - maka teks kita sendiri aman dibersihkan.
+      return await bail(reason);
     }
 
     // Bacaan sesudah klik: komposer yang kembali kosong adalah sinyal kuat, tapi
@@ -392,8 +388,8 @@ function createBrowserSender({
       composerCleared = null;
     }
 
-    log(`[AUTOCOMMENT_SEND_CLICKED] scene=${scene} playId=${id} clicks=1 composerCleared=${composerCleared}`);
-    return { ok: true, reason: "clicked", clicks: 1, sent: "unknown", text, composerCleared };
+    log(`[AUTOCOMMENT_SEND_CLICKED] scene=${scene} playId=${id} strategy=${clicker.name} clicks=1 composerCleared=${composerCleared}`);
+    return { ok: true, reason: "clicked", clicks: 1, sent: "unknown", text, composerCleared, strategy: clicker.name };
   }
 
   // Jendela rekonsiliasi: read-only, berbatas waktu, nol retry.
@@ -459,7 +455,7 @@ function createBrowserSender({
 
   return {
     send,
-    __state: () => ({ allowed: armed, attempts: attempted.size, timeouts }),
+    __state: () => ({ allowed: armed, attempts: attempted.size, timeouts, clickStrategy }),
   };
 }
 

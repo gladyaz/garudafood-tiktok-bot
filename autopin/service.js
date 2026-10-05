@@ -36,7 +36,7 @@ function isExpectedConsole(actualUrl, consoleUrl) {
 
 // deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
 // diperiksa tanpa membuka browser sungguhan.
-function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, deps = {} } = {}) {
+function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, clickStrategy, deps = {} } = {}) {
   // Anggaran waktu diturunkan dari timeout HTTP yang SAMA yang dipakai bot
   // (AUTOCOMMENT_TIMEOUT_MS), supaya service selalu menjawab sebelum bot
   // menyerah. Phase 21 gagal justru karena kedua sisi tidak pernah dihubungkan.
@@ -138,6 +138,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     checkIdentity,
     isStale,
     timeouts: budget,
+    clickStrategy,
   });
 
   async function handleCommentSend({ text, scene, playId }) {
@@ -308,6 +309,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       commentSendOnce: sendOnce.status(),
       autoCommentSend: allowAutoCommentSend === true ? "enabled" : "disabled",
       autoCommentAttempts: browserSender.__state().attempts,
+      clickStrategy: browserSender.__state().clickStrategy,
       latestPlayId,
       expectedShop: config.expectedShop || null,
     };
