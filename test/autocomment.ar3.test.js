@@ -388,9 +388,16 @@ test("pengirim: halaman tertutup, ketik melempar, klik melempar -> gagal rapi ta
   assert.equal((await senderFor(t).send({ text: TEXT, scene: "PAX-1", playId: 2 })).reason, "type-failed");
   assert.equal(countOf(t, "type"), 1);
 
+  // Klik yang melempar TIDAK lagi langsung disimpulkan gagal: keadaan komposer
+  // dibaca dulu secara read-only. Di halaman palsu ini teks kita masih utuh dan
+  // Publish masih enabled, jadi kesimpulan yang sah adalah not-sent - dan teks
+  // kita sendiri dibersihkan. Rinciannya di test/autocomment.reconcile.test.js.
   const c = chatPage({ typeWrites: TEXT, clickThrows: "Node is detached" });
   const s = senderFor(c);
-  assert.equal((await s.send({ text: TEXT, scene: "PAX-1", playId: 3 })).reason, "click-failed");
+  const r3 = await s.send({ text: TEXT, scene: "PAX-1", playId: 3 });
+  assert.equal(r3.reason, "not-sent");
+  assert.equal(r3.reconciled, "not-sent");
+  assert.equal(r3.clicked, false);
   assert.equal(countOf(c, "click"), 1, "tidak mencoba klik lagi");
   assert.equal((await s.send({ text: TEXT, scene: "PAX-1", playId: 3 })).reason, "duplicate-play-id");
 });

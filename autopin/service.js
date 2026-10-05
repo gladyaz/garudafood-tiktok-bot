@@ -18,6 +18,8 @@ const productsMod = require("./products");
 const { createBrowserTransport, waitForComposerReady } = require("../autocomment/browser-transport");
 const { createSendOnce } = require("../autocomment/send-once");
 const { createBrowserSender } = require("../autocomment/browser-sender");
+const { planTimeouts, describeTimeouts } = require("../autocomment/timeouts");
+const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
 
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
@@ -34,7 +36,11 @@ function isExpectedConsole(actualUrl, consoleUrl) {
 
 // deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
 // diperiksa tanpa membuka browser sungguhan.
-function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, deps = {} } = {}) {
+function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, deps = {} } = {}) {
+  // Anggaran waktu diturunkan dari timeout HTTP yang SAMA yang dipakai bot
+  // (AUTOCOMMENT_TIMEOUT_MS), supaya service selalu menjawab sebelum bot
+  // menyerah. Phase 21 gagal justru karena kedua sisi tidak pernah dihubungkan.
+  const budget = timeouts || planTimeouts({ httpTimeoutMs: loadAutoCommentConfig(process.env, { warn: () => {} }).timeoutMs });
   const d = {
     launchBrowser: browserMod.launchBrowser,
     getPage: browserMod.getPage,
@@ -131,6 +137,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     readIdentity: (p) => d.readIdentity(p),
     checkIdentity,
     isStale,
+    timeouts: budget,
   });
 
   async function handleCommentSend({ text, scene, playId }) {
@@ -282,19 +289,32 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   const app = express();
   app.use(express.json({ limit: "16kb" }));
 
-  app.get("/health", (_req, res) => {
-    res.json({
+  // Dipisah dari rute supaya BISA DITES tanpa menyalakan server. Sebelum
+  // Phase 21, commentTransport di sini di-hardcode "dry-run" walau service
+  // dijalankan dengan --enable-autocomment-send - jenis laporan menyesatkan
+  // yang sama dengan [AUTOCOMMENT_CONFIG] di bot, dan tidak ada tes yang bisa
+  // menangkapnya selama kalimatnya terkubur di dalam handler rute.
+  function healthPayload() {
+    return {
       ok: true,
       dryRun,
       pageOpen: !!(page && !page.isClosed()),
       chatPageOpen: !!(chatPage && !chatPage.isClosed()),
-      commentTransport: "dry-run",
+      // Yang dilaporkan adalah apa yang service ini SANGGUP lakukan: transport
+      // dimiliki bot, tapi tanpa --enable-autocomment-send tidak ada jalur
+      // browser sama sekali di sisi service.
+      commentTransport: allowAutoCommentSend === true ? "browser" : "dry-run",
+      timeouts: budget,
       commentSendOnce: sendOnce.status(),
       autoCommentSend: allowAutoCommentSend === true ? "enabled" : "disabled",
       autoCommentAttempts: browserSender.__state().attempts,
       latestPlayId,
       expectedShop: config.expectedShop || null,
-    });
+    };
+  }
+
+  app.get("/health", (_req, res) => {
+    res.json(healthPayload());
   });
 
   app.post("/pin", async (req, res) => {
@@ -399,7 +419,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     warmUpChat,
     stop,
     warmUp,
-    __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage }),
+    healthPayload,
+    timeouts: budget,
+    __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget }),
   };
 }
 
@@ -411,6 +433,13 @@ function startService({ port = Number(process.env.AUTOPIN_PORT) || DEFAULT_PORT,
     const server = svc.app.listen(port, LOOPBACK, () => {
       const addr = server.address();
       log("SERVICE_LISTENING", { host: addr.address, port: addr.port, dryRun: !!rest.dryRun });
+      // Anggaran waktu dicetak supaya bisa dibaca, bukan ditebak dari kode.
+      log("SERVICE_TIMEOUTS", { budget: describeTimeouts(svc.timeouts) });
+      if (!svc.timeouts.fits) {
+        log("SERVICE_TIMEOUT_BUDGET_TOO_TIGHT", {
+          note: "AUTOCOMMENT_TIMEOUT_MS terlalu kecil: service bisa menjawab SETELAH bot menyerah",
+        });
+      }
       svc.warmUp()
         .then((w) => {
           log("SERVICE_WARMED", { ok: w.ok });
