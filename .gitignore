@@ -16,3 +16,4 @@ logs/
 # AutoPIN: browser profile (cookies/session) + debug screenshots/DOM outlines
 .autopin-profile/
 .autopin-debug/
+.bot.lock

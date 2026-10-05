@@ -221,23 +221,101 @@ let scenePin = createScenePin({
   send: createHttpSender({ url: serviceUrl(process.env), timeoutMs: AUTOPIN_TIMEOUT_MS }),
 });
 
+// ====== AUTOCOMMENT (AUXILIARY - saudara AutoPIN, bukan bawahannya) ======
+// Bot TIDAK memuat Puppeteer. Browser hidup di proses service terpisah; di sini
+// hanya ada klien HTTP tipis. Dipicu oleh scene start yang sama dengan AutoPIN,
+// tapi kegagalannya tidak pernah menyentuh playback.
+const { createAutoComment, PIN_POLICY } = require("./autocomment/core");
+const { loadConfig: loadAutoCommentConfig, TRANSPORTS } = require("./autocomment/config");
+const { createCommentSender } = require("./autocomment/client");
+const { inspectPinResult } = require("./autopin/pin-result");
+const { createChatGate } = require("./tiktok/chat-gate");
+const { createInstanceLock } = require("./runtime/single-instance");
+
+// Default-nya (enabled=false, transport dry-run, batas internal konservatif)
+// diuji di test/autocomment.config.test.js, jadi tidak bergantung pada .env
+// siapa pun. Mengirim chat sungguhan BUTUH DUA LAPIS: transport=browser di sini,
+// DAN service yang dijalankan dengan --enable-autocomment-send.
+const autocommentConfig = loadAutoCommentConfig(process.env);
+const AUTOCOMMENT_ENABLED = autocommentConfig.enabled;
+const AUTOCOMMENT_TRANSPORT = autocommentConfig.transport;
+
+let autoComment = createAutoComment({
+  enabled: AUTOCOMMENT_ENABLED,
+  // Kalimat "sudah aku pin" adalah KLAIM ke penonton. Saat transport browser,
+  // klaim itu hanya boleh terucap kalau produknya TERBUKTI ter-pin. Saat
+  // dry-run cukup AutoPIN yang ok: tidak ada yang sampai ke penonton, dan
+  // gladi bersihnya tetap setia pada urutan sungguhan.
+  pinPolicy: AUTOCOMMENT_TRANSPORT === TRANSPORTS.BROWSER ? PIN_POLICY.CONFIRMED : PIN_POLICY.OK,
+  inspectPin: inspectPinResult,
+  send: createCommentSender({ mode: AUTOCOMMENT_TRANSPORT, timeoutMs: autocommentConfig.timeoutMs }),
+  maxPerMinute: autocommentConfig.maxPerMinute,
+  minIntervalMs: autocommentConfig.minIntervalMs,
+  timeoutMs: autocommentConfig.timeoutMs,
+});
+// Instance asli, disimpan sebelum tes menggantinya lewat setAutoComment: untuk
+// membuktikan flag dari env benar-benar sampai ke dispatcher yang dipakai produksi.
+const realAutoCommentState = autoComment.__state;
+
+// Jumlah penonton yang meminta scene yang sedang diputar: hanya untuk log.
+// Diisi processQueue() tepat sebelum processTrigger(); 0 untuk switch operator.
+let currentPlayRequesters = 0;
+
+// AutoPIN dijalankan lebih dulu, lalu HASILNYA menentukan apakah AutoComment
+// berhak bicara. Dijalankan sebagai satu tugas latar: jalur playback tidak
+// pernah menunggu browser, dan kegagalan di sini tidak punya jalan untuk
+// menyentuh busy / activeScene / cooldown / timer / antrean.
+async function runAuxiliaries(sceneName, playId, requesters) {
+  let pin;
+  try {
+    pin = await scenePin.requestPin({ scene: sceneName, playId });
+  } catch (err) {
+    console.warn(`[AUTOPIN_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+    pin = { ok: false, reason: "dispatch-threw" };
+  }
+
+  try {
+    await autoComment.requestComment({ scene: sceneName, playId, requesters, pin });
+  } catch (err) {
+    console.warn(`[AUTOCOMMENT_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+  }
+}
+
+// Kedua saudara auxiliary dipanggil dari satu tempat, dengan satu gerbang:
+// scene harus MASIH yang aktif saat OBS membalas. Kalau operator sudah force
+// (atau scene lain sudah menggantikan) selagi OBS masih memproses, scene ini
+// tidak pernah benar-benar "mulai" bagi penonton -> jangan pin, jangan komentar,
+// dan jangan habiskan jatah rate limit untuknya.
+function dispatchAuxiliaries(sceneName, playId, requesters) {
+  if (activeScene !== sceneName) {
+    console.log(`[AUX_SKIPPED] scene=${sceneName} playId=${playId} reason=scene-no-longer-active active=${activeScene}`);
+    return;
+  }
+  // fire-and-forget: hasilnya tidak pernah ditunggu oleh playback.
+  try {
+    const task = runAuxiliaries(sceneName, playId, requesters);
+    if (task && typeof task.catch === "function") task.catch(() => {});
+  } catch (err) {
+    console.warn(`[AUX_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+  }
+}
+
 // playId naik setiap kali sebuah scene MULAI di-switch (bukan saat di-antre dan
 // bukan saat OBS sudah balas). Urutan berdasarkan waktu permintaan inilah yang
 // membuat hasil milik scene lama bisa dikenali sebagai basi saat ada force.
 let playSeq = 0;
 const nextPlayId = () => ++playSeq;
 
+// Generasi playback yang SEDANG berlaku: playId dari switch yang terakhir dimulai
+// dan belum selesai / di-force / di-abort. 0 = tidak ada pemutaran yang berlaku
+// (playId valid selalu >= 1, jadi 0 tidak pernah cocok dengan permintaan lama).
+// Balasan OBS - sukses maupun gagal - yang playId-nya bukan ini adalah sisa dari
+// pemutaran lama dan harus menjadi no-op. Nama scene saja tidak cukup: setelah
+// force all, scene yang SAMA bisa diminta ulang (ABA) dan namanya cocok lagi.
+let activePlayId = 0;
+
 // Dipanggil HANYA setelah SetCurrentProgramScene sukses dan failsafe terpasang.
 // Sengaja tidak di-await: jalur playback tidak boleh menunggu browser.
-function dispatchAutoPin(sceneName, playId) {
-  try {
-    const p = scenePin.requestPin({ scene: sceneName, playId });
-    if (p && typeof p.catch === "function") p.catch(() => {});
-  } catch (err) {
-    console.warn(`[AUTOPIN_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
-  }
-}
-
 function isValidSceneName(sceneName) {
   return typeof sceneName === "string" && sceneName.trim() !== "";
 }
@@ -256,6 +334,7 @@ function sceneCooldownRemaining(sceneName) {
 
 // tutup scene aktif: log selesai + mulai cooldown per-scene
 function finishActiveScene(reason) {
+  activePlayId = 0; // generasi ini berakhir: balasan OBS yang telat untuknya jadi no-op
   if (!activeScene) return;
   console.log(`[PLAYBACK_END] scene=${activeScene} reason=${reason}`);
   if (SCENE_REPLAY_COOLDOWN_MS > 0) {
@@ -410,6 +489,7 @@ if (next) {
   playedScenes.add(next.scene);
 
   console.log(`[PLAY] scene=${next.scene} count=${next.count} requesters=${next.requesters ? next.requesters.size : 0}`);
+  currentPlayRequesters = next.requesters ? next.requesters.size : 0;
   processTrigger(next.rule);
 }
 }
@@ -641,10 +721,19 @@ function switchScene(sceneName, rule = null) {
   // Diambil sebelum request OBS dikirim: kalau force menyalip, scene yang lebih
   // baru punya playId lebih besar walau OBS-nya balas lebih dulu.
   const playId = nextPlayId();
+  activePlayId = playId; // generasi ini yang berlaku sampai selesai / di-force / di-abort
+  // Ditangkap SEKARANG, bukan saat OBS membalas: slot bersama bisa sudah ditimpa
+  // scene lain kalau operator menyalip selagi OBS masih memproses.
+  const requesters = currentPlayRequesters;
 
   obs
     .call("SetCurrentProgramScene", { sceneName })
     .then(() => {
+      // Balasan untuk pemutaran yang sudah tidak berlaku -> no-op total.
+      if (playId !== activePlayId || (rule && activeScene !== sceneName)) {
+        console.log(`[OBS_SWITCH_STALE] scene=${sceneName} playId=${playId} currentPlayId=${activePlayId} active=${activeScene} phase=resolve`);
+        return;
+      }
       lastScene = sceneName;
 
       // bersihkan semua state & timer lama
@@ -686,7 +775,7 @@ function switchScene(sceneName, rule = null) {
         }, fallbackMs);
 
         // playback sudah aman (scene aktif + failsafe terpasang) -> baru pin
-        dispatchAutoPin(sceneName, playId);
+        dispatchAuxiliaries(sceneName, playId, requesters);
         return;
       }
 
@@ -697,8 +786,6 @@ function switchScene(sceneName, rule = null) {
       // pastikan busy = true selama scene jalan
       busy = true;
 
-      dispatchAutoPin(sceneName, playId);
-
       sceneDurationTimer = setTimeout(() => {
         console.log(`⌛ Durasi selesai untuk scene ${sceneName}`);
         // forceCooldown = true → begitu selesai, kalau queue kosong,
@@ -706,11 +793,17 @@ function switchScene(sceneName, rule = null) {
         // Kalau mau tanpa cooldown, ubah true → false.
         endCurrentScene("manual-duration", false);
       }, dur);
+
+      // failsafe sudah terpasang -> baru saudara-saudara auxiliary dipanggil
+      dispatchAuxiliaries(sceneName, playId, requesters);
     })
     .catch((err) => {
       console.error("❌ Error ganti scene:", err?.message || err);
-      // hanya lepas kalau scene ini masih yang aktif (bukan sudah di-force)
-      if (rule && activeScene === sceneName) abortSceneStart(sceneName, "obs-switch-error");
+      if (playId !== activePlayId || (rule && activeScene !== sceneName)) {
+        console.log(`[OBS_SWITCH_STALE] scene=${sceneName} playId=${playId} currentPlayId=${activePlayId} active=${activeScene} phase=reject`);
+        return;
+      }
+      if (rule) abortSceneStart(sceneName, "obs-switch-error");
     });
 }
 
@@ -844,6 +937,7 @@ async function forceAll() {
   playedScenes.clear();
   sceneCooldownUntil.clear();
   activeScene = null;
+  activePlayId = 0;
   waitingMediaSet.clear();
   waitingRule = null;
   clearAllSceneTimers();
@@ -1009,11 +1103,34 @@ function scheduleTikTokReconnect(reason, offline = false) {
   }, delayMs);
 }
 
+// Gerbang penerimaan chat: menolak pesan sendiri, pesan kembar, dan backlog yang
+// diantar ulang konektor saat connect. Lihat tiktok/chat-gate.js untuk bukti
+// insiden yang melahirkannya.
+let chatGate = createChatGate({ selfIdentities: [tiktokUsername] });
+
 // Didaftarkan SEKALI per instance koneksi.
 function attachTikTokListeners(conn) {
   conn.on("chat", (data) => {
     const user = data?.nickname ?? data?.user?.nickname ?? data?.uniqueId ?? "anon";
     console.log(`[TIKTOK_CHAT] user=${user} comment="${data?.comment ?? ""}"`);
+    // Gerbang ini FAIL-CLOSED. Kalau ia melempar, pesan DIBUANG dan tidak pernah
+    // sampai ke handleChat(). Arah kegagalannya disengaja, dan alasannya langsung
+    // dari insiden Phase 21: satu chat yang lolos tanpa tersaring bisa berujung
+    // pada klik Pin nyata plus pesan nyata ke penonton, dan keduanya tidak bisa
+    // ditarik kembali. Kehilangan satu trigger hanya berarti penonton mengulang
+    // komentarnya.
+    //
+    // Verdict yang bukan { ok: true } persis juga dibuang: gerbang yang
+    // mengembalikan bentuk tak terduga diperlakukan sebagai gerbang yang rusak,
+    // bukan sebagai izin lewat.
+    let verdict;
+    try {
+      verdict = chatGate.accept(data);
+    } catch (err) {
+      console.warn(`[TIKTOK_CHAT_GATE_ERROR] msg="${String(err && err.message).slice(0, 80)}" action=drop`);
+      return;
+    }
+    if (!verdict || verdict.ok !== true) return;
     handleChat(data); // jalur produksi yang sudah ada: matching -> queue -> OBS
   });
 
@@ -1025,6 +1142,7 @@ function attachTikTokListeners(conn) {
 
   conn.on("disconnected", (d) => {
     console.warn(`[TIKTOK_DISCONNECTED] code=${d?.code ?? "?"} reason="${d?.reason ?? ""}"`);
+    chatGate.markDisconnected(); // backlog akan diantar ulang saat reconnect
     scheduleTikTokReconnect("disconnected");
   });
 }
@@ -1040,6 +1158,9 @@ async function connectTikTok() {
     const roomId = tiktokConn?.roomId || state?.roomId || "(tidak terekspos)";
     // Satu baris per peristiwa: RECONNECTED kalau ini pemulihan, CONNECTED kalau koneksi pertama.
     console.log(`[TIKTOK_${reconnecting ? "RECONNECTED" : "CONNECTED"}] roomId=${roomId}`);
+    // Baru DI SINI chat dianggap live. Apa pun yang tiba sebelum titik ini adalah
+    // riwayat yang diantar konektor, dan sudah dicatat supaya antaran ulangnya tertolak.
+    chatGate.markConnected();
     tiktokAttempt = 0; // reset hitungan setelah sukses
     return state;
   } catch (err) {
@@ -1069,10 +1190,31 @@ function stopTikTok() {
   }
 }
 
+// Satu-satunya tempat baris [AUTOCOMMENT_CONFIG] dibentuk, supaya nilainya tidak
+// bisa lagi menyimpang dari konfigurasi yang benar-benar dipakai.
+function autocommentConfigLine(
+  cfg = autocommentConfig,
+  enabled = AUTOCOMMENT_ENABLED,
+  transport = AUTOCOMMENT_TRANSPORT
+) {
+  return `[AUTOCOMMENT_CONFIG] enabled=${enabled} maxPerMinute=${cfg.maxPerMinute} minIntervalMs=${cfg.minIntervalMs} timeoutMs=${cfg.timeoutMs} transport=${transport}`;
+}
+
 // =================== STARTUP (live only) ===================
 // Koneksi TikTok/OBS + stdin hanya jalan kalau file ini dieksekusi langsung
 // (`node index.js`). Saat di-require oleh test, tidak ada koneksi nyata.
 function startLive() {
+  // Lebih dulu dari apa pun: kalau ada bot lain yang masih hidup, proses ini
+  // tidak boleh ikut menyentuh OBS, TikTok, maupun service AutoPIN. Insiden
+  // Phase 21 terjadi justru karena tiga bot berjalan bersamaan.
+  const lock = createInstanceLock({ script: "index.js" });
+  const locked = lock.acquire();
+  if (!locked.ok) {
+    console.error("❌ Bot lain masih berjalan. Proses ini berhenti supaya tidak ada aksi ganda ke akun TikTok.");
+    process.exit(1);
+  }
+
+  console.log(autocommentConfigLine());
   startTikTok();
 
   connectOBS();
@@ -1084,11 +1226,15 @@ function startLive() {
   // Timer reconnect harus mati bersih saat proses berakhir.
   const shutdown = () => {
     stopTikTok();
+    lock.release();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
-  process.on("exit", stopTikTok);
+  process.on("exit", () => {
+    stopTikTok();
+    lock.release();
+  });
 }
 
 if (require.main === module) {
@@ -1127,6 +1273,7 @@ module.exports = {
       tiktokAttempt = 0;
       tiktokConnecting = false;
       tiktokStopped = false;
+      chatGate = createChatGate({ selfIdentities: [tiktokUsername] });
     },
   },
   __test: {
@@ -1138,9 +1285,22 @@ module.exports = {
       playedScenes: Array.from(playedScenes),
       cooldownScenes: Array.from(sceneCooldownUntil.keys()),
       hasGlobalPauseTimer: !!globalPauseTimer,
+      activePlayId,
+      waitingMedia: Array.from(waitingMediaSet),
+      hasFallbackTimer: !!timer,
+      hasDurationTimer: !!sceneDurationTimer,
     }),
     // ganti dispatcher AutoPIN dengan palsu (tes integrasi tanpa browser)
     setScenePin: fake => { scenePin = fake; },
+    // ganti dispatcher AutoComment dengan palsu (tes integrasi tanpa transport)
+    setAutoComment: fake => { autoComment = fake; },
+    autocommentEnabled: () => AUTOCOMMENT_ENABLED,
+    autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
+    autocommentConfigLine,
+    // ganti gerbang chat dengan palsu, atau baca hitungan penolakannya
+    setChatGate: fake => { chatGate = fake; },
+    chatGateState: () => chatGate.__state(),
+    autocommentRealState: () => realAutoCommentState(),
     autopinMap: () => ({ ...autopinMap }),
     autopinEnabled: () => AUTOPIN_ENABLED,
     // sisipkan entry mentah ke antrean (untuk uji fail-safe entry tidak valid)
@@ -1156,6 +1316,7 @@ module.exports = {
       isMutedUntil.clear();
       waitingRule = null;
       activeScene = null;
+      activePlayId = 0;
       lastScene = null;
       busy = false;
     },

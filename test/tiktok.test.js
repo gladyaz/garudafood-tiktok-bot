@@ -56,6 +56,7 @@ beforeEach(() => {
   // AP2.1: AutoPIN dilumpuhkan di tes ini apa pun isi .env milik developer,
   // supaya tidak ada tes lama yang menembak localhost atau membuka browser.
   bot.__test.setScenePin({ requestPin: () => Promise.resolve({ ok: false, reason: "test-noop" }) });
+  bot.__test.setAutoComment({ requestComment: () => Promise.resolve({ ok: false, reason: "test-noop" }) });
   bot.__test.reset();
 });
 

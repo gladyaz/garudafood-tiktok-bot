@@ -127,8 +127,18 @@ function createScenePin({
             return done(false, result.reason || "refused");
           }
 
-          log(`[AUTOPIN_SUCCESS] scene=${scene} playId=${playId} key="${productKey}" ms=${ms}`);
-          return done(true, "pinned");
+          // Hasil mentah dari service IKUT DIBAWA. Tanpa ini, pin sungguhan dan
+          // dry-run sama-sama terlihat sebagai {ok:true, reason:"pinned"}, dan
+          // AutoComment bisa mengklaim "sudah aku pin" padahal tidak ada yang
+          // diklik. Penilaian "benar-benar ter-pin" ada di autopin/pin-result.js.
+          const dry = result.dryRun === true || result.reason === "dry-run";
+          log(`[AUTOPIN_SUCCESS] scene=${scene} playId=${playId} key="${productKey}" ms=${ms} dryRun=${dry} clicked=${result.clicked === true} state="${result.state || ""}"`);
+          return done(true, result.reason || "pinned", {
+            dryRun: dry,
+            clicked: result.clicked === true,
+            state: result.state,
+            title: result.title,
+          });
         })
         .catch((err) => {
           settle();

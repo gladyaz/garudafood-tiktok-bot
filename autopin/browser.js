@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
 const { log } = require("./core");
+const { PROTOCOL_TIMEOUT_MS } = require("../autocomment/timeouts");
 
 const SETTLE_POLL_MS = 500;
 const SETTLE_STABLE_MS = 2_500;
@@ -43,6 +44,11 @@ async function launchBrowser(config) {
       userDataDir: config.profileDir,
       executablePath: config.chromePath || undefined,
       defaultViewport: null,
+      // Bawaan Puppeteer 180 detik, dan itulah yang membuat satu panggilan
+      // Runtime.callFunctionOn menggantung jauh melewati timeout bot pada
+      // LIVE 2026-10-05. Ini jaring terakhir, bukan deadline operasi: deadline
+      // per operasi kirim dihitung di autocomment/timeouts.js.
+      protocolTimeout: PROTOCOL_TIMEOUT_MS,
       args: ["--window-size=1440,960"],
     });
   } catch (err) {
