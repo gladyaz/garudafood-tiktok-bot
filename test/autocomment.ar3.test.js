@@ -12,6 +12,7 @@ const { loadConfig, TRANSPORTS } = require("../autocomment/config");
 const { checkIdentity } = require("../autopin/core");
 const { createService } = require("../autopin/service");
 const { CHAT_TEXTAREA } = require("../autocomment/browser-transport");
+const { domClickInPage } = require("../autocomment/click-strategy");
 
 const TEXT = "Etalase 1 sudah aku pin ya kak 🛒";
 const SHOP = "agen_mulia_abadi";
@@ -228,6 +229,13 @@ function chatPage({ typeWrites = null, startText = "", closed = false, composerE
       press: async (k) => { actions.push(["keyboard.press", k]); if (k === "Backspace") value = ""; },
     },
     evaluate: async (fn, arg) => {
+      // Jalur DOM: resolusi dan klik terjadi di dalam halaman, jadi satu
+      // page.evaluate inilah kliknya.
+      if (fn === domClickInPage) {
+        actions.push(["click"]);
+        if (clickThrows) throw new Error(clickThrows);
+        return { ok: true, clicked: true, tag: "SPAN", cls: "cursor-pointer" };
+      }
       const isText = typeof arg === "string" || (arg && arg.textarea === undefined);
       actions.push(["evaluate", isText ? "text" : "composer"]);
       if (isText) return value;
@@ -249,6 +257,11 @@ function senderFor(page, over = {}) {
   return createBrowserSender({
     getPage: async () => page, allowed: true, config: CONFIG,
     readIdentity: async () => [SHOP], checkIdentity, isStale: () => false,
+    // Dipaku ke jalur warisan: halaman palsu di suite ini mengklik lewat
+    // evaluateHandle. Jalur itu masih bisa dipilih lewat --click-strategy=handle,
+    // jadi perilakunya tetap perlu terjaga. Matriks dom/mouse ada di
+    // test/autocomment.clickstrategy.test.js.
+    clickStrategy: "handle",
     logger: silent, ...over,
   });
 }

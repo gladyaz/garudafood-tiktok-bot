@@ -124,6 +124,9 @@ function senderFor(page, over = {}) {
     readIdentity: async () => [SHOP],
     checkIdentity,
     isStale: () => false,
+    // Lihat catatan di test/autocomment.ar3.test.js: suite ini menguji
+    // rekonsiliasi lewat halaman palsu yang mengklik dengan evaluateHandle.
+    clickStrategy: "handle",
     logger: silent,
     now: c.now,
     sleep: c.sleep,

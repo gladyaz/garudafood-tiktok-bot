@@ -154,8 +154,13 @@ function createBrowserSender({
   timeouts = planTimeouts({}),
   // Pilihan strategi klik. SENGAJA tidak dibaca dari environment: tidak ada
   // berkas .env yang boleh mengubah cara sesuatu diklik di akun sungguhan.
-  // Default tetap jalur warisan sampai satu run LIVE memilih penggantinya.
-  clickStrategy = STRATEGIES.HANDLE,
+  //
+  // Default DOM sejak run LIVE 2026-10-05 yang membuktikannya: click=95ms,
+  // total 1674ms, chat terkirim dan terkonfirmasi penonton. Jalur warisan
+  // (handle) tidak pernah selesai di halaman yang sama - 3758ms lalu 14038ms,
+  // keduanya timeout - jadi ia tidak boleh lagi menjadi jalur default. Masih
+  // tersedia lewat --click-strategy=handle untuk perbandingan.
+  clickStrategy = STRATEGIES.DOM,
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   setTimeoutFn = setTimeout,

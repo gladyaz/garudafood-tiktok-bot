@@ -502,9 +502,26 @@ function senderFor(page, strategy, over = {}) {
 
 const NEW = [STRATEGIES.DOM, STRATEGIES.MOUSE];
 
-test("pengirim: default produksi masih jalur warisan, BELUM berubah", () => {
+test("pengirim: default produksi adalah DOM", () => {
+  // Diubah sesudah run LIVE 2026-10-05 membuktikannya: click=95ms, total
+  // 1674ms, chat terkirim dan terkonfirmasi penonton - sementara jalur warisan
+  // tidak pernah selesai di halaman yang sama (3758ms lalu 14038ms, keduanya
+  // timeout).
   const s = createBrowserSender({ allowed: true });
-  assert.equal(s.__state().clickStrategy, STRATEGIES.HANDLE);
+  assert.equal(s.__state().clickStrategy, STRATEGIES.DOM);
+});
+
+test("pengirim: TANPA memilih apa pun, kirim benar-benar lewat DOM dan NOL evaluateHandle", async () => {
+  // Bukan hanya nama default-nya yang benar: jalur yang BENAR-BENAR dipakai
+  // harus DOM, dan jalur yang terbukti menggantung tidak boleh tersentuh.
+  const p = senderPage({});
+  const r = await senderFor(p, undefined).send({ text: TEXT, scene: "PAX-1", playId: 1 });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.strategy, STRATEGIES.DOM);
+  assert.equal(p.calls.filter((c) => c[0] === "evaluate:dom-click").length, 1);
+  assert.equal(p.calls.filter((c) => c[0] === "evaluateHandle").length, 0, "jalur warisan tidak boleh tersentuh");
+  assert.equal(p.calls.filter((c) => c[0] === "click").length, 1, "tetap tepat satu klik");
 });
 
 test("pengirim: klik sukses lewat strategi baru -> perilaku after-click tetap sama", async () => {

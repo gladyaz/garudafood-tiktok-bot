@@ -27,9 +27,12 @@ const { STRATEGIES } = require("./autocomment/click-strategy");
 
 // --click-strategy=<handle|dom|mouse>. Nilai tak dikenal TIDAK diam-diam
 // diartikan sebagai salah satu strategi: ia ditolak, dan prosesnya berhenti.
+//
+// Default DOM, terbukti di LIVE 2026-10-05 (click=95ms, chat terkonfirmasi
+// penonton). "handle" dan "mouse" tetap bisa dipilih eksplisit.
 function parseClickStrategy(argv) {
   const arg = argv.find((a) => a.startsWith("--click-strategy="));
-  if (!arg) return STRATEGIES.HANDLE;
+  if (!arg) return STRATEGIES.DOM;
   const v = arg.slice("--click-strategy=".length).trim().toLowerCase();
   if (!Object.values(STRATEGIES).includes(v)) {
     console.error(

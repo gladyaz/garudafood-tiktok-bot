@@ -224,6 +224,9 @@ function harness(pageOpts = {}, over = {}) {
     },
     checkIdentity,
     isStale: () => false,
+    // Lihat catatan di test/autocomment.ar3.test.js: suite ini mengukur tahap
+    // pada halaman palsu yang mengklik dengan evaluateHandle.
+    clickStrategy: "handle",
     timeouts: planTimeouts({ httpTimeoutMs: 8_000 }),
     now: () => t,
     sleep: async (ms) => {
