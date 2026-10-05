@@ -5,7 +5,9 @@
 // dan itu disengaja: AutoComment tidak boleh "mengarang" untuk scene yang tidak
 // dikenal. Komentar penonton TIDAK PERNAH dipantulkan ke dalam pesan.
 
-const MAX_LENGTH = 100; // batas yang terlihat di UI LIVE Manager (indikator 0/100)
+// Batas yang terlihat di UI LIVE Manager (indikator "0/100"). Dihitung dalam
+// satuan UTF-16 seperti penghitung TikTok: emoji di luar BMP bernilai 2.
+const MAX_LENGTH = 100;
 const DEFAULT_TEMPLATE = "Etalase {n} sudah aku pin ya kak 🛒";
 const PAX_RE = /^PAX-(\d{1,2})$/;
 
@@ -32,7 +34,7 @@ function formatSceneMessage(scene, { template = DEFAULT_TEMPLATE } = {}) {
   if (!text) return { ok: false, reason: "empty-text" };
   if (/[<>]/.test(text)) return { ok: false, reason: "html-not-allowed" };
   if (/[\x00-\x1f\x7f]/.test(text)) return { ok: false, reason: "control-chars" };
-  if ([...text].length > MAX_LENGTH) return { ok: false, reason: "too-long" };
+  if (text.length > MAX_LENGTH) return { ok: false, reason: "too-long" };
 
   return { ok: true, text, etalase: n };
 }

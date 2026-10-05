@@ -20,7 +20,7 @@
 
 const {
   inspectComposerInPage, decideDryRun,
-  CHAT_TEXTAREA, PUBLISH_ICON, UI_MAX_LENGTH,
+  CHAT_TEXTAREA, PUBLISH_ICON, UI_MAX_LENGTH, COMPOSER_SCOPE_DEPTH,
 } = require("./browser-transport");
 
 // Dijalankan di dalam halaman. Membaca isi komposer apa adanya.
@@ -34,16 +34,43 @@ function readComposerTextInPage(sel) {
 // (bukan ikon SVG-nya), memakai aturan penelusuran yang sama dengan AR2A.
 // Tidak mengubah apa pun; hanya mengembalikan referensi elemen.
 function resolvePublishElementInPage(sel) {
-  const icon = document.querySelector(sel);
-  if (!icon) return null;
-  const direct = icon.closest("button, [role=button]");
-  if (direct) return direct;
-  let node = icon.parentElement;
-  for (let i = 0; i < 3 && node; i++) {
-    if (/cursor-(not-allowed|pointer)/.test(node.className || "") || node.hasAttribute("aria-disabled")) return node;
-    node = node.parentElement;
+  // Aturan yang SAMA dengan pemeriksaan: berjangkar pada textarea, dibatasi blok
+  // komposer, menerima kedua varian ikon. Tidak boleh ada dua aturan berbeda
+  // antara "yang diperiksa" dan "yang diklik".
+  // CATATAN: page.evaluate() hanya membawa SUMBER fungsi ini ke halaman, tanpa
+  // scope modul. Jadi helper di bawah WAJIB bersarang, bukan di-import.
+  // Padanan tingkat-modulnya adalah findPublishControlInPage(), dan sebuah tes
+  // kesetaraan memastikan keduanya tidak pernah berbeda perilaku.
+  function findPublish(textarea, iconSelector, depth) {
+    const maxDepth = Number.isInteger(depth) && depth > 0 ? depth : 5;
+    let scope = textarea.parentElement;
+    let icon = null;
+    for (let i = 0; i < maxDepth && scope; i += 1) {
+      icon = scope.querySelector(iconSelector);
+      if (icon) break;
+      scope = scope.parentElement;
+    }
+    if (!icon) return null;
+    let actionable = icon.closest("button, [role=button]");
+    if (!actionable) {
+      let node = icon.parentElement;
+      for (let i = 0; i < 3 && node; i += 1) {
+        const cls = String(node.className || "");
+        if (/cursor-(not-allowed|pointer)/.test(cls) || (node.hasAttribute && node.hasAttribute("aria-disabled"))) {
+          actionable = node;
+          break;
+        }
+        node = node.parentElement;
+      }
+      actionable = actionable || icon.parentElement;
+    }
+    return { icon, actionable, scope };
   }
-  return icon.parentElement || null;
+
+  const ta = document.querySelector(sel.textarea);
+  if (!ta) return null;
+  const found = findPublish(ta, sel.publishIcon, sel.depth);
+  return found ? found.actionable || found.icon : null;
 }
 
 const REFUSE = (reason, extra) => ({ ok: false, reason, ...extra });
@@ -106,7 +133,8 @@ function createSendOnce({
     if (typeAttemptUsed) return REFUSE("real-comment-send-already-used");
 
     if (typeof text !== "string" || text.trim() === "") return REFUSE("empty-message");
-    if ([...text].length > maxLength) return REFUSE("message-too-long");
+    // Satuan UTF-16, menyamai penghitung TikTok.
+    if (text.length > maxLength) return REFUSE("message-too-long");
 
     let p;
     try {
@@ -121,7 +149,7 @@ function createSendOnce({
       return REFUSE(ident.reason);
     }
 
-    const sel = { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax: maxLength };
+    const sel = { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax: maxLength, depth: COMPOSER_SCOPE_DEPTH };
     const before = await p.evaluate(inspectComposerInPage, sel);
     const verdict = decideDryRun(text, before, { uiMax: maxLength });
     if (!verdict.ok) {
@@ -133,7 +161,7 @@ function createSendOnce({
     // Jatah dipakai SEKARANG, sebelum mutasi pertama: kalau pengetikan gagal di
     // tengah atau hasilnya ambigu, tidak boleh ada percobaan kedua.
     typeAttemptUsed = true;
-    log(`[AUTOCOMMENT_SEND_TYPING] shop="${(ident.observed || []).join(" | ")}" chars=${[...text].length}`);
+    log(`[AUTOCOMMENT_SEND_TYPING] shop="${(ident.observed || []).join(" | ")}" chars=${text.length}`);
 
     try {
       await p.focus(CHAT_TEXTAREA);
@@ -191,7 +219,7 @@ function createSendOnce({
 
     let handle = null;
     try {
-      handle = await p.evaluateHandle(resolvePublishElementInPage, PUBLISH_ICON);
+      handle = await p.evaluateHandle(resolvePublishElementInPage, { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, depth: COMPOSER_SCOPE_DEPTH });
       const el = handle && typeof handle.asElement === "function" ? handle.asElement() : null;
       if (!el) return REFUSE("publish-control-not-found");
       await el.click(); // SATU klik. Tidak ada percobaan kedua, tidak ada Enter.
@@ -225,7 +253,7 @@ function createSendOnce({
     }
     const text = await p.evaluate(readComposerTextInPage, CHAT_TEXTAREA);
     const composer = await p.evaluate(inspectComposerInPage, {
-      textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax: maxLength,
+      textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax: maxLength, depth: COMPOSER_SCOPE_DEPTH,
     });
     return { ok: true, composerCleared: text === "" || text === null, composerText: text, composer };
   }

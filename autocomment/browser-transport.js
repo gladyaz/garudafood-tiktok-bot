@@ -18,16 +18,86 @@
 // menyimpannya), identitas baris komentar, dan tombol balas per komentar.
 
 const CHAT_TEXTAREA = 'textarea[data-tid="m4b_input_textarea"]';
-// arco-icon-publish adalah nama ikon dari design system Arco, bukan kelas hash
-// hasil build. Tetap rapuh: kalau TikTok mengganti ikonnya, pemeriksaan ini
-// melapor publish-control-not-found dan dry-run menolak — tidak pernah menebak.
-const PUBLISH_ICON = "svg.arco-icon-publish";
+// Kontrol kirim BERGANTI WUJUD menurut isi komposer (dibuktikan di LIVE Manager
+// sungguhan, 2026-10-05):
+//   kosong : <span ... text-neutral-text3 cursor-not-allowed><svg class="arco-icon arco-icon-publish">
+//   terisi : <span ... text-primary-normal  cursor-pointer   ><svg class="arco-icon arco-icon-publish_management_fill">
+// Mencari svg.arco-icon-publish saja membuat tombolnya HILANG begitu teks masuk.
+// Karena itu polanya memakai awalan yang sama-sama dimiliki kedua varian.
+// Tidak ada data-tid/role/aria-label pada kontrol ini; satu-satunya jangkar
+// stabil di area komposer adalah textarea, jadi pencarian selalu bermula dari sana.
+const PUBLISH_ICON = 'svg[class*="arco-icon-publish"]';
+// Seberapa jauh naik dari textarea untuk menemukan blok komposer yang memuat ikon.
+const COMPOSER_SCOPE_DEPTH = 5;
 const UI_MAX_LENGTH = 100; // batas yang terlihat di UI ("0/100")
+
+// Dijalankan DI DALAM halaman. Mencari kontrol kirim dengan bertolak dari
+// textarea (satu-satunya elemen ber-data-tid di komposer), naik maksimal
+// COMPOSER_SCOPE_DEPTH tingkat sampai menemukan blok yang memuat ikon publish,
+// lalu menentukan elemen yang benar-benar bisa ditindak. Murni membaca.
+function findPublishControlInPage(textarea, iconSelector, depth) {
+  const maxDepth = Number.isInteger(depth) && depth > 0 ? depth : 5;
+  let scope = textarea.parentElement;
+  let icon = null;
+  for (let i = 0; i < maxDepth && scope; i += 1) {
+    icon = scope.querySelector(iconSelector);
+    if (icon) break;
+    scope = scope.parentElement;
+  }
+  if (!icon) return null;
+
+  // <button>/[role=button] kalau halaman menyediakannya; kalau tidak, naik
+  // sampai pembungkus terdekat yang membawa penanda state.
+  let actionable = icon.closest("button, [role=button]");
+  if (!actionable) {
+    let node = icon.parentElement;
+    for (let i = 0; i < 3 && node; i += 1) {
+      const cls = String(node.className || "");
+      if (/cursor-(not-allowed|pointer)/.test(cls) || (node.hasAttribute && node.hasAttribute("aria-disabled"))) {
+        actionable = node;
+        break;
+      }
+      node = node.parentElement;
+    }
+    actionable = actionable || icon.parentElement;
+  }
+  return { icon, actionable, scope };
+}
 
 // Dijalankan DI DALAM halaman. Murni membaca: getComputedStyle,
 // getBoundingClientRect, dan pembacaan atribut. Tidak ada focus/klik/ketik.
 function inspectComposerInPage(sel) {
-  const { textarea: TEXTAREA, publishIcon: PUBLISH, uiMax: UI_MAX } = sel;
+  const { textarea: TEXTAREA, publishIcon: PUBLISH, uiMax: UI_MAX, depth: DEPTH } = sel;
+  // CATATAN: page.evaluate() hanya membawa SUMBER fungsi ini ke halaman, tanpa
+  // scope modul. Jadi helper di bawah WAJIB bersarang, bukan di-import.
+  // Padanan tingkat-modulnya adalah findPublishControlInPage(), dan sebuah tes
+  // kesetaraan memastikan keduanya tidak pernah berbeda perilaku.
+  function findPublish(textarea, iconSelector, depth) {
+    const maxDepth = Number.isInteger(depth) && depth > 0 ? depth : 5;
+    let scope = textarea.parentElement;
+    let icon = null;
+    for (let i = 0; i < maxDepth && scope; i += 1) {
+      icon = scope.querySelector(iconSelector);
+      if (icon) break;
+      scope = scope.parentElement;
+    }
+    if (!icon) return null;
+    let actionable = icon.closest("button, [role=button]");
+    if (!actionable) {
+      let node = icon.parentElement;
+      for (let i = 0; i < 3 && node; i += 1) {
+        const cls = String(node.className || "");
+        if (/cursor-(not-allowed|pointer)/.test(cls) || (node.hasAttribute && node.hasAttribute("aria-disabled"))) {
+          actionable = node;
+          break;
+        }
+        node = node.parentElement;
+      }
+      actionable = actionable || icon.parentElement;
+    }
+    return { icon, actionable, scope };
+  }
+
   const out = {
     foundTextarea: false,
     foundPublishControl: false,
@@ -37,6 +107,8 @@ function inspectComposerInPage(sel) {
     publishDisabled: false,
     maxLength: null,
     placeholder: null,
+    publishIconClass: null,
+    publishState: null,
   };
 
   const visible = (el) => {
@@ -68,30 +140,36 @@ function inspectComposerInPage(sel) {
   }
   if (out.maxLength === null) out.maxLength = UI_MAX;
 
-  const icon = document.querySelector(PUBLISH);
-  if (icon) {
+  // Pencarian kontrol kirim SELALU berjangkar pada textarea lalu dibatasi pada
+  // blok komposer. Tanpa pembatasan itu, ikon mirip di bagian lain halaman bisa
+  // tertangkap - termasuk tombol "New" (gulir ke pesan baru) yang berukuran 0x0
+  // dan sama sekali bukan tombol kirim.
+  const found = ta ? findPublish(ta, PUBLISH, DEPTH) : null;
+  if (found && found.icon) {
     out.foundPublishControl = true;
-    // Naik ke leluhur yang benar-benar bisa ditindak; ikon SVG-nya sendiri
-    // bukan tombol. Berhenti di <button>/[role=button] kalau ada, kalau tidak
-    // pakai beberapa tingkat span/div pembungkus yang membawa state disabled.
-    let actionable = icon.closest("button, [role=button]");
-    if (!actionable) {
-      let node = icon.parentElement;
-      for (let i = 0; i < 3 && node; i++) {
-        if (/cursor-(not-allowed|pointer)/.test(node.className || "") || node.hasAttribute("aria-disabled")) {
-          actionable = node;
-          break;
-        }
-        node = node.parentElement;
-      }
-      actionable = actionable || icon.parentElement;
+    out.publishIconClass = String(found.icon.getAttribute("class") || "").trim();
+    const actionable = found.actionable || found.icon;
+    out.publishVisible = visible(actionable) || visible(found.icon);
+
+    // State dibaca dari penanda semantik yang memang dipakai halaman: kelas
+    // cursor-*/text-* dan cursor hasil komputasi. Bukan kelas hash, bukan posisi.
+    const cls = String(actionable.className || "");
+    let cursor = "";
+    try {
+      cursor = getComputedStyle(actionable).cursor;
+    } catch {
+      cursor = "";
     }
-    out.publishVisible = visible(actionable) || visible(icon);
-    const cls = String(actionable && actionable.className ? actionable.className : "");
-    out.publishDisabled =
-      (actionable && actionable.disabled === true) ||
-      (actionable && actionable.getAttribute && actionable.getAttribute("aria-disabled") === "true") ||
-      /cursor-not-allowed/.test(cls);
+    const explicitlyDisabled =
+      actionable.disabled === true ||
+      (actionable.getAttribute && actionable.getAttribute("aria-disabled") === "true");
+    const disabledMarker = /cursor-not-allowed/.test(cls) || cursor === "not-allowed" || /text-neutral-text3/.test(cls);
+    const enabledMarker = /cursor-pointer/.test(cls) || cursor === "pointer" || /text-primary-normal/.test(cls);
+
+    // Tanpa penanda yang jelas, dianggap disabled: menebak "aktif" bisa berujung
+    // mengklik sesuatu yang bukan tombol kirim.
+    out.publishDisabled = Boolean(explicitlyDisabled || !enabledMarker || (disabledMarker && !enabledMarker));
+    out.publishState = out.publishDisabled ? "disabled" : "enabled";
   }
 
   return out;
@@ -111,7 +189,10 @@ function decideDryRun(text, composer, { uiMax = UI_MAX_LENGTH } = {}) {
   if (!composer.foundPublishControl) return { ok: false, reason: "publish-control-not-found" };
 
   const limit = Number.isInteger(composer.maxLength) && composer.maxLength > 0 ? composer.maxLength : uiMax;
-  if ([...text].length > Math.min(limit, uiMax)) return { ok: false, reason: "message-too-long" };
+  // TikTok menghitung dalam satuan UTF-16, bukan code point: penghitungnya
+  // menulis "27/100" untuk pesan 26 code point yang memuat satu emoji. Memakai
+  // code point membuat batas kita LEBIH LONGGAR daripada batas platform.
+  if (text.length > Math.min(limit, uiMax)) return { ok: false, reason: "message-too-long" };
 
   return { ok: true };
 }
@@ -141,7 +222,7 @@ function createBrowserTransport({
     const page = await getPage();
     if (!page) throw new Error("chat-page-unavailable");
     if (typeof page.isClosed === "function" && page.isClosed()) throw new Error("chat-page-closed");
-    return page.evaluate(evaluateInPage, { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax });
+    return page.evaluate(evaluateInPage, { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax, depth: COMPOSER_SCOPE_DEPTH });
   }
 
   // Antarmuka yang sama dengan transport dry-run AR1: send({text, scene, playId}).
@@ -178,8 +259,10 @@ function createBrowserTransport({
 module.exports = {
   createBrowserTransport,
   inspectComposerInPage,
+  findPublishControlInPage,
   decideDryRun,
   CHAT_TEXTAREA,
   PUBLISH_ICON,
   UI_MAX_LENGTH,
+  COMPOSER_SCOPE_DEPTH,
 };

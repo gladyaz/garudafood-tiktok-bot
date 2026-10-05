@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 
 const {
   createBrowserTransport, inspectComposerInPage, decideDryRun,
-  CHAT_TEXTAREA, PUBLISH_ICON, UI_MAX_LENGTH,
+  CHAT_TEXTAREA, PUBLISH_ICON, UI_MAX_LENGTH, COMPOSER_SCOPE_DEPTH, findPublishControlInPage,
 } = require("../autocomment/browser-transport");
 const { createService, LOOPBACK, startService } = require("../autopin/service");
 
@@ -82,11 +82,16 @@ test("pesan kosong ditolak sebelum menyentuh apa pun", () => {
   }
 });
 
-test("panjang: <=100 diterima, >100 ditolak (emoji dihitung sebagai satu karakter)", () => {
+test("panjang memakai satuan UTF-16 seperti penghitung TikTok (emoji = 2)", () => {
   assert.equal(decideDryRun("x".repeat(100), HEALTHY).ok, true);
   assert.equal(decideDryRun("x".repeat(101), HEALTHY).reason, "message-too-long");
-  assert.equal(decideDryRun("🛒".repeat(100), HEALTHY).ok, true);
-  assert.equal(decideDryRun("🛒".repeat(101), HEALTHY).reason, "message-too-long");
+  // 50 emoji = 100 unit UTF-16 -> pas di batas; 51 emoji = 102 -> ditolak.
+  assert.equal("🛒".repeat(50).length, 100);
+  assert.equal(decideDryRun("🛒".repeat(50), HEALTHY).ok, true);
+  assert.equal(decideDryRun("🛒".repeat(51), HEALTHY).reason, "message-too-long");
+  // Dulu 100 emoji lolos karena dihitung per code point; itu LEBIH LONGGAR dari TikTok.
+  assert.equal([..."🛒".repeat(100)].length, 100);
+  assert.equal(decideDryRun("🛒".repeat(100), HEALTHY).reason, "message-too-long");
 });
 
 test("maxLength halaman yang lebih kecil dihormati; yang lebih besar tidak menaikkan batas UI 100", () => {
@@ -178,37 +183,92 @@ test("log tahapan: READY lalu DRYRUN; tidak ada log yang memuat kata kirim/klik"
 
 // ---------- fungsi yang berjalan di dalam halaman (dijalankan atas DOM palsu) ----------
 
-function domStub({ textarea, icon, counterText = "0/100" }) {
-  const el = (over = {}) => ({
-    getBoundingClientRect: () => ({ width: 100, height: 20 }),
+// DOM berbentuk komposer SUNGGUHAN seperti yang terbukti di LIVE Manager:
+//   div.flex.w-full                      <- scope
+//     div.flex-1.relative                <- induk textarea
+//       div "N/100"  > span.cursor-*  > svg.arco-icon-publish[_management_fill]
+//       textarea[data-tid="m4b_input_textarea"]
+// Resolver harus berangkat dari textarea dan menemukan ikon di dalam scope ini.
+function composerDom({
+  state = "empty",          // "empty" | "filled"
+  iconClass = null,         // paksa kelas ikon tertentu
+  wrapperClass = null,      // paksa kelas pembungkus
+  hasIcon = true,
+  hasTextarea = true,
+  counterText = "0/100",
+  maxlength = null,
+  textareaRect = { width: 300, height: 36 },
+  taOverrides = {},
+  extraNoise = true,        // tombol "New" yang TIDAK boleh tertukar
+} = {}) {
+  const filled = state === "filled";
+  const cls = wrapperClass !== null ? wrapperClass
+    : filled ? "text-16 flex items-center ml-6 text-primary-normal cursor-pointer"
+             : "text-16 flex items-center ml-6 text-neutral-text3 cursor-not-allowed";
+  const ic = iconClass !== null ? iconClass
+    : filled ? "arco-icon arco-icon-publish_management_fill " : "arco-icon arco-icon-publish";
+
+  const el = (o = {}) => ({
+    getBoundingClientRect: () => ({ width: 16, height: 16 }),
     getAttribute: () => null,
     hasAttribute: () => false,
     closest: () => null,
-    parentElement: null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
     className: "",
     innerText: "",
-    ...over,
+    parentElement: null,
+    ...o,
   });
-  const ta = textarea === null ? null : el({
-    disabled: false, readOnly: false,
-    getAttribute: (n) => (n === "placeholder" ? "Type something..." : null),
-    parentElement: el({ innerText: counterText }),
-    closest: () => el({ innerText: counterText }),
-    ...textarea,
-  });
-  const ic = icon === null ? null : el({
-    closest: () => null,
-    parentElement: el({ className: "text-16 flex items-center cursor-not-allowed" }),
-    ...icon,
-  });
-  global.document = { querySelector: (s) => (s === CHAT_TEXTAREA ? ta : s === PUBLISH_ICON ? ic : null) };
-  global.getComputedStyle = () => ({ visibility: "visible", display: "block", opacity: "1" });
-  return { ta, ic };
-}
-const runInPage = () => inspectComposerInPage({ textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax: UI_MAX_LENGTH });
 
-test("in-page: komposer lengkap terbaca, maxLength dari penghitung 0/100", () => {
-  domStub({ textarea: {}, icon: {} });
+  const icon = hasIcon ? el({
+    getAttribute: (n) => (n === "class" ? ic : null),
+    className: ic,
+  }) : null;
+  const wrapper = el({ className: cls, getBoundingClientRect: () => ({ width: 16, height: 24 }) });
+  if (icon) icon.parentElement = wrapper;
+  const noise = el({ className: "arco-btn hidden", getAttribute: (n) => (n === "class" ? "arco-btn hidden" : null) });
+
+  const inner = el({
+    innerText: counterText,
+    querySelector: (s) => {
+      if (/arco-icon-publish/.test(s) && icon) return icon;
+      if (/button/.test(s) && extraNoise) return null; // "New" tidak pernah cocok pola ikon publish
+      return null;
+    },
+  });
+  const scope = el({ innerText: counterText, querySelector: () => null, parentElement: null });
+  inner.parentElement = scope;
+
+  const ta = hasTextarea ? el({
+    disabled: false,
+    readOnly: false,
+    value: filled ? "sudah ada teks" : "",
+    getBoundingClientRect: () => textareaRect,
+    getAttribute: (n) => (n === "placeholder" ? "Type something..." : n === "maxlength" ? maxlength : null),
+    closest: () => inner,
+    parentElement: inner,
+    ...taOverrides,
+  }) : null;
+
+  global.document = { querySelector: (s) => (s === CHAT_TEXTAREA ? ta : s === PUBLISH_ICON ? icon : null) };
+  global.getComputedStyle = (node) => ({
+    visibility: "visible", display: "block", opacity: "1",
+    cursor: /cursor-not-allowed/.test(String((node && node.className) || "")) ? "not-allowed"
+      : /cursor-pointer/.test(String((node && node.className) || "")) ? "pointer" : "auto",
+  });
+  return { ta, icon, wrapper, inner, scope, noise };
+}
+
+// page.evaluate hanya membawa SUMBER fungsi ke halaman. Menjalankan lewat
+// new Function meniru itu: kalau fungsi in-page masih merujuk scope modul,
+// tes ini yang pertama jatuh.
+const asPageFn = (fn) => new Function("return (" + fn.toString() + ")")();
+const runInPage = (over = {}) =>
+  asPageFn(inspectComposerInPage)({ textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, uiMax: UI_MAX_LENGTH, depth: COMPOSER_SCOPE_DEPTH, ...over });
+
+test("in-page KOSONG: ikon arco-icon-publish, state disabled, maxLength dari penghitung", () => {
+  composerDom({ state: "empty" });
   const r = runInPage();
   assert.equal(r.foundTextarea, true);
   assert.equal(r.foundPublishControl, true);
@@ -216,41 +276,85 @@ test("in-page: komposer lengkap terbaca, maxLength dari penghitung 0/100", () =>
   assert.equal(r.textareaDisabled, false);
   assert.equal(r.maxLength, 100);
   assert.equal(r.placeholder, "Type something...");
-  assert.equal(r.publishDisabled, true, "kosong -> cursor-not-allowed");
+  assert.match(r.publishIconClass, /arco-icon-publish$/);
+  assert.equal(r.publishState, "disabled");
+  assert.equal(r.publishDisabled, true);
+});
+
+test("in-page TERISI: ikon publish_management_fill, state enabled", () => {
+  composerDom({ state: "filled", counterText: "27/100" });
+  const r = runInPage();
+  assert.equal(r.foundPublishControl, true);
+  assert.match(r.publishIconClass, /arco-icon-publish_management_fill/);
+  assert.equal(r.publishState, "enabled");
+  assert.equal(r.publishDisabled, false);
+  assert.equal(r.publishVisible, true);
+});
+
+test("in-page: kedua varian ikon sama-sama ditemukan oleh satu pola selector", () => {
+  for (const [state, re] of [["empty", /arco-icon-publish$/], ["filled", /publish_management_fill/]]) {
+    composerDom({ state });
+    const r = runInPage();
+    assert.equal(r.foundPublishControl, true, state);
+    assert.match(r.publishIconClass, re, state);
+  }
+});
+
+test("in-page: tanpa penanda state yang jelas -> dianggap disabled, bukan ditebak aktif", () => {
+  composerDom({ state: "filled", wrapperClass: "text-16 flex items-center" });
+  const r = runInPage();
+  assert.equal(r.foundPublishControl, true);
+  assert.equal(r.publishDisabled, true, "lebih baik menolak daripada mengklik yang belum tentu tombol kirim");
 });
 
 test("in-page: atribut maxlength asli menang atas penghitung", () => {
-  domStub({ textarea: { getAttribute: (n) => (n === "maxlength" ? "80" : n === "placeholder" ? "Type something..." : null) }, icon: {} });
+  composerDom({ maxlength: "80" });
   assert.equal(runInPage().maxLength, 80);
 });
 
 test("in-page: tanpa maxlength dan tanpa penghitung -> jatuh ke batas UI 100", () => {
-  domStub({ textarea: {}, icon: {}, counterText: "" });
+  composerDom({ counterText: "" });
   assert.equal(runInPage().maxLength, 100);
 });
 
 test("in-page: textarea hilang / ikon publish hilang terdeteksi", () => {
-  domStub({ textarea: null, icon: {} });
+  composerDom({ hasTextarea: false });
   assert.equal(runInPage().foundTextarea, false);
-  domStub({ textarea: {}, icon: null });
-  assert.equal(runInPage().foundPublishControl, false);
+  composerDom({ hasIcon: false });
+  const r = runInPage();
+  assert.equal(r.foundTextarea, true);
+  assert.equal(r.foundPublishControl, false, "inilah kegagalan AR2B: ikon tidak ketemu");
+});
+
+test("in-page: tanpa textarea, kontrol publish TIDAK dicari sama sekali (jangkar wajib)", () => {
+  composerDom({ hasTextarea: false, state: "filled" });
+  const r = runInPage();
+  assert.equal(r.foundPublishControl, false, "tanpa jangkar, jangan menebak elemen mana pun di halaman");
 });
 
 test("in-page: textarea berukuran nol dianggap tidak terlihat", () => {
-  domStub({ textarea: { getBoundingClientRect: () => ({ width: 0, height: 0 }) }, icon: {} });
+  composerDom({ textareaRect: { width: 0, height: 0 } });
   assert.equal(runInPage().textareaVisible, false);
 });
 
 test("in-page: readOnly dan aria-disabled dihitung sebagai disabled", () => {
-  domStub({ textarea: { readOnly: true }, icon: {} });
+  composerDom({ taOverrides: { readOnly: true } });
   assert.equal(runInPage().textareaDisabled, true);
-  domStub({ textarea: { getAttribute: (n) => (n === "aria-disabled" ? "true" : null) }, icon: {} });
+  composerDom({ taOverrides: { getAttribute: (n) => (n === "aria-disabled" ? "true" : null) } });
   assert.equal(runInPage().textareaDisabled, true);
 });
 
-test("in-page: tombol publish yang aktif terbaca enabled", () => {
-  domStub({ textarea: {}, icon: { parentElement: { getBoundingClientRect: () => ({ width: 20, height: 20 }), className: "cursor-pointer", getAttribute: () => null, hasAttribute: () => false, parentElement: null } } });
-  assert.equal(runInPage().publishDisabled, false);
+test("in-page: resolver modul dan salinan bersarang memberi hasil yang sama", () => {
+  // Salinan bersarang WAJIB ada (page.evaluate tanpa scope modul), jadi tes ini
+  // yang menjaga keduanya tidak pernah berbeda perilaku.
+  for (const state of ["empty", "filled"]) {
+    const dom = composerDom({ state });
+    const viaModule = findPublishControlInPage(dom.ta, PUBLISH_ICON, COMPOSER_SCOPE_DEPTH);
+    const viaPage = runInPage();
+    assert.equal(viaModule.icon, dom.icon, state);
+    assert.equal(viaModule.actionable, dom.wrapper, state);
+    assert.equal(viaPage.publishIconClass, String(dom.icon.getAttribute("class")).trim(), state);
+  }
 });
 
 // ---------- integrasi service: serialisasi, isolasi, bind ----------
@@ -382,4 +486,41 @@ test("service tetap hanya mendengarkan di loopback setelah AR2A", async () => {
     await new Promise((r) => svc.server.close(r));
   }
   assert.ok(inner);
+});
+
+// ---------- regresi AR2C: keamanan sekali-pakai tidak berubah oleh selector baru ----------
+
+test("AR2C: selector baru tidak mengubah sifat bebas-mutasi dry-run", async () => {
+  const page = fakePage(HEALTHY);
+  const r = await transportFor(page).send({ text: TEXT, scene: "PAX-3", playId: 1 });
+  assert.equal(r.ok, true);
+  assert.equal(r.dryRun, true);
+  assert.deepEqual(page.violations, [], "dry-run tetap nol mutasi");
+});
+
+test("AR2C: dry-run menolak saat kontrol kirim tidak ketemu (kegagalan nyata AR2B)", async () => {
+  const page = fakePage({ ...HEALTHY, foundPublishControl: false, publishVisible: false, publishDisabled: false });
+  const r = await transportFor(page).send({ text: TEXT, scene: "PAX-3", playId: 1 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "publish-control-not-found");
+  assert.deepEqual(page.violations, []);
+});
+
+test("AR2C: depth pencarian ikut dikirim ke halaman, bukan diambil dari scope modul", async () => {
+  let seen = null;
+  const page = fakePage(HEALTHY);
+  page.evaluate = async (_fn, sel) => { seen = sel; return HEALTHY; };
+  await transportFor(page).send({ text: TEXT, scene: "PAX-1", playId: 1 });
+  assert.equal(seen.textarea, CHAT_TEXTAREA);
+  assert.equal(seen.publishIcon, PUBLISH_ICON);
+  assert.equal(seen.depth, COMPOSER_SCOPE_DEPTH);
+});
+
+test("AR2C: pola selector menerima kedua varian dan menolak ikon lain", () => {
+  const matches = (cls) => new RegExp(PUBLISH_ICON.replace(/^svg\[class\*="(.+)"\]$/, "$1")).test(cls);
+  assert.ok(matches("arco-icon arco-icon-publish"));
+  assert.ok(matches("arco-icon arco-icon-publish_management_fill "));
+  assert.ok(!matches("arco-icon arco-icon-right_arrow rotate-90"), "tombol 'New' tidak boleh cocok");
+  assert.ok(!matches("arco-icon arco-icon-notice"));
+  assert.ok(!/nth-child|index-module__/.test(PUBLISH_ICON), "tanpa nth-child / kelas hash");
 });

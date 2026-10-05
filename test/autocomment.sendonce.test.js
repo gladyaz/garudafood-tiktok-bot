@@ -8,7 +8,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { createSendOnce, resolvePublishElementInPage, readComposerTextInPage } = require("../autocomment/send-once");
-const { CHAT_TEXTAREA, PUBLISH_ICON } = require("../autocomment/browser-transport");
+const { CHAT_TEXTAREA, PUBLISH_ICON, COMPOSER_SCOPE_DEPTH } = require("../autocomment/browser-transport");
 const { checkIdentity } = require("../autopin/core");
 const { createService } = require("../autopin/service");
 
@@ -168,12 +168,18 @@ test("pesan lebih dari 100 karakter ditolak; tepat 100 diterima", async () => {
   assert.equal((await makeSendOnce(p2).prepare({ text: "x".repeat(100), confirm: true })).ok, true);
 });
 
-test("emoji dihitung satu karakter, bukan dua", async () => {
-  const text = "🙌".repeat(100);
-  const page = fakeChatPage({ typeWrites: text });
-  assert.equal((await makeSendOnce(page).prepare({ text, confirm: true })).ok, true);
-  const over = "🙌".repeat(101);
+test("emoji dihitung DUA unit UTF-16, menyamai penghitung TikTok", async () => {
+  const atLimit = "🙌".repeat(50);      // 100 unit UTF-16
+  assert.equal(atLimit.length, 100);
+  const page = fakeChatPage({ typeWrites: atLimit });
+  assert.equal((await makeSendOnce(page).prepare({ text: atLimit, confirm: true })).ok, true);
+
+  const over = "🙌".repeat(51);         // 102 unit -> ditolak
   assert.equal((await makeSendOnce(fakeChatPage()).prepare({ text: over, confirm: true })).reason, "message-too-long");
+
+  // Pesan uji AR2B: 26 code point, 27 unit UTF-16 - persis yang ditulis penghitung TikTok.
+  assert.equal([...TEXT].length, 26);
+  assert.equal(TEXT.length, 27);
 });
 
 // ---------- gerbang komposer ----------
@@ -335,22 +341,56 @@ test("observeAfterClick hanya membaca", async () => {
 
 // ---------- fungsi in-page ----------
 
-test("in-page: resolvePublishElement memilih button/[role=button] lebih dulu", () => {
-  const btn = { tag: "button" };
-  global.document = { querySelector: (s) => (s === PUBLISH_ICON ? { closest: (q) => (/button/.test(q) ? btn : null), parentElement: null } : null) };
-  assert.equal(resolvePublishElementInPage(PUBLISH_ICON), btn);
+// Dijalankan lewat new Function untuk meniru page.evaluate: tanpa scope modul.
+const asPageFn = (fn) => new Function("return (" + fn.toString() + ")")();
+const SEL = { textarea: CHAT_TEXTAREA, publishIcon: PUBLISH_ICON, depth: COMPOSER_SCOPE_DEPTH };
+
+function composerForClick({ state = "filled", hasIcon = true, hasTextarea = true, button = null } = {}) {
+  const filled = state === "filled";
+  const cls = filled ? "text-16 ml-6 text-primary-normal cursor-pointer" : "text-16 ml-6 text-neutral-text3 cursor-not-allowed";
+  const ic = filled ? "arco-icon arco-icon-publish_management_fill " : "arco-icon arco-icon-publish";
+  const wrapper = { className: cls, hasAttribute: () => false, parentElement: null };
+  const icon = hasIcon ? { getAttribute: (n) => (n === "class" ? ic : null), closest: (q) => (button && /button/.test(q) ? button : null), parentElement: wrapper } : null;
+  const inner = { querySelector: (s) => (/arco-icon-publish/.test(s) ? icon : null), parentElement: null };
+  const ta = hasTextarea ? { parentElement: inner } : null;
+  global.document = { querySelector: (s) => (s === CHAT_TEXTAREA ? ta : null) };
+  return { ta, icon, wrapper, inner };
+}
+
+test("resolver klik: berjangkar textarea dan menemukan kedua varian ikon", () => {
+  const run = asPageFn(resolvePublishElementInPage);
+  const filled = composerForClick({ state: "filled" });
+  assert.equal(run(SEL), filled.wrapper, "keadaan terisi");
+  const empty = composerForClick({ state: "empty" });
+  assert.equal(run(SEL), empty.wrapper, "keadaan kosong");
 });
 
-test("in-page: tanpa button, naik maksimal tiga pembungkus yang membawa state", () => {
+test("resolver klik: <button> diutamakan kalau halaman menyediakannya", () => {
+  const btn = { tag: "button" };
+  composerForClick({ button: btn });
+  assert.equal(asPageFn(resolvePublishElementInPage)(SEL), btn);
+});
+
+test("resolver klik: tanpa textarea atau tanpa ikon -> null, tidak menebak", () => {
+  const run = asPageFn(resolvePublishElementInPage);
+  composerForClick({ hasTextarea: false });
+  assert.equal(run(SEL), null);
+  composerForClick({ hasIcon: false });
+  assert.equal(run(SEL), null);
+});
+
+test("resolver klik: naik maksimal tiga pembungkus mencari penanda state", () => {
   const wrapper = { className: "cursor-pointer", hasAttribute: () => false, parentElement: null };
   const mid = { className: "", hasAttribute: () => false, parentElement: wrapper };
-  global.document = { querySelector: () => ({ closest: () => null, parentElement: mid }) };
-  assert.equal(resolvePublishElementInPage(PUBLISH_ICON), wrapper);
+  const icon = { getAttribute: () => "arco-icon arco-icon-publish_management_fill", closest: () => null, parentElement: mid };
+  const inner = { querySelector: (s) => (/arco-icon-publish/.test(s) ? icon : null), parentElement: null };
+  global.document = { querySelector: (s) => (s === CHAT_TEXTAREA ? { parentElement: inner } : null) };
+  assert.equal(asPageFn(resolvePublishElementInPage)(SEL), wrapper);
 });
 
-test("in-page: ikon tidak ada -> null", () => {
+test("resolver klik: halaman kosong -> null", () => {
   global.document = { querySelector: () => null };
-  assert.equal(resolvePublishElementInPage(PUBLISH_ICON), null);
+  assert.equal(asPageFn(resolvePublishElementInPage)(SEL), null);
 });
 
 test("in-page: readComposerText mengembalikan isi apa adanya", () => {
