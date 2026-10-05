@@ -24,6 +24,28 @@ const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
 
+// Pembacaan state pin sesudah klik: SEKALI BACA TIDAK CUKUP.
+//
+// Pada LIVE 2026-10-05, tiga dari empat pin terakhir mengembalikan state kosong
+// walau kliknya berhasil:
+//
+//   [AUTOPIN_SERVICE_PINNED] scene=PAX-1 title="Dilan Bon Bon ..."   <- tanpa after=
+//   [AUTOPIN_SUCCESS] ... clicked=true state=""
+//   [AUTOCOMMENT_SKIPPED] reason=pin-state-unreadable
+//
+// Sebabnya: kartu produk ter-render ulang begitu ia menjadi featured. Barisnya
+// masih ketemu lewat judul, tapi tombol Pin/Unpin di dalamnya sesaat TIDAK ADA,
+// sehingga teksnya pulang kosong. Gerbang semantik lalu menahan chat - benar,
+// karena ia tidak boleh mengklaim pin yang tak terbukti - tapi akibatnya kaki
+// AutoComment ikut mati padahal pin-nya sukses.
+//
+// PENTING: mengulang PEMBACAAN bukan "retry" yang dilarang. Aturan nol-retry
+// melindungi dari pin ganda dan pesan ganda; membaca ulang tidak mengklik dan
+// tidak mengirim apa pun. Jendelanya pun berbatas, dan scene masih tayang
+// puluhan detik sesudahnya.
+const PIN_STATE_READS = 6;
+const PIN_STATE_POLL_MS = 250;
+
 function isExpectedConsole(actualUrl, consoleUrl) {
   try {
     const a = new URL(actualUrl);
@@ -55,6 +77,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     readIdentity: productsMod.readIdentity,
     pinProductByTitle: productsMod.pinProductByTitle,
     readPinState: productsMod.readPinState,
+    // Disuntikkan supaya penungguan state pin bisa diuji tanpa menunggu nyata.
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     ...deps,
   };
 
@@ -187,6 +211,25 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       });
     }
 
+  // Membaca state pin sampai TERBACA, dalam jendela berbatas. Murni membaca:
+  // tidak ada klik kedua, tidak ada pengiriman. Lihat catatan PIN_STATE_READS.
+  async function readPinStateSettled(p, productKey) {
+    let last = null;
+    for (let i = 1; i <= PIN_STATE_READS; i += 1) {
+      try {
+        last = await d.readPinState(p, productKey);
+      } catch (err) {
+        last = { text: "", error: String(err && err.message).slice(0, 80) };
+      }
+      const text = String((last && last.text) || "").trim();
+      if (text !== "") return { ...last, text, reads: i };
+      if (i < PIN_STATE_READS) await d.sleep(PIN_STATE_POLL_MS);
+    }
+    // Tetap kosong sesudah seluruh jendela: dilaporkan apa adanya, dan gerbang
+    // semantik yang memutuskan - bukan modul ini yang menebak.
+    return { ...(last || {}), text: "", reads: PIN_STATE_READS };
+  }
+
   // Gerbang yang sama persis dengan CLI yang sudah terverifikasi.
   async function guardedPin({ scene, productKey, playId }) {
     const p = await ensurePage();
@@ -229,8 +272,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     const act = await d.pinProductByTitle(p, productKey, { dryRun: false });
     if (!act.ok) return { ok: false, reason: act.reason };
 
-    const after = await d.readPinState(p, productKey);
-    log("SERVICE_PINNED", { scene, title: act.title, after: after.text });
+    const after = await readPinStateSettled(p, productKey);
+    log("SERVICE_PINNED", { scene, title: act.title, after: after.text, reads: after.reads });
     return { ok: true, reason: "pinned", title: act.title, state: after.text, clicked: true };
   }
 
@@ -422,6 +465,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     stop,
     warmUp,
     healthPayload,
+    readPinStateSettled,
     timeouts: budget,
     __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget }),
   };
