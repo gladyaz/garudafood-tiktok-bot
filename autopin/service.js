@@ -21,6 +21,7 @@ const { createBrowserSender } = require("../autocomment/browser-sender");
 const { planTimeouts, describeTimeouts } = require("../autocomment/timeouts");
 const { createPinConfirmer } = require("./pin-confirm");
 const { createPlayGeneration } = require("./session");
+const { planPinTimeouts, describePinTimeouts } = require("./pin-budget");
 const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
 
 const DEFAULT_PORT = 5055;
@@ -47,6 +48,10 @@ const LOOPBACK = "127.0.0.1";
 // puluhan detik sesudahnya.
 const PIN_STATE_READS = 6;
 const PIN_STATE_POLL_MS = 250;
+// Bantalan kecil di atas perkiraan biaya konfirmasi: perkiraan tidak boleh
+// dipakai mentah, karena salah sedikit saja berarti mengklik tanpa bisa
+// membuktikan.
+const CONFIRM_SLACK_MS = 300;
 // Sinyal kedua dipakai HANYA saat sinyal pertama buta. Lihat autopin/pin-confirm.js.
 
 function isExpectedConsole(actualUrl, consoleUrl) {
@@ -61,11 +66,16 @@ function isExpectedConsole(actualUrl, consoleUrl) {
 
 // deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
 // diperiksa tanpa membuka browser sungguhan.
-function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, clickStrategy, deps = {} } = {}) {
+function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, pinTimeouts, clickStrategy, deps = {} } = {}) {
   // Anggaran waktu diturunkan dari timeout HTTP yang SAMA yang dipakai bot
   // (AUTOCOMMENT_TIMEOUT_MS), supaya service selalu menjawab sebelum bot
   // menyerah. Phase 21 gagal justru karena kedua sisi tidak pernah dihubungkan.
   const budget = timeouts || planTimeouts({ httpTimeoutMs: loadAutoCommentConfig(process.env, { warn: () => {} }).timeoutMs });
+  // Anggaran jalur PIN, diturunkan dari batas tunggu yang SAMA yang dipakai bot
+  // (AUTOPIN_TIMEOUT_MS). Tanpa ini, bot bisa menyerah sementara service masih
+  // menggulir dan mengklik - keadaan "entah" yang terjadi pada LIVE 2026-10-06
+  // dengan katalog 20 produk. Lihat autopin/pin-budget.js.
+  const pinBudget = pinTimeouts || planPinTimeouts({ httpTimeoutMs: Number(process.env.AUTOPIN_TIMEOUT_MS) || undefined });
   const d = {
     launchBrowser: browserMod.launchBrowser,
     getPage: browserMod.getPage,
@@ -82,6 +92,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     readPinState: productsMod.readPinState,
     // Disuntikkan supaya penungguan state pin bisa diuji tanpa menunggu nyata.
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    // Jam disuntikkan supaya anggaran waktu bisa diuji tanpa waktu nyata.
+    now: () => Date.now(),
     ...deps,
   };
 
@@ -215,21 +227,65 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   // - terutama bahwa bacaan negatif yang JELAS tidak boleh ditimpa sinyal lain.
   const pinConfirmer = createPinConfirmer({
     readPinState: (p, key) => d.readPinState(p, key),
-    collectProducts: (p) => d.collectProducts(p),
+    // Opsi diteruskan: konfirmasi memakai penghentian dini supaya tidak
+    // menggulir seluruh katalog untuk kedua kalinya.
+    collectProducts: (p, opts) => d.collectProducts(p, opts),
     sleep: (ms) => d.sleep(ms),
-    reads: PIN_STATE_READS,
-    pollMs: PIN_STATE_POLL_MS,
+    reads: pinBudget.maxConfirmReads,
+    pollMs: pinBudget.confirmPollMs,
+    now: () => d.now(),
   });
 
   // Gerbang yang sama persis dengan CLI yang sudah terverifikasi.
   async function guardedPin({ scene, productKey, playId, sessionId }) {
+    // --- anggaran waktu + instrumentasi per-tahap ---
+    // Satu deadline untuk SELURUH pekerjaan sisi service. Tiap tahap yang bisa
+    // lambat dijalankan di bawah sisa waktu, jadi service tidak pernah masih
+    // bekerja ketika bot sudah menyerah.
+    const t0 = d.now();
+    const deadlineAt = t0 + pinBudget.browserDeadlineMs;
+    const left = () => deadlineAt - d.now();
+    const marks = [];
+    const timingLine = () =>
+      marks.map(([k, v]) => `${k}=${v}`).join(" ") + ` total=${d.now() - t0} remaining=${left()}`;
+
+    // Tahap async berbatas sisa waktu. Kalau waktunya habis, tahapnya TIDAK
+    // dimulai - bukan dimulai lalu ditinggalkan.
+    // Hanya MEMERIKSA sisa waktu sebelum memulai. Sengaja TIDAK memakai
+    // withDeadline: operasi yang ditinggalkan di tengah tetap berjalan di latar
+    // dan bisa tumpang tindih dengan pekerjaan berikutnya. Tahap yang panjang
+    // (koleksi produk) memotong dirinya sendiri lewat opsi `remaining`.
+    const stage = async (name, fn) => {
+      if (pinBudget.browserDeadlineMs > 0 && left() <= 0) {
+        marks.push([name, "skip"]);
+        const err = new Error("pin-budget-exhausted:" + name);
+        err.budget = true;
+        err.stage = name;
+        throw err;
+      }
+      const a = d.now();
+      try {
+        return await fn();
+      } finally {
+        marks.push([name, d.now() - a]);
+      }
+    };
+    const timeSync = (name, fn) => {
+      const a = d.now();
+      try {
+        return fn();
+      } finally {
+        marks.push([name, d.now() - a]);
+      }
+    };
+
     const p = await ensurePage();
 
     if (!isExpectedConsole(p.url(), config.consoleUrl)) {
       return { ok: false, reason: "unexpected-page" };
     }
 
-    const observed = await d.readIdentity(p);
+    const observed = await stage("identity", () => d.readIdentity(p));
     const verdict = checkIdentity({
       expected: config.expectedShop,
       observed,
@@ -237,44 +293,109 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     });
     if (!verdict.ok) return { ok: false, reason: `identity-${verdict.reason}` };
 
-    const snapshot = await d.collectProducts(p);
+    // Koleksi SEBELUM klik harus LENGKAP: resolusi menolak kalau kuncinya cocok
+    // ke lebih dari satu produk, dan penghentian dini di sini bisa menyembunyikan
+    // produk kedua yang cocok - itu akan mengubah "ambigu, jangan klik" menjadi
+    // "klik produk pertama yang kebetulan ketemu". Jadi yang dipotong hanya
+    // koleksi untuk KONFIRMASI, bukan yang ini.
+    const sebelumCollect = d.now();
+    const snapshot = await stage("collect-before", () => d.collectProducts(p, { remaining: left }));
+    const collectMs = d.now() - sebelumCollect;
+    // Daftar yang dipotong anggaran TIDAK boleh dipakai untuk resolusi: produk
+    // kedua yang cocok bisa belum terlihat, dan itu mengubah penolakan "ambigu"
+    // menjadi klik ke produk yang kebetulan ketemu lebih dulu.
+    if (snapshot.ranOutOfTime === true) {
+      log("SERVICE_PIN_BUDGET_EXHAUSTED", {
+        scene, playId, phase: "collect-before", passes: snapshot.passes,
+        note: "daftar produk tidak lengkap karena anggaran: tidak diklik",
+      });
+      return { ok: false, reason: "collect-incomplete-budget", clicked: false };
+    }
     if (snapshot.products.length === 0) return { ok: false, reason: "no-products-found" };
     if (!snapshot.livePinButtonsOnPage) return { ok: false, reason: "live-pin-control-not-available" };
 
-    const resolved = resolveProductForPin(snapshot.products, productKey);
+    const resolved = timeSync("resolve-product", () => resolveProductForPin(snapshot.products, productKey));
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
 
     // === GERBANG TERAKHIR SEBELUM MENYENTUH UI ===
     // Semua langkah di atas memakan waktu (halaman siap, identitas, scraping
     // produk). Selama itu scene bisa sudah berganti. Memeriksa playId setelah
     // klik tidak ada gunanya: produk yang salah sudah tampil ke penonton.
-    if (isStale(sessionId, playId)) {
+    if (timeSync("stale", () => isStale(sessionId, playId))) {
       log("SERVICE_STALE", { scene, playId, latest: generation.latest(), phase: "before-click" });
       return { ok: false, reason: "stale-before-click", clicked: false };
     }
 
+    // === GERBANG ANGGARAN: jangan mengklik kalau konfirmasi tidak akan kebagian waktu ===
+    // Pin yang terjadi tapi tidak bisa dikonfirmasi adalah hasil TERBURUK: produk
+    // berubah di layar penonton, chat ditahan, dan bot maupun service tidak punya
+    // cerita yang sama. Tidak mengklik jauh lebih baik - tidak ada yang berubah,
+    // keduanya sepakat, dan penonton bisa meminta ulang.
+    // Cadangan tetap TIDAK cukup, dan itu terukur: biaya snapshot tergantung
+    // seberapa jauh produknya dari atas daftar. Dengan cadangan patokan, target
+    // di tengah katalog 20 produk sempat DIKLIK lalu gagal dikonfirmasi - hasil
+    // yang justru paling ingin dihindari.
+    //
+    // Perkiraannya diambil dari data yang sudah ada di tangan: koleksi pra-klik
+    // tadi memakan collectMs untuk seluruh daftar, dan konfirmasi hanya perlu
+    // menggulir sampai posisi produk target. Jadi biayanya sekitar sebanding
+    // dengan posisi relatifnya.
+    const totalProduk = snapshot.products.length;
+    const posisi = (resolved.product && resolved.product.number) || totalProduk;
+    const perkiraanSnapshot =
+      totalProduk > 0 ? Math.ceil(collectMs * Math.min(1, posisi / totalProduk)) : collectMs;
+    const butuh = Math.max(
+      pinBudget.confirmReserveMs,
+      pinBudget.primaryWindowMs + perkiraanSnapshot + CONFIRM_SLACK_MS
+    );
+
+    if (!dryRun && left() < butuh) {
+      log("SERVICE_PIN_BUDGET_EXHAUSTED", {
+        scene, playId, phase: "before-click", remaining: left(),
+        need: butuh, estSnapshot: perkiraanSnapshot, position: posisi + "/" + totalProduk,
+        timing: timingLine(),
+        note: "tidak diklik: konfirmasi tidak akan kebagian waktu",
+      });
+      return { ok: false, reason: "budget-exhausted-before-click", clicked: false };
+    }
+
     if (dryRun) {
-      const probe = await d.pinProductByTitle(p, productKey, { dryRun: true });
+      const probe = await stage("click", () => d.pinProductByTitle(p, productKey, { dryRun: true }));
       return probe.ok
         ? { ok: true, reason: "dry-run", title: probe.title, clicked: false }
         : { ok: false, reason: probe.reason };
     }
 
-    const act = await d.pinProductByTitle(p, productKey, { dryRun: false });
+    // SATU klik. Tidak pernah ada klik kedua, dan tidak ada retry.
+    const act = await stage("click", () => d.pinProductByTitle(p, productKey, { dryRun: false, remaining: left }));
     if (!act.ok) return { ok: false, reason: act.reason };
 
-    const v = await pinConfirmer.confirm(p, productKey);
+    // Konfirmasi di bawah cadangan yang sudah dipastikan tersisa sebelum klik.
+    // Kalau cadangan itu ternyata habis juga, confirm() melapor jujur
+    // "pin-confirm-out-of-budget" - ia TIDAK memulai snapshot yang tidak akan
+    // selesai pada waktunya.
+    const v = await pinConfirmer.confirm(p, productKey, {
+      primaryWindowMs: pinBudget.primaryWindowMs,
+      remaining: left,
+    });
+    marks.push(["primary-confirm", v.primaryMs === undefined ? "?" : v.primaryMs]);
+    marks.push(["snapshot-confirm", v.snapshotMs === undefined ? "-" : v.snapshotMs]);
+
     // Seluruh bukti dicatat: hasil bacaan tombol APA ADANYA (found/buttons/text)
     // dan hasil sinyal kedua kalau sampai dipakai. Inilah yang dulu hilang.
     log("SERVICE_PINNED", {
       scene, title: act.title, after: v.state, via: v.via || "-",
       reads: v.reads, primary: v.primary, snapshot: v.snapshot || "-",
+      snapshotPasses: v.snapshotPasses === undefined ? "-" : v.snapshotPasses,
+      snapshotEarly: v.snapshotEarly === undefined ? "-" : v.snapshotEarly,
+      timing: timingLine(),
     });
     return {
       ok: true, reason: "pinned", title: act.title, state: v.state, clicked: true,
       // Dibawa ke sisi bot murni untuk observability. Gerbang di sana TETAP
       // memutuskan dari state, bukan dari field ini.
       confirmedVia: v.via, confirmReason: v.reason,
+      timing: timingLine(),
     };
   }
 
@@ -296,6 +417,17 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       try {
         return await guardedPin({ scene, productKey, playId: id, sessionId });
       } catch (err) {
+        // Anggaran habis di tengah tahap: dijawab apa adanya, bukan dilempar.
+        // Yang penting di sini adalah service MENJAWAB - bot tidak boleh
+        // menyerah sambil service diam-diam masih bekerja.
+        if (err && (err.budget === true || err.deadline === true)) {
+          const after = /click|primary-confirm|snapshot/.test(String(err.label || err.stage || ""));
+          const reason = after ? "budget-exhausted-after-click" : "budget-exhausted-before-click";
+          log("SERVICE_PIN_BUDGET_EXHAUSTED", {
+            scene, playId: id, stage: err.label || err.stage || "?", reason,
+          });
+          return { ok: false, reason, clicked: after ? "unknown" : false };
+        }
         const reason = err && err.reason ? err.reason : "pin-error";
         log("SERVICE_ERROR", { scene, reason, detail: String(err && err.message).slice(0, 120) });
         return { ok: false, reason };
@@ -350,6 +482,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       // browser sama sekali di sisi service.
       commentTransport: allowAutoCommentSend === true ? "browser" : "dry-run",
       timeouts: budget,
+      pinTimeouts: pinBudget,
       commentSendOnce: sendOnce.status(),
       autoCommentSend: allowAutoCommentSend === true ? "enabled" : "disabled",
       autoCommentAttempts: browserSender.__state().attempts,
@@ -470,6 +603,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     healthPayload,
     pinConfirmer,
     timeouts: budget,
+    pinTimeouts: pinBudget,
     __state: () => ({
       latestPlayId: generation.latest(), botId: generation.session(),
       hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget,
@@ -487,6 +621,12 @@ function startService({ port = Number(process.env.AUTOPIN_PORT) || DEFAULT_PORT,
       log("SERVICE_LISTENING", { host: addr.address, port: addr.port, dryRun: !!rest.dryRun });
       // Anggaran waktu dicetak supaya bisa dibaca, bukan ditebak dari kode.
       log("SERVICE_TIMEOUTS", { budget: describeTimeouts(svc.timeouts) });
+      log("SERVICE_PIN_TIMEOUTS", { budget: describePinTimeouts(svc.pinTimeouts) });
+      if (!svc.pinTimeouts.fits) {
+        log("SERVICE_PIN_BUDGET_TOO_TIGHT", {
+          note: "AUTOPIN_TIMEOUT_MS terlalu kecil: pin bisa ditolak sebelum diklik",
+        });
+      }
       if (!svc.timeouts.fits) {
         log("SERVICE_TIMEOUT_BUDGET_TOO_TIGHT", {
           note: "AUTOCOMMENT_TIMEOUT_MS terlalu kecil: service bisa menjawab SETELAH bot menyerah",

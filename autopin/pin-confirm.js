@@ -92,11 +92,18 @@ function createPinConfirmer({
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   reads = DEFAULT_READS,
   pollMs = DEFAULT_POLL_MS,
+  now = () => Date.now(),
 } = {}) {
   // Sinyal 1, berulang dalam jendela berbatas. MURNI MEMBACA: tidak mengklik
   // apa pun. Mengulang pembacaan bukan "retry" yang dilarang - aturan nol-retry
   // melindungi dari pin ganda dan pesan ganda.
-  async function readUntilReadable(page, productKey) {
+  // `windowMs` membatasi SELURUH pengulangan bacaan. Pada katalog besar sinyal
+  // ini terukur gagal 100% (primary=found=false di keenam bacaan), jadi
+  // menghabiskan seluruh cadangan konfirmasi di sini berarti snapshot - yang
+  // justru berhasil - kehabisan waktu.
+  async function readUntilReadable(page, productKey, { windowMs = 0 } = {}) {
+    const started = now();
+    const kehabisan = () => windowMs > 0 && now() - started >= windowMs;
     let last = null;
     for (let i = 1; i <= reads; i += 1) {
       try {
@@ -105,47 +112,66 @@ function createPinConfirmer({
         last = { error: String((err && err.message) || err).slice(0, 80) };
       }
       if (last && !last.error && text(last.text) !== "") {
-        return { readable: true, result: last, reads: i };
+        return { readable: true, result: last, reads: i, ms: now() - started, outOfTime: false };
       }
+      if (kehabisan()) return { readable: false, result: last, reads: i, ms: now() - started, outOfTime: true };
       if (i < reads) await sleep(pollMs);
     }
-    return { readable: false, result: last, reads };
+    return { readable: false, result: last, reads, ms: now() - started, outOfTime: kehabisan() };
   }
 
   // Sinyal 2. Dipakai HANYA saat sinyal 1 buta.
-  async function readSnapshot(page, productKey) {
+  //
+  // Penggulirannya BERHENTI DINI begitu produk target ketemu: konfirmasi hanya
+  // perlu menemukan satu produk, bukan menyusun seluruh katalog. Buktinya tetap
+  // dibaca SESUDAH klik - yang dipotong penggulirannya, bukan kesegarannya.
+  async function readSnapshot(page, productKey, budgetRemaining = null) {
     if (typeof collectProducts !== "function") {
       return { ok: false, reason: "snapshot-unavailable" };
     }
+    const want = titleKey(productKey);
+    const t0 = now();
     let snap;
     try {
-      snap = await collectProducts(page);
+      snap = await collectProducts(page, {
+        until: (produk) => produk.some((p) => titleKey(p.title).includes(want)),
+        remaining: budgetRemaining,
+      });
     } catch (err) {
-      return { ok: false, reason: "snapshot-failed", error: String((err && err.message) || err).slice(0, 80) };
+      return { ok: false, reason: "snapshot-failed", ms: now() - t0, error: String((err && err.message) || err).slice(0, 80) };
     }
+    const ms = now() - t0;
+    const passes = snap && snap.passes;
+    const early = snap && snap.stoppedEarly === true;
     const products = (snap && snap.products) || [];
-    if (products.length === 0) return { ok: false, reason: "snapshot-no-products" };
+    if (products.length === 0) return { ok: false, reason: "snapshot-no-products", ms, passes, early };
 
-    const want = titleKey(productKey);
     const hit = products.find((p) => titleKey(p.title).includes(want));
-    if (!hit) return { ok: false, reason: "snapshot-product-not-found", products: products.length };
+    if (!hit) return { ok: false, reason: "snapshot-product-not-found", products: products.length, ms, passes, early };
 
     const pinText = text(hit.pinText);
     const badges = [...(hit.badges || []), ...(hit.ariaOnRow || [])].join(" ");
 
     if (PINNED_BUTTON_TEXT.test(pinText)) {
-      return { ok: true, via: VIA.SNAPSHOT_BUTTON, pinText, badges, title: hit.title };
+      return { ok: true, via: VIA.SNAPSHOT_BUTTON, pinText, badges, title: hit.title, ms, passes, early };
     }
     if (PINNED_BADGE.test(badges)) {
-      return { ok: true, via: VIA.SNAPSHOT_BADGE, pinText, badges, title: hit.title };
+      return { ok: true, via: VIA.SNAPSHOT_BADGE, pinText, badges, title: hit.title, ms, passes, early };
     }
     // Snapshot terbaca dan jelas mengatakan TIDAK ter-pin.
-    return { ok: false, reason: "snapshot-not-pinned", pinText, badges, title: hit.title };
+    return { ok: false, reason: "snapshot-not-pinned", pinText, badges, title: hit.title, ms, passes, early };
   }
 
   // Satu-satunya pintu keluar. TIDAK PERNAH melempar.
-  async function confirm(page, productKey) {
-    const primary = await readUntilReadable(page, productKey);
+  //
+  // `budget` opsional. Kalau diberikan, ia membatasi jendela sinyal primer dan
+  // memberi tahu sisa waktu keseluruhan - lihat autopin/pin-budget.js. Tanpa
+  // budget, perilakunya sama seperti sebelumnya.
+  async function confirm(page, productKey, budget = null) {
+    const primaryWindow = budget && budget.primaryWindowMs > 0 ? budget.primaryWindowMs : 0;
+    const sisa = budget && typeof budget.remaining === "function" ? budget.remaining : null;
+
+    const primary = await readUntilReadable(page, productKey, { windowMs: primaryWindow });
     const diag = describePrimary(primary.result);
 
     if (primary.readable) {
@@ -154,19 +180,33 @@ function createPinConfirmer({
         return {
           confirmed: true, via: VIA.BUTTON, state,
           reason: "pin-confirmed", reads: primary.reads, primary: diag, snapshot: null,
+          primaryMs: primary.ms, snapshotMs: 0,
         };
       }
       // Bacaan negatif yang JELAS. Sinyal 2 sengaja tidak dilihat.
       return {
         confirmed: false, via: null, state,
         reason: "pin-state-not-pinned", reads: primary.reads, primary: diag, snapshot: "not-consulted",
+        primaryMs: primary.ms, snapshotMs: 0,
       };
     }
 
-    // Sinyal 1 buta -> sinyal 2.
-    const snap = await readSnapshot(page, productKey);
+    // Sinyal 1 buta -> sinyal 2. Tapi kalau waktu keseluruhan sudah habis,
+    // snapshot TIDAK dimulai: lebih baik melapor jujur "tidak terkonfirmasi"
+    // daripada service masih bekerja ketika bot sudah menyerah.
+    if (sisa && sisa() <= 0) {
+      return {
+        confirmed: false, via: null, state: "",
+        reason: "pin-confirm-out-of-budget", reads: primary.reads, primary: diag,
+        snapshot: "not-started-out-of-budget",
+        primaryMs: primary.ms, snapshotMs: 0,
+      };
+    }
+
+    const snap = await readSnapshot(page, productKey, sisa);
     if (snap.ok) {
       return {
+        primaryMs: primary.ms, snapshotMs: snap.ms, snapshotPasses: snap.passes, snapshotEarly: snap.early,
         confirmed: true, via: snap.via,
         // State disetarakan dengan bacaan tombol yang terkonfirmasi supaya
         // gerbang di sisi bot tidak perlu aturan kedua. `via` yang menjelaskan
@@ -178,6 +218,7 @@ function createPinConfirmer({
     }
 
     return {
+      primaryMs: primary.ms, snapshotMs: snap.ms, snapshotPasses: snap.passes, snapshotEarly: snap.early,
       confirmed: false, via: null, state: "",
       reason: snap.reason === "snapshot-not-pinned" ? "pin-state-not-pinned" : "pin-state-unreadable",
       reads: primary.reads, primary: diag,

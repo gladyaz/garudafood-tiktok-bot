@@ -256,7 +256,34 @@ function readPinStateInPage(sel, opts) {
 const SELECTORS = { NUMBER_INPUT, ROW_MARKER, TOP_CONTROL, PIN_BUTTON };
 
 // Daftar ter-virtualisasi: hanya sebagian baris ter-render. Gulir bertahap lalu gabungkan.
-async function collectProducts(page, { maxScrolls = 14, step = 400, settleMs = 350 } = {}) {
+//
+// `until` adalah penghentian dini: dipanggil sesudah setiap gelombang serap
+// dengan produk yang SUDAH terkumpul, dan kalau mengembalikan true, penggulirannya
+// berhenti di situ.
+//
+// Kenapa ini ada: pada LIVE 2026-10-06 dengan katalog 20 produk, satu percobaan
+// pin menggulir SELURUH katalog DUA KALI - sekali untuk mencari produknya, sekali
+// lagi untuk konfirmasi lewat snapshot. Terukur 8 scrollPasses sekali jalan, dan
+// gabungannya melewati batas tunggu bot 8 detik:
+//
+//   [AUTOPIN_FAILED] reason=send-rejected detail=This operation was aborted
+//
+// padahal service-nya BERHASIL mem-pin dan mengkonfirmasi. Konfirmasi hanya perlu
+// menemukan SATU produk, bukan menyusun seluruh daftar, jadi ia boleh berhenti
+// begitu produknya ketemu. Bukti yang dibacanya tetap bukti SESUDAH klik - yang
+// dipotong hanya penggulirannya, bukan kesegarannya.
+// `remaining` adalah anggaran waktu: fungsi yang mengembalikan sisa milidetik.
+// Penggulirannya BERHENTI SENDIRI saat waktunya hampir habis - bukan ditinggalkan
+// di tengah jalan. Itu bedanya penting: operasi yang ditinggalkan tetap berjalan
+// di latar dan bisa tumpang tindih dengan pekerjaan berikutnya, sedangkan yang
+// berhenti sendiri selesai rapi dan melaporkan bahwa daftarnya tidak lengkap.
+// `sleep` disuntikkan supaya uji anggaran bisa memodelkan waktu tanpa benar-benar
+// menunggu: satu koleksi 20 produk memakan ~4,4 detik nyata, dan tes tidak boleh
+// membayar itu berkali-kali.
+async function collectProducts(page, {
+  maxScrolls = 14, step = 400, settleMs = 350, until = null, remaining = null,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
   const byNumber = new Map();
   let invalidRows = 0;
   let passes = 0;
@@ -275,24 +302,59 @@ async function collectProducts(page, { maxScrolls = 14, step = 400, settleMs = 3
   };
 
   await page.evaluate(resetScrollInPage, SELECTORS);
-  await new Promise((r) => setTimeout(r, settleMs));
+  await sleep(settleMs);
+
+  const sorted = () => [...byNumber.values()].sort((a, b) => a.number - b.number);
+  const satisfied = () => {
+    if (typeof until !== "function") return false;
+    try {
+      return until(sorted()) === true;
+    } catch (e) {
+      // Predikat yang rusak tidak boleh menghentikan koleksi lebih awal.
+      return false;
+    }
+  };
 
   const first = await page.evaluate(readProductsInPage, SELECTORS);
   absorb(first);
   passes += 1;
 
-  for (let i = 0; i < maxScrolls; i += 1) {
-    const s = await page.evaluate(scrollProductListInPage, SELECTORS, step);
-    if (!s.scrolled) break;
-    await new Promise((r) => setTimeout(r, settleMs));
-    absorb(await page.evaluate(readProductsInPage, SELECTORS));
-    passes += 1;
+  // Satu gelombang berikutnya butuh sekitar: gulir + settle + baca.
+  const outOfTime = () =>
+    typeof remaining === "function" && remaining() <= settleMs;
+
+  let ranOutOfTime = false;
+  let stoppedEarly = satisfied();
+  if (!stoppedEarly) {
+    for (let i = 0; i < maxScrolls; i += 1) {
+      if (outOfTime()) {
+        ranOutOfTime = true;
+        break;
+      }
+      const s = await page.evaluate(scrollProductListInPage, SELECTORS, step);
+      if (!s.scrolled) break;
+      await sleep(settleMs);
+      absorb(await page.evaluate(readProductsInPage, SELECTORS));
+      passes += 1;
+      if (satisfied()) {
+        stoppedEarly = true;
+        break;
+      }
+    }
   }
 
   return {
-    products: [...byNumber.values()].sort((a, b) => a.number - b.number),
+    products: sorted(),
     invalidRows,
     passes,
+    // true berarti penggulirannya DIPOTONG: daftarnya sengaja tidak lengkap.
+    // Pemanggil tidak boleh memakai hasil ini untuk menyimpulkan "produk tidak ada".
+    stoppedEarly,
+    // true berarti dipotong karena ANGGARAN WAKTU, bukan karena ketemu.
+    // Resolusi produk TIDAK BOLEH memakai daftar seperti ini: produk kedua yang
+    // cocok bisa belum terlihat, dan "ambigu, jangan klik" berubah diam-diam
+    // menjadi "klik yang pertama ketemu".
+    ranOutOfTime,
     numberInputsOnPage: first.numberInputsOnPage,
     livePinButtonsOnPage,
   };
@@ -303,16 +365,27 @@ async function readIdentity(page) {
 }
 
 // Gulir sampai baris target ter-render, lalu jalankan resolusi+klik atomik.
-async function pinProductByTitle(page, titleKey, { dryRun, maxScrolls = 14, step = 400, settleMs = 350 } = {}) {
+//
+// Ini juga tahap yang BISA LAMBAT: pada katalog besar ia menggulir sampai
+// maxScrolls kali sebelum barisnya ter-render. Jadi ia ikut menerima anggaran
+// waktu. Memotongnya aman: kalau barisnya belum ter-render, hasilnya
+// row-not-rendered dan TIDAK ADA klik - gagal yang aman, bukan klik ngawur.
+async function pinProductByTitle(page, titleKey, {
+  dryRun, maxScrolls = 14, step = 400, settleMs = 350, remaining = null,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  const outOfTime = () => typeof remaining === "function" && remaining() <= settleMs;
+
   await page.evaluate(resetScrollInPage, SELECTORS);
-  await new Promise((r) => setTimeout(r, settleMs));
+  await sleep(settleMs);
 
   for (let i = 0; i <= maxScrolls; i += 1) {
     const res = await page.evaluate(pinProductInPage, SELECTORS, { titleKey, dryRun });
     if (res.ok || res.reason !== "row-not-rendered") return { ...res, scrollSteps: i };
+    if (outOfTime()) return { ok: false, reason: "row-not-rendered-budget", scrollSteps: i };
     const s = await page.evaluate(scrollProductListInPage, SELECTORS, step);
     if (!s.scrolled) break;
-    await new Promise((r) => setTimeout(r, settleMs));
+    await sleep(settleMs);
   }
   return { ok: false, reason: "row-not-found-after-scroll" };
 }
