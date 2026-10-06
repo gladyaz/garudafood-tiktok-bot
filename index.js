@@ -239,7 +239,7 @@ const { createChatGate } = require("./tiktok/chat-gate");
 const { createInstanceLock } = require("./runtime/single-instance");
 const { createBoundedStore } = require("./runtime/bounded-store");
 const { createOpLog } = require("./runtime/op-log");
-const { buildMatcherIndex, matchFuzzy, DEFAULT_THRESHOLD, DEFAULT_BUDGET_CELLS } = require("./tiktok/matcher");
+const { buildMatcherIndex, matchPhrase, matchFuzzy, DEFAULT_THRESHOLD, DEFAULT_BUDGET_CELLS } = require("./tiktok/matcher");
 
 // Log operasional diringkas. Kejadian yang menyentuh akun sungguhan (pin,
 // kirim chat, penolakan identitas) TIDAK pernah lewat sini - masing-masing
@@ -895,31 +895,21 @@ function handleChat(data) {
   }
 
   const msgNorm = normalizeForMatching(msgRaw);
+  const idx = fuzzyIndex();
 
-  for (const rule of activeRules()) {
-    if (rule.pattern) {
-      const re = new RegExp(rule.pattern, "i");
-      if (re.test(msgRaw)) {
-        matchAndEnqueue(rule, nickname, "pattern");
-        return;
-      }
-    }
-
-    if (Array.isArray(rule.keywords)) {
-      for (const kw of rule.keywords) {
-        const kwNorm = normalizeForMatching(kw);
-        if (containsPhrase(msgNorm, kwNorm)) {
-          matchAndEnqueue(rule, nickname, "keyword");
-          return;
-        }
-      }
-    }
+  // Lintasan frasa lewat indeks: keyword sudah dinormalkan sekali saat indeks
+  // dibangun, bukan 374 kali per pesan. Urutan dan "yang pertama cocok menang"
+  // tetap sama. Lihat tiktok/matcher.js.
+  const phrase = matchPhrase(idx, msgRaw, msgNorm, { containsPhrase });
+  if (phrase) {
+    matchAndEnqueue(phrase.rule, nickname, phrase.via);
+    return;
   }
 
   // fallback fuzzy, lewat indeks. Hasilnya identik dengan perbandingan ke
   // SELURUH keyword - penyaringnya hanya melewati keyword yang secara
   // aritmetika mustahil mencapai ambang. Lihat tiktok/matcher.js.
-  const fz = matchFuzzy(fuzzyIndex(), msgNorm, { threshold: FUZZY_THRESHOLD, budgetCells: FUZZY_BUDGET_CELLS });
+  const fz = matchFuzzy(idx, msgNorm, { threshold: FUZZY_THRESHOLD, budgetCells: FUZZY_BUDGET_CELLS });
   if (fz.stats.budgetExceeded) {
     // Anggaran kerja habis: dilaporkan, tidak didiamkan. OBS dan media-end
     // berbagi event loop ini, jadi mereka tidak boleh menunggu lebih lama.
@@ -1289,6 +1279,8 @@ module.exports = {
   RULES,
   activeRules,
   containsPhrase,
+  // Dipakai uji beban untuk membangun indeks pembanding dengan normalisasi yang sama.
+  normalizeForMatching,
   SCENE_REPLAY_COOLDOWN_MS,
   obs,
   handleChat,
