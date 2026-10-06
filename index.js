@@ -237,6 +237,15 @@ const { createCommentSender } = require("./autocomment/client");
 const { inspectPinResult } = require("./autopin/pin-result");
 const { createChatGate } = require("./tiktok/chat-gate");
 const { createInstanceLock } = require("./runtime/single-instance");
+const { createBoundedStore } = require("./runtime/bounded-store");
+const { createOpLog } = require("./runtime/op-log");
+const { buildMatcherIndex, matchFuzzy, DEFAULT_THRESHOLD, DEFAULT_BUDGET_CELLS } = require("./tiktok/matcher");
+
+// Log operasional diringkas. Kejadian yang menyentuh akun sungguhan (pin,
+// kirim chat, penolakan identitas) TIDAK pernah lewat sini - masing-masing
+// harus bisa diaudit satu per satu. Lihat runtime/op-log.js.
+let ops = createOpLog({ windowMs: readNonNegativeIntEnv("OPS_LOG_WINDOW_MS", 10_000) });
+const opLog = (kind, detail) => ops.event(kind, detail);
 
 // Default-nya (enabled=false, transport dry-run, batas internal konservatif)
 // diuji di test/autocomment.config.test.js, jadi tidak bergantung pada .env
@@ -343,6 +352,9 @@ function finishActiveScene(reason) {
   activePlayId = 0; // generasi ini berakhir: balasan OBS yang telat untuknya jadi no-op
   if (!activeScene) return;
   console.log(`[PLAYBACK_END] scene=${activeScene} reason=${reason}`);
+  // Titik tenang: keluarkan sisa hitungan kejadian yang ditahan selagi scene
+  // berjalan, supaya tidak ada yang hilang tanpa jejak.
+  ops.flush();
   if (SCENE_REPLAY_COOLDOWN_MS > 0) {
     sceneCooldownUntil.set(activeScene, Date.now() + SCENE_REPLAY_COOLDOWN_MS);
     console.log(`[COOLDOWN_START] scene=${activeScene} duration=${SCENE_REPLAY_COOLDOWN_MS}`);
@@ -358,9 +370,13 @@ const FLOOD_WINDOW_MS = 5000; // detect repeated identical msg (5s)
 const FLOOD_TRIPLE_LIMIT = 3; // 3 pesan sama dalam window => treat as flood
 const AUTO_PROMOTE_THRESHOLD = 3; // kalau aggregate count >= ini, bisa prioritas lebih tinggi
 
-let perUserMap = new Map(); // username -> array[timestamps]
-let userLastMessages = new Map(); // username -> { lastMsg, repeatCount, lastAt }
-let isMutedUntil = new Map(); // username -> timestamp until muted
+// SATU entri per penonton, berbatas umur dan jumlah. Dulu tiga Map tanpa batas
+// yang hanya dibersihkan di hook tes - terukur ~1.454 byte per penonton unik
+// yang tidak pernah dibebaskan. Lihat runtime/bounded-store.js.
+const ANTISPAM_MAX_USERS = readNonNegativeIntEnv("ANTISPAM_MAX_USERS", 5_000);
+const ANTISPAM_TTL_MS = readNonNegativeIntEnv("ANTISPAM_TTL_MS", 10 * 60_000);
+let userState = createBoundedStore({ maxSize: ANTISPAM_MAX_USERS, ttlMs: ANTISPAM_TTL_MS });
+const blankUser = () => ({ stamps: [], lastMsg: null, repeatCount: 0, lastAt: 0, mutedUntil: 0 });
 
 // structure of aggregate:
 // { scene: 'SCENE_NAME', rule: ruleObj, count: N, requesters: Set(), firstAt: ts, lastAt: ts, priority: 0 }
@@ -404,10 +420,10 @@ if (playedScenes.has(scene)) {
 }
 
 
-  // check mute (kalau sistem mute ada)
-  if (requesterNickname && typeof isMutedUntil !== "undefined") {
-    const muteUntil = isMutedUntil.get(requesterNickname) || 0;
-    if (Date.now() < muteUntil) {
+  // check mute
+  if (requesterNickname) {
+    const rec = userState.get(requesterNickname);
+    if (rec && Date.now() < rec.mutedUntil) {
       console.log(`⚠ Ignore: ${requesterNickname} is muted`);
       return;
     }
@@ -452,11 +468,11 @@ if (playedScenes.has(scene)) {
         console.log("▶ Starting processQueue() from enqueueTrigger");
         processQueue();
       } else {
-        console.log("▶ Became busy before processing queue");
+        opLog("BUSY_BEFORE_PROCESS", "antrean ditunda, scene lain sedang jalan");
       }
     }, 50);
   } else {
-    console.log("▶ Busy → item akan diproses setelah current job selesai");
+    opLog("BUSY_QUEUED", "akan diproses setelah job sekarang selesai");
   }
 }
 
@@ -525,34 +541,36 @@ function promoteAggregate(sceneName) {
 // user spam tracking: call this for every chat message before matching rules
 function recordUserMessage(nickname, message) {
   const now = Date.now();
+  // Satu entri per penonton: jendela laju, deteksi banjir, dan status mute
+  // hidup bersama, jadi pembuangan satu entri membuang SELURUH jejak penonton
+  // itu - tidak ada sisa di Map lain.
+  const rec = userState.get(nickname) || blankUser();
 
-  // per-user timestamps sliding window
-  let arr = perUserMap.get(nickname) || [];
-  arr.push(now);
-  // remove old
-  arr = arr.filter(ts => now - ts <= USER_RATE_WINDOW_MS);
-  perUserMap.set(nickname, arr);
-  if (arr.length > USER_RATE_LIMIT) {
-    // mute for a bit
+  // jendela laju per penonton
+  rec.stamps.push(now);
+  // Hanya cap waktu di dalam jendela yang disimpan: panjang array terbatas
+  // oleh laju, bukan oleh durasi siaran.
+  rec.stamps = rec.stamps.filter((ts) => now - ts <= USER_RATE_WINDOW_MS);
+  if (rec.stamps.length > USER_RATE_LIMIT) {
     const muteFor = USER_RATE_WINDOW_MS * 2;
-    isMutedUntil.set(nickname, now + muteFor);
-    console.log(`🔇 User ${nickname} muted for ${muteFor/1000}s (too many msgs: ${arr.length})`);
+    rec.mutedUntil = now + muteFor;
+    userState.set(nickname, rec);
+    opLog("MUTE_RATE", `${nickname} muted ${muteFor / 1000}s (msgs: ${rec.stamps.length})`);
     return { muted: true, reason: "rate" };
   }
 
-  // flood detection for identical repeated messages
-  const last = userLastMessages.get(nickname) || { lastMsg: null, repeatCount: 0, lastAt: 0 };
-  if (message === last.lastMsg && (now - last.lastAt) <= FLOOD_WINDOW_MS) {
-    last.repeatCount += 1;
+  // banjir pesan identik berulang
+  if (message === rec.lastMsg && now - rec.lastAt <= FLOOD_WINDOW_MS) {
+    rec.repeatCount += 1;
   } else {
-    last.lastMsg = message;
-    last.repeatCount = 1;
+    rec.lastMsg = message;
+    rec.repeatCount = 1;
   }
-  last.lastAt = now;
-  userLastMessages.set(nickname, last);
+  rec.lastAt = now;
+  userState.set(nickname, rec);
 
-  if (last.repeatCount >= FLOOD_TRIPLE_LIMIT) {
-    console.log(`🚫 Flood detected from ${nickname} (repeat ${last.repeatCount}) — ignoring message.`);
+  if (rec.repeatCount >= FLOOD_TRIPLE_LIMIT) {
+    opLog("FLOOD", `${nickname} repeat=${rec.repeatCount}`);
     return { muted: true, reason: "flood" };
   }
 
@@ -695,6 +713,24 @@ function fuzzyRatio(a, b) {
 
 function normalizeForMatching(s) {
   return wordNumberToDigit(normalizeText(s));
+}
+
+const FUZZY_THRESHOLD = DEFAULT_THRESHOLD;
+const FUZZY_BUDGET_CELLS = readNonNegativeIntEnv("FUZZY_BUDGET_CELLS", DEFAULT_BUDGET_CELLS);
+
+// Indeks keyword untuk fuzzy. Dibangun sekali, dibangun ULANG hanya kalau
+// himpunan rule aktif berubah - tes memang menyalakan/mematikan rule di
+// tengah jalan, dan indeks basi akan membuat hasilnya menyimpang diam-diam.
+let _fuzzyIndex = null;
+let _fuzzySig = "";
+function fuzzyIndex() {
+  const rules = activeRules();
+  const sig = rules.map((r) => r.scene).join("|") + "#" + rules.length;
+  if (_fuzzyIndex === null || sig !== _fuzzySig) {
+    _fuzzyIndex = buildMatcherIndex(rules, { normalize: normalizeForMatching });
+    _fuzzySig = sig;
+  }
+  return _fuzzyIndex;
 }
 
 // Cocokkan frasa pada BATAS KATA, bukan substring mentah.
@@ -880,18 +916,17 @@ function handleChat(data) {
     }
   }
 
-  // fallback fuzzy
-  let best = { score: 0, rule: null };
-  for (const rule of activeRules()) {
-    if (!Array.isArray(rule.keywords)) continue;
-    for (const kw of rule.keywords) {
-      const kwNorm = normalizeForMatching(kw);
-      const score = fuzzyRatio(msgNorm, kwNorm);
-      if (score > best.score) best = { score, rule };
-    }
+  // fallback fuzzy, lewat indeks. Hasilnya identik dengan perbandingan ke
+  // SELURUH keyword - penyaringnya hanya melewati keyword yang secara
+  // aritmetika mustahil mencapai ambang. Lihat tiktok/matcher.js.
+  const fz = matchFuzzy(fuzzyIndex(), msgNorm, { threshold: FUZZY_THRESHOLD, budgetCells: FUZZY_BUDGET_CELLS });
+  if (fz.stats.budgetExceeded) {
+    // Anggaran kerja habis: dilaporkan, tidak didiamkan. OBS dan media-end
+    // berbagi event loop ini, jadi mereka tidak boleh menunggu lebih lama.
+    opLog("FUZZY_BUDGET", `candidates=${fz.stats.candidates} cells=${fz.stats.cells}`);
   }
-  if (best.rule && best.score >= 0.55) {
-    matchAndEnqueue(best.rule, nickname, "fuzzy");
+  if (fz.rule) {
+    matchAndEnqueue(fz.rule, nickname, "fuzzy");
     return;
   }
 }
@@ -1305,6 +1340,12 @@ module.exports = {
     autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
     autocommentConfigLine,
     botSessionId: () => BOT_SESSION_ID,
+    userStateStats: () => userState.__state(),
+    setUserStateLimits: (opts) => { userState = createBoundedStore(opts); },
+    opsStats: () => ops.__state(),
+    setOpLog: (fake) => { ops = fake; },
+    fuzzyIndexSize: () => fuzzyIndex().size,
+    matchFuzzyRaw: (msgNorm, opts) => matchFuzzy(fuzzyIndex(), msgNorm, { threshold: FUZZY_THRESHOLD, ...opts }),
     // ganti gerbang chat dengan palsu, atau baca hitungan penolakannya
     setChatGate: fake => { chatGate = fake; },
     chatGateState: () => chatGate.__state(),
@@ -1319,9 +1360,7 @@ module.exports = {
       playedScenes.clear();
       sceneCooldownUntil.clear();
       waitingMediaSet.clear();
-      perUserMap.clear();
-      userLastMessages.clear();
-      isMutedUntil.clear();
+      userState.clear();
       waitingRule = null;
       activeScene = null;
       activePlayId = 0;

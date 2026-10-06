@@ -299,7 +299,8 @@ test("existing per-user anti-spam still drops a user's repeated identical messag
   chat("spammer", "etalase 1");
 
   assert.equal(countLogs("MATCH"), 2);
-  assert.ok(logs.some(l => l.includes("Flood detected from spammer")));
+  // Kata-kata log diringkas lewat runtime/op-log.js; perilakunya sama.
+  assert.ok(logs.some(l => l.includes("[FLOOD]") && l.includes("spammer")), logs.join(" | "));
 });
 
 // --- FAQ routing sementara dimatikan (scene-nya belum ada di OBS) ---
