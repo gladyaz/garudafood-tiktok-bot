@@ -315,9 +315,13 @@ test("BURST: 5.000 komentar sekaligus -> event loop tersumbat dalam batas wajar"
     }
   });
 
-  report("komentar dalam satu ledakan", N);
+  // Label ini penting: 0,173 ms/pesan di sini BUKAN sebanding dengan 0,0632
+  // ms/pesan pada satu pesan seragam. Beban di sini campur, dan varian
+  // salah-tulis masuk jalur fuzzy dengan banyak kandidat. Menaruh kedua angka
+  // berdampingan tanpa label pernah membuat laporan saya salah dibaca.
+  report("komentar dalam satu ledakan (lalu lintas CAMPUR)", N);
   report("total event loop tersumbat", dur.toFixed(0) + " ms");
-  report("ms/komentar", (dur / N).toFixed(3));
+  report("ms/komentar (campur, bukan pesan seragam)", (dur / N).toFixed(3));
   report("perkiraan kapasitas", Math.round(1000 / (dur / N)) + " komentar/detik");
 
   // Longgar tapi bermakna: sebelum perbaikan, 5.000 pesan jalur fuzzy penuh
