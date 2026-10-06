@@ -20,6 +20,7 @@ const { createSendOnce } = require("../autocomment/send-once");
 const { createBrowserSender } = require("../autocomment/browser-sender");
 const { planTimeouts, describeTimeouts } = require("../autocomment/timeouts");
 const { createPinConfirmer } = require("./pin-confirm");
+const { createPlayGeneration } = require("./session");
 const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
 
 const DEFAULT_PORT = 5055;
@@ -88,17 +89,13 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   let browser = null;
   let page = null;
     let chatPage = null;
-  // playId terbesar yang pernah DITERIMA (bukan yang sedang dikerjakan).
-  // Dicatat di pintu masuk, sebelum antrean, supaya pekerjaan yang sedang
-  // berjalan bisa tahu dirinya sudah tidak relevan.
-  let latestPlayId = 0;
-
-  const isStale = (id) => id > 0 && id < latestPlayId;
-  // Generasi scene dipakai BERSAMA oleh pin dan komentar: begitu scene baru
-  // mulai, pekerjaan chat milik scene lama ikut basi, bukan cuma pin-nya.
-  const noteScenePlayId = (id) => {
-    if (Number.isFinite(id) && id > latestPlayId) latestPlayId = id;
-  };
+  // Generasi pemutaran, SADAR SESI. Dipakai bersama oleh pin dan komentar:
+  // begitu scene baru mulai, pekerjaan chat scene lama ikut basi, bukan cuma
+  // pin-nya. Lihat autopin/session.js - basi hanya berarti sesuatu di dalam
+  // SATU sesi bot, supaya restart bot tidak lagi memblokir playId yang sah.
+  const generation = createPlayGeneration({ logger: (event, data) => log(event, data) });
+  const isStale = (sessionId, id) => generation.isStale({ sessionId, playId: id });
+  const noteScenePlayId = (sessionId, id) => generation.note({ sessionId, playId: id });
 
   async function ensurePage() {
     if (browser && page && !page.isClosed()) return page;
@@ -167,15 +164,15 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     clickStrategy,
   });
 
-  async function handleCommentSend({ text, scene, playId }) {
+  async function handleCommentSend({ text, scene, playId, sessionId }) {
     if (allowAutoCommentSend !== true) return { ok: false, reason: "real-comment-send-disabled" };
     const id = Number.isFinite(playId) ? playId : 0;
-    if (isStale(id)) return { ok: false, reason: "stale" };
-    noteScenePlayId(id);
+    if (isStale(sessionId, id)) return { ok: false, reason: "stale" };
+    noteScenePlayId(sessionId, id);
     return runExclusive(async () => {
       // Diperiksa lagi di dalam antrean: scene bisa berganti selagi menunggu giliran.
-      if (isStale(id)) {
-        log("SERVICE_COMMENT_STALE", { scene, playId: id, latest: latestPlayId, phase: "queued" });
+      if (isStale(sessionId, id)) {
+        log("SERVICE_COMMENT_STALE", { scene, playId: id, latest: generation.latest(), phase: "queued" });
         return { ok: false, reason: "stale" };
       }
       try {
@@ -200,9 +197,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
 
     // Diserialkan lewat runner yang SAMA dengan pin: walau halamannya beda, dua
     // pekerjaan UI Puppeteer tidak boleh berjalan bersamaan di AR2A.
-    async function handleCommentDryRun({ text, scene, playId }) {
+    async function handleCommentDryRun({ text, scene, playId, sessionId }) {
       if (typeof text !== "string" || text.trim() === "") return { ok: false, reason: "empty-message" };
-      noteScenePlayId(Number.isFinite(playId) ? playId : 0);
+      noteScenePlayId(sessionId, Number.isFinite(playId) ? playId : 0);
       return runExclusive(async () => {
         try {
           return await commentTransport.send({ text, scene, playId });
@@ -225,7 +222,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   });
 
   // Gerbang yang sama persis dengan CLI yang sudah terverifikasi.
-  async function guardedPin({ scene, productKey, playId }) {
+  async function guardedPin({ scene, productKey, playId, sessionId }) {
     const p = await ensurePage();
 
     if (!isExpectedConsole(p.url(), config.consoleUrl)) {
@@ -251,8 +248,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // Semua langkah di atas memakan waktu (halaman siap, identitas, scraping
     // produk). Selama itu scene bisa sudah berganti. Memeriksa playId setelah
     // klik tidak ada gunanya: produk yang salah sudah tampil ke penonton.
-    if (isStale(playId)) {
-      log("SERVICE_STALE", { scene, playId, latest: latestPlayId, phase: "before-click" });
+    if (isStale(sessionId, playId)) {
+      log("SERVICE_STALE", { scene, playId, latest: generation.latest(), phase: "before-click" });
       return { ok: false, reason: "stale-before-click", clicked: false };
     }
 
@@ -281,23 +278,23 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     };
   }
 
-  async function handlePin({ scene, productKey, playId }) {
+  async function handlePin({ scene, productKey, playId, sessionId }) {
     if (typeof productKey !== "string" || !normalizeTitleKey(productKey)) {
       return { ok: false, reason: "empty-product-key" };
     }
     const id = Number.isFinite(playId) ? playId : 0;
-    if (isStale(id)) return { ok: false, reason: "stale" };
-    noteScenePlayId(id);
+    if (isStale(sessionId, id)) return { ok: false, reason: "stale" };
+    noteScenePlayId(sessionId, id);
 
     return runExclusive(async () => {
       // Dicek lagi DI DALAM antrean: permintaan yang lebih baru bisa datang
       // selama kita menunggu giliran. Yang menang adalah yang terbaru.
-      if (isStale(id)) {
-        log("SERVICE_STALE", { scene, playId: id, latest: latestPlayId, phase: "queued" });
+      if (isStale(sessionId, id)) {
+        log("SERVICE_STALE", { scene, playId: id, latest: generation.latest(), phase: "queued" });
         return { ok: false, reason: "stale" };
       }
       try {
-        return await guardedPin({ scene, productKey, playId: id });
+        return await guardedPin({ scene, productKey, playId: id, sessionId });
       } catch (err) {
         const reason = err && err.reason ? err.reason : "pin-error";
         log("SERVICE_ERROR", { scene, reason, detail: String(err && err.message).slice(0, 120) });
@@ -357,7 +354,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       autoCommentSend: allowAutoCommentSend === true ? "enabled" : "disabled",
       autoCommentAttempts: browserSender.__state().attempts,
       clickStrategy: browserSender.__state().clickStrategy,
-      latestPlayId,
+      latestPlayId: generation.latest(),
+      botId: generation.session() || "(none)",
       expectedShop: config.expectedShop || null,
     };
   }
@@ -367,9 +365,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   });
 
   app.post("/pin", async (req, res) => {
-    const { scene, productKey, playId } = req.body || {};
+    const { scene, productKey, playId, sessionId } = req.body || {};
     try {
-      const result = await handlePin({ scene, productKey, playId });
+      const result = await handlePin({ scene, productKey, playId, sessionId });
       res.json(result);
     } catch (err) {
       // handlePin sudah menangkap semuanya; ini jaring terakhir agar service
@@ -392,18 +390,18 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   }
 
     app.post("/comment/dry-run", async (req, res) => {
-      const { text, scene, playId } = req.body || {};
+      const { text, scene, playId, sessionId } = req.body || {};
       try {
-        res.json(await handleCommentDryRun({ text, scene, playId }));
+        res.json(await handleCommentDryRun({ text, scene, playId, sessionId }));
       } catch {
         res.json({ ok: false, reason: "service-error" });
       }
     });
 
     app.post("/comment/send", async (req, res) => {
-    const { text, scene, playId } = req.body || {};
+    const { text, scene, playId, sessionId } = req.body || {};
     try {
-      res.json(await handleCommentSend({ text, scene, playId }));
+      res.json(await handleCommentSend({ text, scene, playId, sessionId }));
     } catch {
       res.json({ ok: false, reason: "service-error" });
     }
@@ -461,6 +459,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     handleCommentDryRun,
     handleCommentSend,
     noteScenePlayId,
+    generation,
         handleCommentSendOnce,
         handleCommentPublishOnce,
         sendOnceStatus: () => sendOnce.status(),
@@ -471,7 +470,10 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     healthPayload,
     pinConfirmer,
     timeouts: budget,
-    __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget }),
+    __state: () => ({
+      latestPlayId: generation.latest(), botId: generation.session(),
+      hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget,
+    }),
   };
 }
 

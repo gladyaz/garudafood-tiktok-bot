@@ -209,6 +209,12 @@ let globalPauseTimer = null; // timer jeda global COOLDOWN_MS setelah balik ke M
 const { createScenePin } = require("./autopin/scene-pin");
 const { loadSceneProductMap, describeSceneProductMap } = require("./autopin/scene-map");
 const { createHttpSender, serviceUrl } = require("./autopin/client");
+const { newSessionId } = require("./autopin/session");
+
+// Satu ID untuk seumur proses bot ini. Dikirim pada setiap permintaan ke
+// service supaya restart bot TIDAK lagi membuat playId baru dianggap basi -
+// bug yang ditemukan 2026-10-05 saat operator me-restart bot saja.
+const BOT_SESSION_ID = newSessionId();
 
 const AUTOPIN_ENABLED = String(process.env.AUTOPIN_ENABLED || "false").trim().toLowerCase() === "true";
 const AUTOPIN_TIMEOUT_MS = readNonNegativeIntEnv("AUTOPIN_TIMEOUT_MS", 8_000);
@@ -218,7 +224,7 @@ let scenePin = createScenePin({
   enabled: AUTOPIN_ENABLED,
   mapping: autopinMap,
   timeoutMs: AUTOPIN_TIMEOUT_MS,
-  send: createHttpSender({ url: serviceUrl(process.env), timeoutMs: AUTOPIN_TIMEOUT_MS }),
+  send: createHttpSender({ url: serviceUrl(process.env), timeoutMs: AUTOPIN_TIMEOUT_MS, sessionId: BOT_SESSION_ID }),
 });
 
 // ====== AUTOCOMMENT (AUXILIARY - saudara AutoPIN, bukan bawahannya) ======
@@ -248,7 +254,7 @@ let autoComment = createAutoComment({
   // gladi bersihnya tetap setia pada urutan sungguhan.
   pinPolicy: AUTOCOMMENT_TRANSPORT === TRANSPORTS.BROWSER ? PIN_POLICY.CONFIRMED : PIN_POLICY.OK,
   inspectPin: inspectPinResult,
-  send: createCommentSender({ mode: AUTOCOMMENT_TRANSPORT, timeoutMs: autocommentConfig.timeoutMs }),
+  send: createCommentSender({ mode: AUTOCOMMENT_TRANSPORT, timeoutMs: autocommentConfig.timeoutMs, sessionId: BOT_SESSION_ID }),
   maxPerMinute: autocommentConfig.maxPerMinute,
   minIntervalMs: autocommentConfig.minIntervalMs,
   timeoutMs: autocommentConfig.timeoutMs,
@@ -1214,6 +1220,7 @@ function startLive() {
     process.exit(1);
   }
 
+  console.log(`[BOT_SESSION] id=${BOT_SESSION_ID} note="restart bot aman: service mereset generasi playId untuk sesi baru"`);
   console.log(autocommentConfigLine());
   startTikTok();
 
@@ -1297,6 +1304,7 @@ module.exports = {
     autocommentEnabled: () => AUTOCOMMENT_ENABLED,
     autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
     autocommentConfigLine,
+    botSessionId: () => BOT_SESSION_ID,
     // ganti gerbang chat dengan palsu, atau baca hitungan penolakannya
     setChatGate: fake => { chatGate = fake; },
     chatGateState: () => chatGate.__state(),

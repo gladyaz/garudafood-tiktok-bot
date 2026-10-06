@@ -42,6 +42,9 @@ function createCommentSender({
   url,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   fetchFn,
+  // Menandai proses bot ini, sama seperti pada autopin/client.js: generasi
+  // pemutaran dipakai BERSAMA oleh pin dan komentar.
+  sessionId,
   env = process.env,
 } = {}) {
   const target = url || commentUrl(mode, env);
@@ -60,7 +63,7 @@ function createCommentSender({
         headers: { "content-type": "application/json" },
         // `pin` hanya dibawa sebagai bukti/telemetri; service tetap memeriksa
         // gerbangnya sendiri dan tidak mempercayai klaim dari sisi pemanggil.
-        body: JSON.stringify({ text, scene, playId, pin }),
+        body: JSON.stringify({ text, scene, playId, pin, sessionId }),
         signal: controller.signal,
       });
       if (!res.ok) return { ok: false, reason: `http-${res.status}` };

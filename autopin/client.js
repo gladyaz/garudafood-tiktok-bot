@@ -13,7 +13,10 @@ function serviceUrl(env = process.env) {
   return `${base.replace(/\/+$/, "")}/pin`;
 }
 
-function createHttpSender({ url, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn } = {}) {
+// sessionId menandai proses bot ini. Service memakainya untuk membedakan
+// "pemutaran lama" dari "bot yang baru di-restart" - tanpa itu, restart bot
+// membuat playId yang sah ditolak basi. Lihat autopin/session.js.
+function createHttpSender({ url, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn, sessionId } = {}) {
   const target = url || serviceUrl();
 
   return async function send({ scene, productKey, playId }) {
@@ -26,7 +29,7 @@ function createHttpSender({ url, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn } = {})
       const res = await doFetch(target, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scene, productKey, playId }),
+        body: JSON.stringify({ scene, productKey, playId, sessionId }),
         signal: controller.signal,
       });
       if (!res.ok) return { ok: false, reason: `http-${res.status}` };
