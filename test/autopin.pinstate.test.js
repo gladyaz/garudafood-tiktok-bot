@@ -189,16 +189,19 @@ test("state terbaca 'Pin' -> ditolak gerbang, dan TIDAK dibaca ulang", async () 
 
 // ---------- fungsi pembacaan sebagai unit ----------
 
-test("readPinStateSettled melaporkan jumlah bacaan supaya terlihat di log", async () => {
-  const { svc } = svcWith({ states: [{ text: "" }, { text: "Unpin" }] });
-  const r = await svc.readPinStateSettled({}, "pandan");
-  assert.equal(r.text, "Unpin");
-  assert.equal(r.reads, 2, "angka ini yang muncul sebagai reads= di [AUTOPIN_SERVICE_PINNED]");
+test("confirmer melaporkan jumlah bacaan supaya terlihat di log", async () => {
+  const { svc } = svcWith({ states: [{ found: true, buttons: 0, text: "" }, { found: true, buttons: 1, text: "Unpin" }] });
+  const v = await svc.pinConfirmer.confirm({}, "pandan");
+  assert.equal(v.confirmed, true);
+  assert.equal(v.via, "button-text");
+  assert.equal(v.reads, 2, "angka ini yang muncul sebagai reads= di [AUTOPIN_SERVICE_PINNED]");
 });
 
-test("readPinStateSettled tidak pernah melempar", async () => {
+test("confirmer tidak pernah melempar, dan mencatat bukti apa adanya", async () => {
   const { svc } = svcWith({ states: [{ text: "Unpin" }], readThrows: 99 });
-  const r = await svc.readPinStateSettled({}, "pandan");
-  assert.equal(r.text, "");
-  assert.equal(r.reads, 6);
+  const v = await svc.pinConfirmer.confirm({}, "pandan");
+  assert.equal(v.confirmed, false);
+  assert.equal(v.state, "");
+  assert.equal(v.reads, 6);
+  assert.ok(v.primary.includes("error="), "penyebab bacaan gagal ikut tercatat: " + v.primary);
 });

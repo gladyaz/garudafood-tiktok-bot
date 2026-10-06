@@ -19,6 +19,7 @@ const { createBrowserTransport, waitForComposerReady } = require("../autocomment
 const { createSendOnce } = require("../autocomment/send-once");
 const { createBrowserSender } = require("../autocomment/browser-sender");
 const { planTimeouts, describeTimeouts } = require("../autocomment/timeouts");
+const { createPinConfirmer } = require("./pin-confirm");
 const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
 
 const DEFAULT_PORT = 5055;
@@ -45,6 +46,7 @@ const LOOPBACK = "127.0.0.1";
 // puluhan detik sesudahnya.
 const PIN_STATE_READS = 6;
 const PIN_STATE_POLL_MS = 250;
+// Sinyal kedua dipakai HANYA saat sinyal pertama buta. Lihat autopin/pin-confirm.js.
 
 function isExpectedConsole(actualUrl, consoleUrl) {
   try {
@@ -211,24 +213,16 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       });
     }
 
-  // Membaca state pin sampai TERBACA, dalam jendela berbatas. Murni membaca:
-  // tidak ada klik kedua, tidak ada pengiriman. Lihat catatan PIN_STATE_READS.
-  async function readPinStateSettled(p, productKey) {
-    let last = null;
-    for (let i = 1; i <= PIN_STATE_READS; i += 1) {
-      try {
-        last = await d.readPinState(p, productKey);
-      } catch (err) {
-        last = { text: "", error: String(err && err.message).slice(0, 80) };
-      }
-      const text = String((last && last.text) || "").trim();
-      if (text !== "") return { ...last, text, reads: i };
-      if (i < PIN_STATE_READS) await d.sleep(PIN_STATE_POLL_MS);
-    }
-    // Tetap kosong sesudah seluruh jendela: dilaporkan apa adanya, dan gerbang
-    // semantik yang memutuskan - bukan modul ini yang menebak.
-    return { ...(last || {}), text: "", reads: PIN_STATE_READS };
-  }
+  // Konfirmasi pin dari dua sinyal independen, murni membaca dan berbatas
+  // waktu. Tidak pernah melempar. Lihat autopin/pin-confirm.js untuk aturannya
+  // - terutama bahwa bacaan negatif yang JELAS tidak boleh ditimpa sinyal lain.
+  const pinConfirmer = createPinConfirmer({
+    readPinState: (p, key) => d.readPinState(p, key),
+    collectProducts: (p) => d.collectProducts(p),
+    sleep: (ms) => d.sleep(ms),
+    reads: PIN_STATE_READS,
+    pollMs: PIN_STATE_POLL_MS,
+  });
 
   // Gerbang yang sama persis dengan CLI yang sudah terverifikasi.
   async function guardedPin({ scene, productKey, playId }) {
@@ -272,9 +266,19 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     const act = await d.pinProductByTitle(p, productKey, { dryRun: false });
     if (!act.ok) return { ok: false, reason: act.reason };
 
-    const after = await readPinStateSettled(p, productKey);
-    log("SERVICE_PINNED", { scene, title: act.title, after: after.text, reads: after.reads });
-    return { ok: true, reason: "pinned", title: act.title, state: after.text, clicked: true };
+    const v = await pinConfirmer.confirm(p, productKey);
+    // Seluruh bukti dicatat: hasil bacaan tombol APA ADANYA (found/buttons/text)
+    // dan hasil sinyal kedua kalau sampai dipakai. Inilah yang dulu hilang.
+    log("SERVICE_PINNED", {
+      scene, title: act.title, after: v.state, via: v.via || "-",
+      reads: v.reads, primary: v.primary, snapshot: v.snapshot || "-",
+    });
+    return {
+      ok: true, reason: "pinned", title: act.title, state: v.state, clicked: true,
+      // Dibawa ke sisi bot murni untuk observability. Gerbang di sana TETAP
+      // memutuskan dari state, bukan dari field ini.
+      confirmedVia: v.via, confirmReason: v.reason,
+    };
   }
 
   async function handlePin({ scene, productKey, playId }) {
@@ -465,7 +469,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     stop,
     warmUp,
     healthPayload,
-    readPinStateSettled,
+    pinConfirmer,
     timeouts: budget,
     __state: () => ({ latestPlayId, hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget }),
   };
