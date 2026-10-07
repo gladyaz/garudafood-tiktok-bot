@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI LIVE HOST</title>
+    <!-- Tidak ada CDN, tidak ada font eksternal, tidak ada analytics. Semua
+         berkas disajikan Controller dari disk; halaman ini tidak pernah
+         menghubungi apa pun selain 127.0.0.1. -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>AI LIVE HOST</h1>
+      <div class="topbar-right">
+        <span id="automation-pill" class="pill neutral">Loading…</span>
+        <button id="refresh-btn" type="button" class="btn btn-secondary">Refresh Connections</button>
+      </div>
+    </header>
+
+    <!-- Spanduk ini hanya untuk hal yang berlaku ke SELURUH halaman (controller
+         tidak terjangkau, config tersimpan, restart dibutuhkan). Masalah yang
+         dimiliki satu pemetaan tampil di baris pemetaan itu, bukan di sini. -->
+    <div id="banner" class="banner" hidden></div>
+
+    <main>
+      <!-- 1. Kesiapan -->
+      <section class="card" aria-labelledby="readiness-title">
+        <div class="card-head">
+          <h2 id="readiness-title">Connection &amp; Readiness</h2>
+          <span id="readiness-hint" class="hint"></span>
+        </div>
+        <dl id="readiness" class="readiness"></dl>
+      </section>
+
+      <!-- Panduan pertama kali, hanya saat belum ada config -->
+      <section id="setup" class="card" hidden aria-labelledby="setup-title">
+        <div class="card-head"><h2 id="setup-title">Initial setup</h2></div>
+        <ol class="setup-steps">
+          <li>Open OBS and enable its WebSocket server.</li>
+          <li>Start your TikTok LIVE.</li>
+          <li>Add the products you want to pin to the LIVE.</li>
+          <li>Press <strong>Refresh Connections</strong> above.</li>
+          <li>Create your mappings below, then press <strong>Save Changes</strong>.</li>
+        </ol>
+      </section>
+
+      <!-- 2. Pemetaan -->
+      <section class="card" aria-labelledby="mapping-title">
+        <div class="card-head">
+          <h2 id="mapping-title">Automation Mapping</h2>
+          <span id="mapping-hint" class="hint"></span>
+        </div>
+
+        <div id="mappings" class="mappings"></div>
+
+        <p id="mappings-empty" class="empty" hidden>
+          No mappings yet. Add one to tell the bot which product to pin for each scene.
+        </p>
+
+        <div class="card-actions">
+          <button id="add-mapping-btn" type="button" class="btn btn-secondary">+ Add Mapping</button>
+          <button id="save-btn" type="button" class="btn btn-primary">Save Changes</button>
+          <span id="save-state" class="hint" aria-live="polite"></span>
+        </div>
+      </section>
+
+      <!-- 3. Start / Stop -->
+      <section class="card" aria-labelledby="run-title">
+        <div class="card-head">
+          <h2 id="run-title">Automation</h2>
+        </div>
+
+        <div class="run-row">
+          <div class="run-status">
+            <span class="run-label">Status</span>
+            <span id="run-state" class="run-value neutral">Loading…</span>
+          </div>
+          <div class="run-buttons">
+            <button id="start-btn" type="button" class="btn btn-start">START BOT</button>
+            <button id="stop-btn" type="button" class="btn btn-stop">STOP BOT</button>
+          </div>
+        </div>
+
+        <p id="run-note" class="hint" aria-live="polite"></p>
+
+        <!-- Daftar kesiapan saat Start. Tanpa persentase palsu: setiap baris
+             adalah hal yang benar-benar diperiksa, dengan hasilnya sendiri. -->
+        <dl id="preflight" class="readiness" hidden></dl>
+      </section>
+
+      <!-- 4. Activity -->
+      <section class="card" aria-labelledby="activity-title">
+        <div class="card-head">
+          <h2 id="activity-title">Activity</h2>
+          <span id="activity-hint" class="hint"></span>
+        </div>
+        <ul id="activity" class="activity"></ul>
+        <p id="activity-empty" class="empty">Nothing yet.</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Local only — this dashboard is served from your own computer.</span>
+    </footer>
+
+    <!-- ui-logic.js memuat semua keputusan; app.js hanya memetakannya ke DOM. -->
+    <script src="ui-logic.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

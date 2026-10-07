@@ -1,0 +1,532 @@
+/* AI LIVE HOST — dashboard lokal.
+ *
+ * Rasa internal SaaS: tenang, padat, tidak ada animasi yang tidak perlu. Warna
+ * hanya dipakai untuk arti, bukan untuk hiasan:
+ *
+ *   ready      hijau    siap / berhasil
+ *   running    hijau    automation sedang berjalan
+ *   attention  amber    perlu tindakan operator
+ *   error      merah    gagal
+ *   neutral    abu      belum diketahui / berhenti
+ *
+ * Font memakai stack sistem: tidak ada berkas font eksternal yang perlu diunduh,
+ * jadi halaman ini tetap bekerja tanpa jaringan sama sekali.
+ */
+
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --border: #dfe3e8;
+  --border-strong: #c7cdd4;
+  --text: #1c2430;
+  --text-dim: #5c6775;
+  --text-faint: #8a939f;
+
+  --ready: #15794c;
+  --ready-bg: #e6f4ed;
+  --attention: #9a6207;
+  --attention-bg: #fdf3e2;
+  --error: #b02a24;
+  --error-bg: #fdecea;
+  --neutral: #5c6775;
+  --neutral-bg: #eef0f3;
+
+  --accent: #1f5fbf;
+  --accent-hover: #1a4f9f;
+
+  --radius: 6px;
+  --gap: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* --- topbar --------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 14px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* --- layout --------------------------------------------------------------- */
+
+main {
+  /* Dioptimalkan untuk laptop Windows 1280–1920px: dua kolom saat lebar, satu
+     kolom saat sempit. */
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+  display: grid;
+  gap: var(--gap);
+}
+
+@media (min-width: 1100px) {
+  main {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  /* Pemetaan adalah pekerjaan utama: ia dapat seluruh lebar. */
+  main > section:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px 18px;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.footer {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px 28px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* --- banner --------------------------------------------------------------- */
+
+.banner {
+  max-width: 1180px;
+  margin: 16px auto 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--neutral-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.banner.attention {
+  background: var(--attention-bg);
+  border-color: #e8cf9a;
+  color: var(--attention);
+}
+
+.banner.error {
+  background: var(--error-bg);
+  border-color: #f0bbb6;
+  color: var(--error);
+}
+
+.banner.ready {
+  background: var(--ready-bg);
+  border-color: #b4ddc8;
+  color: var(--ready);
+}
+
+/* --- readiness list ------------------------------------------------------- */
+
+.readiness {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(130px, auto) 1fr;
+  gap: 6px 16px;
+}
+
+.readiness dt {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.readiness dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.readiness dd.ready,
+.readiness dd.running {
+  color: var(--ready);
+}
+.readiness dd.attention {
+  color: var(--attention);
+}
+.readiness dd.error {
+  color: var(--error);
+}
+.readiness dd.neutral {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+/* --- pill ----------------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.pill.ready,
+.pill.running {
+  background: var(--ready-bg);
+  border-color: #b4ddc8;
+  color: var(--ready);
+}
+.pill.attention {
+  background: var(--attention-bg);
+  border-color: #e8cf9a;
+  color: var(--attention);
+}
+.pill.error {
+  background: var(--error-bg);
+  border-color: #f0bbb6;
+  color: var(--error);
+}
+.pill.neutral {
+  background: var(--neutral-bg);
+  border-color: var(--border-strong);
+  color: var(--neutral);
+}
+
+/* --- buttons -------------------------------------------------------------- */
+
+.btn {
+  font: inherit;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: #f7f8f9;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-start {
+  background: var(--ready);
+  border-color: var(--ready);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 9px 20px;
+}
+.btn-start:hover:not(:disabled) {
+  background: #11653e;
+}
+
+.btn-stop {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 9px 20px;
+}
+.btn-stop:hover:not(:disabled) {
+  background: #94221d;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 4px 8px;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--neutral-bg);
+  color: var(--error);
+}
+
+/* --- mappings ------------------------------------------------------------- */
+
+.mappings {
+  display: grid;
+  gap: 12px;
+}
+
+.mapping {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: #fcfcfd;
+}
+
+/* Baris yang bermasalah ditandai di baris itu sendiri, supaya operator tahu
+   mana yang harus dibetulkan tanpa menebak. */
+.mapping.has-error {
+  border-color: #e8b4af;
+  background: #fffaf9;
+}
+
+.mapping-grid {
+  display: grid;
+  gap: 10px 14px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .mapping-grid {
+    grid-template-columns: 180px 1fr 1fr;
+  }
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field > label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.field select,
+.field input,
+.field textarea {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+  width: 100%;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 56px;
+}
+
+.field select:disabled,
+.field input:disabled,
+.field textarea:disabled {
+  background: #f2f3f5;
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.field-note {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.mapping-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mapping-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Pesan kesalahan milik satu pemetaan. */
+.mapping-error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--error-bg);
+  color: var(--error);
+  font-size: 12.5px;
+}
+
+.mapping-ok {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* --- run ------------------------------------------------------------------ */
+
+.run-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+}
+
+.run-status {
+  display: grid;
+  gap: 2px;
+}
+
+.run-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.run-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.run-value.ready,
+.run-value.running {
+  color: var(--ready);
+}
+.run-value.attention {
+  color: var(--attention);
+}
+.run-value.error {
+  color: var(--error);
+}
+.run-value.neutral {
+  color: var(--text-dim);
+}
+
+.run-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+#preflight {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* --- activity ------------------------------------------------------------- */
+
+.activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  /* Dibatasi tingginya: feed yang panjang tidak boleh mendorong tombol
+     Start/Stop keluar dari layar. */
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.activity li {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  gap: 10px;
+  padding: 5px 2px;
+  border-bottom: 1px solid #f0f1f3;
+  font-size: 13px;
+}
+
+.activity li:last-child {
+  border-bottom: none;
+}
+
+.activity .at {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.activity li.ready .what {
+  color: var(--ready);
+}
+.activity li.attention .what {
+  color: var(--attention);
+}
+.activity li.error .what {
+  color: var(--error);
+}
+
+.setup-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-dim);
+  display: grid;
+  gap: 4px;
+}

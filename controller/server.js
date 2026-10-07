@@ -13,9 +13,30 @@
 // (proxy lokal, port forward, atau pengikatan yang berubah karena kekeliruan di
 // masa depan). Dua lapis, sama seperti gerbang kirim chat.
 
+const path = require("node:path");
 const express = require("express");
 const { redactConfig, mergeSecrets, defaultConfig, CONFIG_VERSION } = require("./config-manager");
 const { translate, translateFieldErrors } = require("./errors");
+
+// Direktori berkas statis dashboard. Dipisah dari kode lifecycle: apa pun di
+// bawah sini hanya dibaca browser, dan tidak satu pun boleh ikut memutuskan
+// kapan bot menyala.
+const PUBLIC_DIR = path.join(__dirname, "public");
+
+// Kalimat untuk customer dibentuk di SERVER, bukan di frontend.
+//
+// Ini pelajaran langsung dari P2: salinan normalizeTitleKey di validator langsung
+// menyimpang dari aslinya, dan akibatnya adalah Controller yang bilang "produk
+// ketemu" sementara jalur pin tidak menemukannya. Katalog kode -> kalimat ada di
+// controller/errors.js; menyalinnya ke app.js akan mengulang kesalahan bentuk
+// yang sama, hanya dengan jarak yang lebih jauh (frontend vs backend) sehingga
+// penyimpangannya lebih lama tidak terlihat.
+//
+// Jadi setiap respons yang memuat `reason` juga memuat `userMessage`.
+function withUserMessage(obj, reason) {
+  if (!reason) return obj;
+  return Object.assign({}, obj, { userMessage: translate(reason).userMessage });
+}
 
 const DEFAULT_PORT = 4782; // bukan 5055 (AutoPIN) dan bukan 4455 (OBS)
 const LOOPBACK = "127.0.0.1";
@@ -86,10 +107,15 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
     const sinceId = Number.parseInt(req.query.sinceId, 10);
     res.json({
       ok: true,
-      events: controller.activity.list({
-        limit: Number.isInteger(limit) ? limit : undefined,
-        sinceId: Number.isInteger(sinceId) ? sinceId : undefined,
-      }),
+      events: controller.activity
+        .list({
+          limit: Number.isInteger(limit) ? limit : undefined,
+          sinceId: Number.isInteger(sinceId) ? sinceId : undefined,
+        })
+        // Kejadian yang punya `reason` ikut membawa kalimatnya. Kode mesinnya
+        // TETAP ada: ia yang dicatat di log dan yang dipakai saat menelusuri
+        // masalah, sementara kalimatnya yang ditampilkan.
+        .map((e) => withUserMessage(e, e.reason)),
       dropped: controller.activity.dropped(),
       max: controller.activity.max,
       lastId: controller.activity.lastId(),
@@ -159,12 +185,26 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
   // jauh sebelum ia menekan Start.
   app.post("/api/mappings/validate", loopbackOnly, async (_req, res) => {
     const r = await controller.validateMappings();
-    res.json(r);
+    // Satu kalimat per BARIS yang bermasalah. Baris-nya penting: masalah yang
+    // dimiliki satu pemetaan tidak boleh tampil sebagai satu spanduk merah umum
+    // yang tidak menunjukkan baris mana yang harus dibetulkan.
+    res.json(
+      Object.assign({}, r, {
+        mappings: Array.isArray(r.mappings) ? r.mappings.map((row) => withUserMessage(row, row.reason)) : [],
+      })
+    );
   });
 
   app.post("/api/preflight", loopbackOnly, async (_req, res) => {
     const result = await controller.runPreflight();
-    res.json({ ok: result.ok, checks: result.checks });
+    // Setiap check yang merah membawa kalimatnya sendiri, supaya UI bisa
+    // menampilkan daftar kesiapan baris per baris — bukan satu pesan gabungan
+    // yang menyembunyikan mana yang sebenarnya belum siap.
+    const checks = {};
+    for (const [name, c] of Object.entries(result.checks || {})) {
+      checks[name] = c && c.ok === true ? c : withUserMessage(c, c && c.reason);
+    }
+    res.json({ ok: result.ok, checks });
   });
 
   app.post("/api/start", loopbackOnly, async (_req, res) => {
@@ -178,6 +218,37 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
     const r = await controller.stopAutomation();
     res.status(r.ok ? 200 : 409).json(r);
   });
+
+  // --- dashboard statis -----------------------------------------------------
+  //
+  // Dipasang SESUDAH semua rute /api, jadi berkas statis tidak mungkin
+  // menaungi endpoint — sebuah berkas bernama `public/api/status` tidak akan
+  // pernah menggantikan jawaban Controller.
+  //
+  // Tidak ada CDN, tidak ada build pipeline: HTML/CSS/JS biasa yang disajikan
+  // dari disk. Halaman ini hanya bisa dicapai dari mesin ini sendiri, karena
+  // server-nya mengikat 127.0.0.1 (lihat start() di bawah).
+  app.use(
+    express.static(PUBLIC_DIR, {
+      index: "index.html",
+      // Dashboard dan API-nya hidup di satu proses dan di-deploy bersama, jadi
+      // cache yang menyimpan app.js lama hanya membuat operator melihat UI yang
+      // tidak cocok dengan backend-nya tanpa tahu kenapa.
+      etag: true,
+      maxAge: 0,
+      setHeaders: (res) => {
+        res.setHeader("Cache-Control", "no-cache");
+        // Dashboard tidak memuat apa pun dari luar. Kalau suatu saat ada yang
+        // menambahkan <script src="https://..."> , halaman akan menolaknya
+        // sendiri daripada diam-diam mengambilnya.
+        res.setHeader(
+          "Content-Security-Policy",
+          "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'"
+        );
+        res.setHeader("X-Content-Type-Options", "nosniff");
+      },
+    })
+  );
 
   // Endpoint yang tidak dikenal dibalas JSON, bukan halaman HTML express.
   app.use((_req, res) => {
@@ -239,4 +310,4 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
   return { app, start, stop, isLoopback, __server: () => server };
 }
 
-module.exports = { createServer, DEFAULT_PORT, LOOPBACK, isLoopback, LOOPBACK_ADDRESSES };
+module.exports = { createServer, DEFAULT_PORT, LOOPBACK, isLoopback, LOOPBACK_ADDRESSES, PUBLIC_DIR };
