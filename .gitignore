@@ -17,3 +17,7 @@ logs/
 .autopin-profile/
 .autopin-debug/
 .bot.lock
+
+# Controller: config customer (password OBS + username TikTok)
+data/config.json
+data/config.json.tmp

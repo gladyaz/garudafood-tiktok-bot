@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "tiktok": {
+    "username": ""
+  },
+  "obs": {
+    "host": "127.0.0.1",
+    "port": 4455,
+    "password": ""
+  },
+  "settings": {
+    "autopinEnabled": false,
+    "autopinPort": 5055,
+    "autopinTimeoutMs": 15000,
+    "autoCommentEnabled": false,
+    "autoCommentTransport": "dry-run",
+    "autoCommentMaxPerMinute": 6,
+    "autoCommentMinIntervalMs": 5000,
+    "autoCommentTimeoutMs": 8000,
+    "sceneReplayCooldownMs": 120000,
+    "expectedShop": "",
+    "forbiddenShops": ["garudafood"],
+    "consoleUrl": "https://shop.tiktok.com/streamer/live/product/dashboard",
+    "profileDir": ".autopin-profile",
+    "debugDir": ".autopin-debug",
+    "chromePath": ""
+  },
+  "mappings": [
+    {
+      "scene": "PAX-1",
+      "product": {
+        "title": "Contoh Judul Produk"
+      },
+      "triggers": ["spill etalase 1"],
+      "reply": "Etalase 1 sudah aku pin ya kak"
+    }
+  ]
+}
