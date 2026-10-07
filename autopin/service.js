@@ -54,6 +54,12 @@ const PIN_STATE_POLL_MS = 250;
 const CONFIRM_SLACK_MS = 300;
 // Sinyal kedua dipakai HANYA saat sinyal pertama buta. Lihat autopin/pin-confirm.js.
 
+// Berapa (sesi, playId) terakhir yang diingat sudah pernah DIKLIK. Mencegah
+// pin kedua untuk pemutaran yang sama: permintaan ulang, pengiriman ganda,
+// atau proses bot kembar. Batasnya sama dengan dedupe AutoComment
+// (autocomment/core.js DEDUPE_MEMORY) supaya keduanya setara.
+const PIN_DEDUPE_MEMORY = 1_000;
+
 function isExpectedConsole(actualUrl, consoleUrl) {
   try {
     const a = new URL(actualUrl);
@@ -76,6 +82,25 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   // menggulir dan mengklik - keadaan "entah" yang terjadi pada LIVE 2026-10-06
   // dengan katalog 20 produk. Lihat autopin/pin-budget.js.
   const pinBudget = pinTimeouts || planPinTimeouts({ httpTimeoutMs: Number(process.env.AUTOPIN_TIMEOUT_MS) || undefined });
+
+  // Pemutaran yang pin-nya SUDAH benar-benar diklik. Aturan basi saja tidak
+  // cukup: ia menolak playId yang lebih KECIL dari yang terbaru, jadi playId
+  // yang SAMA diulang lolos begitu saja dan mengklik dua kali. Untuk pin itu
+  // berarti produknya ter-toggle kembali OFF - kebalikan dari yang diminta.
+  const sudahDiklik = new Set();
+  const kunciPlay = (sessionId, playId) => `${String(sessionId || "")}#${playId}`;
+  // playId <= 0 dipakai alat diagnostik dan memang boleh diulang, sama seperti
+  // pengecualiannya di aturan basi.
+  const bisaDedupe = (playId) => Number.isFinite(playId) && playId > 0;
+  const pernahDiklik = (sessionId, playId) =>
+    bisaDedupe(playId) && sudahDiklik.has(kunciPlay(sessionId, playId));
+  const catatDiklik = (sessionId, playId) => {
+    if (!bisaDedupe(playId)) return;
+    sudahDiklik.add(kunciPlay(sessionId, playId));
+    if (sudahDiklik.size > PIN_DEDUPE_MEMORY) {
+      sudahDiklik.delete(sudahDiklik.values().next().value);
+    }
+  };
   const d = {
     launchBrowser: browserMod.launchBrowser,
     getPage: browserMod.getPage,
@@ -237,15 +262,23 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   });
 
   // Gerbang yang sama persis dengan CLI yang sudah terverifikasi.
-  async function guardedPin({ scene, productKey, playId, sessionId }) {
+  async function guardedPin({ scene, productKey, playId, sessionId, acceptedAt }) {
     // --- anggaran waktu + instrumentasi per-tahap ---
     // Satu deadline untuk SELURUH pekerjaan sisi service. Tiap tahap yang bisa
     // lambat dijalankan di bawah sisa waktu, jadi service tidak pernah masih
     // bekerja ketika bot sudah menyerah.
+    //
+    // Deadline dihitung dari saat permintaan DITERIMA, bukan saat kerjanya
+    // mulai. Bedanya penting: hanya satu mutasi UI boleh jalan pada satu waktu,
+    // jadi permintaan untuk playId yang berbeda bisa menunggu lama di antrean.
+    // Kalau jamnya baru mulai sesudah gilirannya tiba, waktu tunggu itu tidak
+    // terhitung - dan bot bisa menyerah ketika service justru baru mulai.
     const t0 = d.now();
-    const deadlineAt = t0 + pinBudget.browserDeadlineMs;
+    const mulaiDari = Number.isFinite(acceptedAt) ? acceptedAt : t0;
+    const deadlineAt = mulaiDari + pinBudget.browserDeadlineMs;
     const left = () => deadlineAt - d.now();
     const marks = [];
+    if (t0 > mulaiDari) marks.push(["queue-wait", t0 - mulaiDari]);
     const timingLine = () =>
       marks.map(([k, v]) => `${k}=${v}`).join(" ") + ` total=${d.now() - t0} remaining=${left()}`;
 
@@ -369,6 +402,10 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // SATU klik. Tidak pernah ada klik kedua, dan tidak ada retry.
     const act = await stage("click", () => d.pinProductByTitle(p, productKey, { dryRun: false, remaining: left }));
     if (!act.ok) return { ok: false, reason: act.reason };
+    // Dicatat SEBELUM konfirmasi, bukan sesudah: yang harus dicegah adalah klik
+    // kedua, dan kliknya sudah terjadi di baris atas. Konfirmasi yang gagal
+    // tidak boleh memberi izin mengklik lagi.
+    catatDiklik(sessionId, playId);
 
     // Konfirmasi di bawah cadangan yang sudah dipastikan tersisa sebelum klik.
     // Kalau cadangan itu ternyata habis juga, confirm() melapor jujur
@@ -403,8 +440,16 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     if (typeof productKey !== "string" || !normalizeTitleKey(productKey)) {
       return { ok: false, reason: "empty-product-key" };
     }
+    // Jam anggaran mulai DI SINI, sebelum antre. Lihat guardedPin.
+    const acceptedAt = d.now();
     const id = Number.isFinite(playId) ? playId : 0;
     if (isStale(sessionId, id)) return { ok: false, reason: "stale" };
+    // Satu pemutaran = satu pin. Permintaan kedua untuk playId yang sama bukan
+    // pemutaran baru, jadi ia TIDAK boleh mengklik apa pun.
+    if (pernahDiklik(sessionId, id)) {
+      log("SERVICE_PIN_DUPLICATE", { scene, playId: id, phase: "entry" });
+      return { ok: false, reason: "duplicate-playId", clicked: false };
+    }
     noteScenePlayId(sessionId, id);
 
     return runExclusive(async () => {
@@ -414,8 +459,26 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
         log("SERVICE_STALE", { scene, playId: id, latest: generation.latest(), phase: "queued" });
         return { ok: false, reason: "stale" };
       }
+      // Dan dicek lagi juga: kembarannya bisa sudah selesai mengklik selagi
+      // permintaan ini menunggu giliran di antrean.
+      if (pernahDiklik(sessionId, id)) {
+        log("SERVICE_PIN_DUPLICATE", { scene, playId: id, phase: "queued" });
+        return { ok: false, reason: "duplicate-playId", clicked: false };
+      }
+      // Anggarannya sudah habis dimakan antrean? Jangan mulai sama sekali.
+      // Menolak di sini berarti NOL mutasi: tidak menggulir, tidak mengklik.
+      const sisaSesudahAntre = acceptedAt + pinBudget.browserDeadlineMs - d.now();
+      if (sisaSesudahAntre <= pinBudget.confirmReserveMs) {
+        log("SERVICE_PIN_BUDGET_EXHAUSTED", {
+          scene, playId: id, phase: "queue-wait",
+          waited: d.now() - acceptedAt, remaining: sisaSesudahAntre,
+          need: pinBudget.confirmReserveMs,
+          note: "menunggu giliran terlalu lama: tidak diklik",
+        });
+        return { ok: false, reason: "budget-exhausted-in-queue", clicked: false };
+      }
       try {
-        return await guardedPin({ scene, productKey, playId: id, sessionId });
+        return await guardedPin({ scene, productKey, playId: id, sessionId, acceptedAt });
       } catch (err) {
         // Anggaran habis di tengah tahap: dijawab apa adanya, bukan dilempar.
         // Yang penting di sini adalah service MENJAWAB - bot tidak boleh
