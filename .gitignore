@@ -21,3 +21,6 @@ logs/
 # Controller: config customer (password OBS + username TikTok)
 data/config.json
 data/config.json.tmp
+
+# Controller: artefak config runtime (satu per run, dihapus saat Stop)
+data/.runtime/

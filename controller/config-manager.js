@@ -179,9 +179,24 @@ function validateConfig(raw) {
         else seen.add(scene);
       }
 
-      // Pemetaan tanpa produk tidak punya arti: ia hanya baris yang terlihat
-      // dikonfigurasi padahal tidak akan pernah mengklik apa pun.
-      if (!isPlainObject(m.product)) {
+      // Produk: ada tiga keadaan, dan dua di antaranya sah.
+      //
+      //   { title: "..." }  scene ini memin produk itu
+      //   null              scene ini SENGAJA tidak memin apa pun — scene yang
+      //                     punya trigger tapi bukan etalase, mis. scene FAQ.
+      //                     Ini yang membuat config bisa menyatakan semua yang
+      //                     dulu dinyatakan array RULES; tanpa ini, menyalakan
+      //                     mode config akan mematikan scene FAQ tanpa ada cara
+      //                     untuk menghidupkannya kembali.
+      //   { title: "" }     DITOLAK. Ini field yang lupa diisi, bukan keputusan.
+      //
+      // Bedanya null dan judul kosong disengaja: yang satu pernyataan, yang satu
+      // kelalaian, dan keduanya tidak boleh diperlakukan sama.
+      if (m.product === null) {
+        /* sengaja tanpa produk: sah */
+      } else if (m.product === undefined) {
+        add(at + ".product", "product-missing");
+      } else if (!isPlainObject(m.product)) {
         add(at + ".product", "must-be-object");
       } else if (!isNonEmptyString(m.product.title)) {
         add(at + ".product.title", "must-be-non-empty-string");
@@ -324,30 +339,35 @@ function toEnv(config, { base = {} } = {}) {
     AUTOCOMMENT_TIMEOUT_MS: String(s.autoCommentTimeoutMs),
   });
 
-  // Pemetaan scene -> judul produk memakai bentuk yang sudah ada:
-  // AUTOPIN_PRODUCT_PAX_1="judul". Tanda hubung pada nama scene ditulis ulang
-  // jadi garis bawah, kebalikan dari autopin/scene-map.js.
-  for (const m of config.mappings) {
-    const scene = String(m.scene).trim();
-    env["AUTOPIN_PRODUCT_" + scene.replace(/-/g, "_")] = String(m.product.title);
-  }
+  // Pemetaan scene/produk/trigger/balasan TIDAK ikut lewat environment sejak P2.
+  //
+  // Di P1 ia dikirim sebagai AUTOPIN_PRODUCT_PAX_1..10, satu variabel per scene.
+  // Sekarang keempatnya berjalan lewat artefak config runtime
+  // (runtime/runtime-config.js), dan AUTOPIN_PRODUCT_* sengaja TIDAK dibentuk di
+  // sini lagi: dua sumber untuk hal yang sama berarti suatu saat keduanya akan
+  // berbeda, dan yang menang akan ditentukan oleh urutan pembacaan — bukan oleh
+  // keputusan siapa pun.
+  //
+  // Jalur legacy tidak terpengaruh: `node index.js` tanpa Controller tetap
+  // membaca AUTOPIN_PRODUCT_* dari .env lewat autopin/scene-map.js, persis
+  // seperti sebelumnya.
 
   return env;
 }
 
-// Field yang tersimpan di config tapi belum sampai ke core. Dipakai /api/status
-// dan laporan supaya keterbatasan ini terlihat, bukan tersembunyi.
-function unmappedFields(config) {
-  const out = [];
-  const withTriggers = config.mappings.filter((m) => Array.isArray(m.triggers) && m.triggers.length > 0);
-  const withReply = config.mappings.filter((m) => typeof m.reply === "string" && m.reply.trim() !== "");
-  if (withTriggers.length > 0) {
-    out.push({ field: "mappings[].triggers", count: withTriggers.length, reason: "core-owns-rules-table" });
-  }
-  if (withReply.length > 0) {
-    out.push({ field: "mappings[].reply", count: withReply.length, reason: "core-owns-reply-template" });
-  }
-  return out;
+// Field yang tersimpan di config tapi belum sampai ke core.
+//
+// Di P1 daftar ini berisi mappings[].triggers dan mappings[].reply. Sejak P2
+// keduanya BENAR-BENAR berlaku: trigger menjadi keyword rule lewat
+// runtime/mappings.js, dan reply menjadi pembentuk teks AutoComment lewat opsi
+// `format` di createAutoComment. Jadi daftarnya sekarang kosong.
+//
+// Fungsinya dipertahankan, bukan dihapus: bentuk /api/status tidak berubah untuk
+// pembacanya, dan kalau suatu saat ada field baru yang tersimpan tapi belum
+// terhubung, di sinilah tempatnya dilaporkan — bukan di komentar yang tidak
+// pernah dibaca siapa pun.
+function unmappedFields() {
+  return [];
 }
 
 // Bentuk config yang boleh keluar lewat HTTP. Password OBS TIDAK PERNAH ikut:

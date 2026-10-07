@@ -27,6 +27,8 @@ const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { createController } = require("./controller");
 const { createServer, DEFAULT_PORT } = require("./server");
+const { createObsDiscovery } = require("./discovery/obs");
+const { createTikTokDiscovery } = require("./discovery/tiktok");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -129,6 +131,55 @@ function createWindowsChromeKiller({ profileDirName = "autopin-profile" } = {}) 
   };
 }
 
+// Adapter discovery TikTok sungguhan. Dibangun dengan fungsi yang SAMA yang
+// dipakai jalur pin — launchBrowser/getPage/openConsole dari autopin/browser.js,
+// collectProducts/readIdentity dari autopin/products.js, checkIdentity dari
+// autopin/core.js. Bukan tiruan: kalau daftar produk yang dilihat UI berbeda dari
+// yang dicari saat pin, mapping akan dibuat atas dasar daftar yang salah.
+//
+// Dimuat MALAS (require di dalam fungsi) supaya Puppeteer tidak ikut dimuat ke
+// proses Controller sampai discovery benar-benar diminta.
+function buildTikTokDiscovery() {
+  let browserMod;
+  let productsMod;
+  let coreMod;
+  try {
+    browserMod = require("../autopin/browser");
+    productsMod = require("../autopin/products");
+    coreMod = require("../autopin/core");
+  } catch {
+    return null;
+  }
+  return createTikTokDiscovery({
+    launchBrowser: browserMod.launchBrowser,
+    getPage: browserMod.getPage,
+    openConsole: browserMod.openConsole,
+    closeBrowser: browserMod.closeBrowser,
+    collectProducts: productsMod.collectProducts,
+    readIdentity: productsMod.readIdentity,
+    checkIdentity: coreMod.checkIdentity,
+    log: (tag, fields) => console.log("[CONTROLLER_TIKTOK_" + tag + "]", JSON.stringify(fields || {})),
+  });
+}
+
+// Scene yang punya detail pemutaran (mediaInputs/waitForMediaEnd/duration) di
+// array RULES. Pemetaan ke scene di luar daftar ini ditolak preflight, karena
+// Controller tidak punya cara mengetahui nama input media-nya — dan menebak
+// durasi berarti mengubah perilaku pemutaran scene itu.
+//
+// Dibaca lewat require("../index") yang SENGAJA hanya mengambil RULES. Itu aman:
+// index.js hanya menjalankan startLive() kalau ia modul utama, dan di sini ia
+// bukan. Yang ikut termuat adalah dotenv dan objek OBSWebSocket yang belum
+// tersambung ke mana pun — tidak ada koneksi, tidak ada browser, tidak ada bot.
+function readPlayableScenes() {
+  try {
+    const bot = require("../index");
+    return Array.isArray(bot.RULES) ? bot.RULES.map((r) => r.scene) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function main(argv) {
   const { port, serviceArgs } = parseArgs(argv);
   const onWindows = process.platform === "win32";
@@ -141,6 +192,10 @@ async function main(argv) {
     // berpura-pura menyapu.
     orphanSweeper: onWindows ? createWindowsOrphanSweeper() : null,
     killAutomationChrome: onWindows ? createWindowsChromeKiller() : null,
+    // P2
+    obsDiscovery: createObsDiscovery(),
+    tiktokDiscovery: buildTikTokDiscovery(),
+    playableScenes: readPlayableScenes(),
   });
 
   const server = createServer({ controller, port });

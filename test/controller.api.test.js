@@ -140,12 +140,14 @@ test("/api/status TIDAK PERNAH memuat password OBS atau rahasia lain", async () 
   });
 });
 
-test("/api/status melaporkan field yang BELUM sampai ke core", async () => {
+test("/api/status: tidak ada lagi field yang belum sampai ke core (P2)", async () => {
   await withServer({}, async ({ base }) => {
     const { body } = await get(base, "/api/status");
-    // Keterbatasan dibuat terlihat, bukan disembunyikan.
-    const fields = body.config.notAppliedToCore.map((f) => f.field);
-    assert.deepEqual(fields, ["mappings[].triggers", "mappings[].reply"]);
+    // Di P1 daftar ini berisi triggers dan reply. Sejak P2 keduanya berlaku, jadi
+    // daftarnya kosong. Field-nya tetap ada supaya bentuk /api/status tidak
+    // berubah untuk pembacanya, dan supaya ada tempat melaporkannya kalau suatu
+    // saat ada field baru yang tersimpan tapi belum terhubung.
+    assert.deepEqual(body.config.notAppliedToCore, []);
   });
 });
 

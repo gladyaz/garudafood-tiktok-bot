@@ -72,7 +72,7 @@ function isExpectedConsole(actualUrl, consoleUrl) {
 
 // deps bisa diganti pada tes supaya jalur penolakan dan urutan aksi dapat
 // diperiksa tanpa membuka browser sungguhan.
-function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, pinTimeouts, clickStrategy, deps = {} } = {}) {
+function createService({ config = loadConfig(), dryRun = false, allowCommentSendOnce = false, allowAutoCommentSend = false, timeouts, pinTimeouts, clickStrategy, runtimeConfigId = null, deps = {} } = {}) {
   // Anggaran waktu diturunkan dari timeout HTTP yang SAMA yang dipakai bot
   // (AUTOCOMMENT_TIMEOUT_MS), supaya service selalu menjawab sebelum bot
   // menyerah. Phase 21 gagal justru karena kedua sisi tidak pernah dihubungkan.
@@ -553,6 +553,13 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       latestPlayId: generation.latest(),
       botId: generation.session() || "(none)",
       expectedShop: config.expectedShop || null,
+      // P2: generasi config runtime yang dipakai run ini. Service tidak memakai
+      // pemetaannya sama sekali - judul produk datang per-permintaan dari bot,
+      // begitu juga teks chat. Angka ini ada supaya Controller bisa MEMBUKTIKAN
+      // bot dan service membaca generasi yang SAMA. Tanpa itu, bot yang memakai
+      // pemetaan baru sementara service masih sisa run sebelumnya akan terlihat
+      // normal sepenuhnya.
+      runtimeConfigId: runtimeConfigId || null,
     };
   }
 

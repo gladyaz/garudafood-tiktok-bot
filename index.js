@@ -158,9 +158,78 @@ const RULES = [
   // dst...
 ];
 
+// ====== CONFIG RUNTIME (P2) ======
+// Kalau Controller menyuplai AILIVE_RUNTIME_CONFIG, scene/produk/trigger/balasan
+// datang dari sana. Kalau TIDAK, semuanya persis seperti sebelum P2: RULES di
+// atas, AUTOPIN_PRODUCT_* dari environment, dan DEFAULT_TEMPLATE di formatter.
+// Jalur manual `node index.js` dan seluruh tes yang sudah ada memakai jalur
+// kedua, dan tidak berubah sedikit pun.
+const { createRuntimeMappings } = require("./runtime/mappings");
+const { readRuntimeConfig, RUNTIME_CONFIG_ENV } = require("./runtime/runtime-config");
+const { formatSceneMessage: defaultFormatSceneMessage } = require("./autocomment/formatter");
+// Dipindahkan ke atas sini dari blok require AutoPIN di bawah: peta produk mode
+// legacy dibentuk di blok ini, dan `const` di bawah belum terjangkau dari sini.
+const { loadSceneProductMap, describeSceneProductMap } = require("./autopin/scene-map");
+
+// Dibaca SEKALI saat boot, lalu dibekukan. Config yang disimpan di tengah LIVE
+// tidak boleh bisa mengubah scene yang sedang diputar; Controller menjawab
+// perubahan di tengah jalan dengan restartRequired, bukan dengan menyuntik nilai
+// baru ke snapshot yang sedang dipakai.
+function loadRuntimeSnapshot(env) {
+  const file = env[RUNTIME_CONFIG_ENV];
+  if (!file) return { snapshot: null, problem: null };
+
+  const loaded = readRuntimeConfig(file);
+  if (!loaded.ok) {
+    // FAIL-CLOSED. Controller menyuplai path ini berarti ia sudah memvalidasi
+    // pemetaannya; kalau path-nya ternyata tidak terbaca, yang benar adalah
+    // berhenti — bukan menyala dengan kata kunci hardcoded yang customer tidak
+    // pernah lihat dan tidak pernah pilih.
+    return { snapshot: null, problem: loaded.reason };
+  }
+  return {
+    snapshot: createRuntimeMappings({
+      mappings: loaded.config.mappings,
+      baseRules: RULES,
+      defaultFormat: defaultFormatSceneMessage,
+      generation: loaded.config.id,
+    }),
+    problem: null,
+  };
+}
+
+const runtimeLoad = loadRuntimeSnapshot(process.env);
+if (runtimeLoad.problem) {
+  console.error(
+    `[RUNTIME_CONFIG_REFUSED] reason=${runtimeLoad.problem} file="${process.env[RUNTIME_CONFIG_ENV]}"` +
+      ` note="Controller menyuplai config runtime tapi ia tidak bisa dipakai. Bot TIDAK dijalankan dengan kata kunci bawaan."`
+  );
+  process.exit(1);
+}
+
+// Snapshot pemetaan yang berlaku untuk SELURUH umur proses ini.
+const runtime =
+  runtimeLoad.snapshot ||
+  createRuntimeMappings({
+    baseRules: RULES,
+    envProductMap: loadSceneProductMap(process.env),
+    defaultFormat: defaultFormatSceneMessage,
+  });
+
+if (runtime.unknownPlayback.length > 0) {
+  // Scene yang dipetakan customer tapi tidak punya detail pemutaran di RULES.
+  // Tidak dijalankan dengan nilai yang dikarang; validator Controller sudah
+  // menolaknya lebih dulu, dan ini jaring terakhir yang terlihat.
+  console.error(
+    `[RUNTIME_CONFIG_SCENE_IGNORED] scenes="${runtime.unknownPlayback.join(",")}"` +
+      ` note="tidak ada mediaInputs/duration untuk scene ini di RULES"`
+  );
+}
+
 // Rule dianggap aktif kecuali ditandai enabled:false (scene-nya belum ada di OBS).
 // Definisi + keyword tetap tersimpan di RULES; cukup set enabled:true untuk mengaktifkan lagi.
-const activeRules = () => RULES.filter((r) => r.enabled !== false);
+// Sejak P2 sumbernya adalah snapshot runtime — yang di mode legacy berisi RULES apa adanya.
+const activeRules = () => runtime.activeRules();
 
 
 // durasi maksimal kembali ke MAIN / cooldown (bisa diubah runtime)
@@ -207,7 +276,6 @@ let globalPauseTimer = null; // timer jeda global COOLDOWN_MS setelah balik ke M
 // (autopin-service.js); di sini hanya ada klien HTTP tipis + dispatcher yang
 // menelan semua kegagalannya sendiri. Lihat autopin/scene-pin.js.
 const { createScenePin } = require("./autopin/scene-pin");
-const { loadSceneProductMap, describeSceneProductMap } = require("./autopin/scene-map");
 const { createHttpSender, serviceUrl } = require("./autopin/client");
 const { newSessionId } = require("./autopin/session");
 
@@ -218,7 +286,10 @@ const BOT_SESSION_ID = newSessionId();
 
 const AUTOPIN_ENABLED = String(process.env.AUTOPIN_ENABLED || "false").trim().toLowerCase() === "true";
 const AUTOPIN_TIMEOUT_MS = readNonNegativeIntEnv("AUTOPIN_TIMEOUT_MS", 8_000);
-const autopinMap = loadSceneProductMap(process.env);
+// Peta scene->kunci judul produk. Sejak P2 datang dari snapshot runtime: di mode
+// config isinya judul yang dipilih customer, di mode legacy isinya hasil
+// loadSceneProductMap(process.env) yang sama seperti sebelumnya.
+const autopinMap = runtime.productMap;
 
 let scenePin = createScenePin({
   enabled: AUTOPIN_ENABLED,
@@ -263,6 +334,13 @@ let autoComment = createAutoComment({
   // gladi bersihnya tetap setia pada urutan sungguhan.
   pinPolicy: AUTOCOMMENT_TRANSPORT === TRANSPORTS.BROWSER ? PIN_POLICY.CONFIRMED : PIN_POLICY.OK,
   inspectPin: inspectPinResult,
+  // Pembentuk teks balasan. createAutoComment SUDAH menerima `format` sejak AR1;
+  // P2 hanya mengisinya. Di mode legacy snapshot meneruskan formatSceneMessage
+  // apa adanya, jadi teksnya tetap DEFAULT_TEMPLATE seperti sebelumnya. Di mode
+  // config ia mengembalikan balasan yang ditulis customer untuk scene itu, dan
+  // scene tanpa balasan membuat AutoComment DIAM (reason=no-reply-configured) —
+  // bukan mengarang kalimat.
+  format: runtime.formatSceneMessage,
   send: createCommentSender({ mode: AUTOCOMMENT_TRANSPORT, timeoutMs: autocommentConfig.timeoutMs, sessionId: BOT_SESSION_ID }),
   maxPerMinute: autocommentConfig.maxPerMinute,
   minIntervalMs: autocommentConfig.minIntervalMs,
@@ -670,24 +748,12 @@ async function connectOBS() {
   }
 }
 
-// helper: normalisasi pesan (lowercase, ganti non-alnum ke spasi, collapse spaces)
-function normalizeText(s) {
-  return (s || "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function wordNumberToDigit(s) {
-  const map = { satu: "1", dua: "2", tiga: "3", empat: "4", lima: "5", enam: "6", tujuh: "7", delapan: "8", sembilan: "9", nol: "0" };
-  let out = s;
-  for (const [k, v] of Object.entries(map)) {
-    const re = new RegExp(`\\b${k}\\b`, "g");
-    out = out.replace(re, v);
-  }
-  return out;
-}
+// Normalisasi pesan dipindahkan ke tiktok/normalize.js pada P2 — ekstraksi
+// murni, isinya tidak berubah. Pindah karena Controller harus memvalidasi
+// trigger dari config dengan normalisasi yang SAMA, dan satu-satunya cara
+// memakai fungsi ini dari sini adalah meng-require index.js (yang menyeret
+// dotenv, OBSWebSocket, dan kedua dispatcher ke proses Controller).
+const { normalizeText, wordNumberToDigit } = require("./tiktok/normalize");
 
 function levenshtein(a, b) {
   if (!a || !b) return (a || b) ? Math.max(a.length, b.length) : 0;
@@ -711,9 +777,10 @@ function fuzzyRatio(a, b) {
   return 1 - dist / maxLen;
 }
 
-function normalizeForMatching(s) {
-  return wordNumberToDigit(normalizeText(s));
-}
+// Juga dari tiktok/normalize.js. Tetap di-ekspor dari sini supaya pemanggil lama
+// (uji beban membangun indeks pembanding dengan normalisasi yang sama) tidak
+// perlu berubah.
+const { normalizeForMatching } = require("./tiktok/normalize");
 
 const FUZZY_THRESHOLD = DEFAULT_THRESHOLD;
 const FUZZY_BUDGET_CELLS = readNonNegativeIntEnv("FUZZY_BUDGET_CELLS", DEFAULT_BUDGET_CELLS);
@@ -733,15 +800,9 @@ function fuzzyIndex() {
   return _fuzzyIndex;
 }
 
-// Cocokkan frasa pada BATAS KATA, bukan substring mentah.
-// normalizeForMatching() sudah memisahkan setiap token dengan satu spasi, jadi cukup
-// membungkus kedua sisi dengan spasi. Efeknya: "etalase 10" tidak lagi cocok dengan
-// keyword "etalase 1" (dulu cocok karena substring), tapi "spill etalase 10" tetap cocok
-// dengan "etalase 10" karena batasnya tetap utuh.
-function containsPhrase(haystackNorm, needleNorm) {
-  if (!haystackNorm || !needleNorm) return false;
-  return ` ${haystackNorm} `.includes(` ${needleNorm} `);
-}
+// Pencocokan frasa pada batas kata juga dari tiktok/normalize.js. Tetap
+// di-ekspor dari sini karena tes yang ada memanggilnya lewat index.
+const { containsPhrase } = require("./tiktok/normalize");
 
 // FAIL-SAFE: scene antrean gagal mulai → jangan biarkan busy/activeScene macet
 function abortSceneStart(sceneName, reason) {
@@ -1343,6 +1404,12 @@ module.exports = {
     chatGateState: () => chatGate.__state(),
     autocommentRealState: () => realAutoCommentState(),
     autopinMap: () => ({ ...autopinMap }),
+    // Snapshot pemetaan runtime (P2). Dibaca tes untuk membuktikan mode legacy
+    // dan mode config benar-benar berbeda sumbernya.
+    runtimeSource: () => runtime.source,
+    runtimeGeneration: () => runtime.generation,
+    runtimeReplyFor: (scene) => runtime.getReplyForScene(scene),
+    runtimeFormat: (scene) => runtime.formatSceneMessage(scene),
     autopinEnabled: () => AUTOPIN_ENABLED,
     // sisipkan entry mentah ke antrean (untuk uji fail-safe entry tidak valid)
     injectAggregate: agg => sceneAggregates.push(agg),

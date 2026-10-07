@@ -192,9 +192,11 @@ function goodConfig(overrides = {}) {
       debugDir: ".autopin-debug",
       chromePath: "",
     },
+    // Sejak P2 setiap pemetaan WAJIB punya trigger: scene tanpa trigger tidak
+    // akan pernah bisa diminta penonton, jadi ia bukan pemetaan.
     mappings: [
-      { scene: "PAX-1", product: { title: "Garuda Ting Ting" }, triggers: ["spill etalase 1"], reply: "Etalase 1 sudah aku pin ya kak" },
-      { scene: "PAX-2", product: { title: "Gery Potato" } },
+      { scene: "PAX-1", product: { title: "Garuda Ting Ting" }, triggers: ["spill etalase 1", "etalase satu"], reply: "Etalase 1 sudah aku pin ya kak" },
+      { scene: "PAX-2", product: { title: "Gery Potato" }, triggers: ["etalase 2"], reply: "Etalase 2 sudah aku pin ya kak" },
     ],
   };
   return Object.assign({}, base, overrides);
@@ -202,17 +204,25 @@ function goodConfig(overrides = {}) {
 
 // Semua probe preflight yang HIJAU, tanpa menyentuh apa pun yang nyata.
 // Scene OBS dibuat cocok dengan mapping di goodConfig().
-function passingPreflightDeps(overrides = {}) {
-  return Object.assign(
-    {
-      portFree: async () => true,
-      probeObs: async () => ({ ok: true, scenes: ["MAIN", "PAX-1", "PAX-2", "PAX-3"] }),
-      checkProfileDir: async () => ({ ok: true }),
-      probeTikTok: async () => ({ ok: true, skipped: true, reason: "not-implemented-p1" }),
-      listOrphans: async () => ({ count: 0 }),
-    },
-    overrides
-  );
+//
+// `skip` menyebut probe yang TIDAK boleh diberi stub hijau, karena tes itu
+// menyuplai adapter discovery sungguhan untuknya.
+//
+// Kenapa itu perlu: createController menerapkan preflightDeps PALING AKHIR, jadi
+// stub hijau di sini menang atas adapter discovery yang di-inject. Tanpa `skip`,
+// setiap tes "Start ditolak karena discovery" akan menguji stub hijau, bukan
+// adapternya — dan lulus karena alasan yang salah. Kesalahan bentuk yang sama
+// sudah pernah terjadi di P1 dengan listOrphans.
+function passingPreflightDeps(overrides = {}, skip = []) {
+  const base = {
+    portFree: async () => true,
+    probeObs: async () => ({ ok: true, scenes: ["MAIN", "PAX-1", "PAX-2", "PAX-3"] }),
+    checkProfileDir: async () => ({ ok: true }),
+    probeTikTok: async () => ({ ok: true, skipped: true, reason: "not-implemented-p1" }),
+    listOrphans: async () => ({ count: 0 }),
+  };
+  for (const name of skip) delete base[name];
+  return Object.assign(base, overrides);
 }
 
 const CONFIG_PATH = "/fake/data/config.json";
@@ -261,7 +271,12 @@ function createHarness(overrides = {}) {
     logger: { log: (line) => logs.push(line) },
     // Grace pendek: tes force-kill tidak perlu menunggu 8 detik nyata.
     stopGraceMs: overrides.stopGraceMs === undefined ? 20 : overrides.stopGraceMs,
-    preflightDeps: passingPreflightDeps(overrides.preflightDeps || {}),
+    // Probe yang punya adapter discovery sungguhan tidak diberi stub hijau,
+    // supaya adapternyalah yang diuji.
+    preflightDeps: passingPreflightDeps(
+      overrides.preflightDeps || {},
+      [].concat(overrides.obsDiscovery ? ["probeObs"] : [], overrides.tiktokDiscovery ? ["probeTikTok"] : [])
+    ),
     fetchHealth: overrides.fetchHealth || (async () => ({ ok: true, body: { ok: true } })),
     timeouts: Object.assign({ serviceHealthMs: 5000, botReadyMs: 5000, healthPollMs: 100 }, overrides.timeouts),
     killAutomationChrome:
@@ -283,6 +298,13 @@ function createHarness(overrides = {}) {
     activityMax: overrides.activityMax,
     serviceArgs: overrides.serviceArgs,
     botArgs: overrides.botArgs,
+    // P2: adapter discovery dan daftar scene yang bisa diputar. Default null =
+    // tidak ada discovery, sehingga tes P1 berjalan persis seperti sebelumnya.
+    obsDiscovery: overrides.obsDiscovery || null,
+    tiktokDiscovery: overrides.tiktokDiscovery || null,
+    playableScenes: overrides.playableScenes || null,
+    // Artefak config runtime ditulis ke fs PALSU, bukan ke disk.
+    runtimeDir: "/fake/data/.runtime",
   });
 
   return { controller, world, clock, fs, logs, chromeKills, sweeps, CONFIG_PATH, goodConfig };

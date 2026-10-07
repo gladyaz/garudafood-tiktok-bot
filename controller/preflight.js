@@ -19,6 +19,7 @@
 //      penting.
 
 const netDefault = require("node:net");
+const { validateMappings } = require("./mapping-validator");
 const fsDefault = require("node:fs");
 const pathDefault = require("node:path");
 
@@ -28,7 +29,10 @@ const LOOPBACK = "127.0.0.1";
 
 // Nama check yang selalu ada di hasil, dalam urutan yang sama. Bentuk yang tetap
 // membuat UI nanti tidak perlu menebak apakah sebuah check dijalankan atau tidak.
-const CHECK_NAMES = Object.freeze(["config", "processes", "ports", "obs", "scenes", "profile", "tiktok"]);
+// P2 menambah "mappings": pemeriksaan pemetaan terhadap scene OBS dan katalog
+// LIVE yang BENAR-BENAR ditemukan. Letaknya paling akhir karena ia memakai hasil
+// dua check sebelumnya (obs dan tiktok).
+const CHECK_NAMES = Object.freeze(["config", "processes", "ports", "obs", "scenes", "profile", "tiktok", "mappings"]);
 
 // --- probe bawaan (produksi) -------------------------------------------------
 
@@ -126,6 +130,11 @@ function createPreflight({
   probeTikTok = defaultProbeTikTok,
   listOrphans = null,
   validateConfig = null,
+  // P2: scene yang punya detail pemutaran (mediaInputs/duration) di RULES.
+  // Pemetaan ke scene di luar daftar ini ditolak, karena Controller tidak punya
+  // cara mengetahui nama input media-nya dan menebak durasi berarti mengubah
+  // perilaku pemutaran. null = jangan periksa.
+  playableScenes = null,
   cwd = process.cwd(),
   path = pathDefault,
 } = {}) {
@@ -246,12 +255,53 @@ function createPreflight({
       checks.profile = { ok: false, reason: "profile-dir-unusable" };
     }
 
-    // --- tiktok (stub di P1) ------------------------------------------------
+    // --- tiktok -------------------------------------------------------------
+    // Di P1 ini stub. Sejak P2 adapter sungguhan bisa di-inject lewat probeTikTok,
+    // dan hasilnya membawa katalog produk yang dipakai check pemetaan di bawah.
+    let catalogue = null;
     try {
       const r = await probeTikTok({ config });
-      checks.tiktok = r && r.ok ? Object.assign({ ok: true }, r.skipped ? { skipped: true, reason: r.reason } : {}) : { ok: false, reason: (r && r.reason) || "tiktok-check-failed" };
+      if (r && r.ok) {
+        checks.tiktok = Object.assign(
+          { ok: true },
+          r.skipped ? { skipped: true, reason: r.reason } : {},
+          // LIVE belum on air dilaporkan sebagai informasi, bukan sebagai
+          // kegagalan check ini: mapping tetap bisa disusun sebelum LIVE mulai.
+          typeof r.live === "boolean" ? { live: r.live } : {},
+          Number.isInteger(r.productCount) ? { productCount: r.productCount } : {}
+        );
+        if (Array.isArray(r.products)) catalogue = r.products;
+      } else {
+        checks.tiktok = { ok: false, reason: (r && r.reason) || "tiktok-check-failed" };
+      }
     } catch {
       checks.tiktok = { ok: false, reason: "tiktok-check-failed" };
+    }
+
+    // --- mappings -----------------------------------------------------------
+    // Pemeriksaan terakhir, dan satu-satunya yang menjawab "apakah pemetaan ini
+    // benar-benar akan bekerja". Scene OBS dari check obs, katalog dari check
+    // tiktok; keduanya dilewatkan apa adanya kalau tidak tersedia, dan
+    // validateMappings akan melewati pemeriksaan yang datanya tidak ada.
+    try {
+      const verdict = validateMappings({
+        mappings: config.mappings,
+        obsScenes,
+        products: catalogue,
+        autoCommentEnabled: s.autoCommentEnabled === true,
+        playableScenes,
+      });
+      checks.mappings = verdict.ok
+        ? { ok: true, count: config.mappings.length }
+        : {
+            ok: false,
+            reason: verdict.reason || "mapping-validation-failed",
+            // Hasil per baris ikut, supaya UI bisa menyorot pemetaan yang salah
+            // tanpa menebak dari kalimat ringkasannya.
+            mappings: verdict.mappings.filter((row) => !row.ok),
+          };
+    } catch {
+      checks.mappings = { ok: false, reason: "mapping-validation-failed" };
     }
 
     const ok = CHECK_NAMES.every((name) => checks[name].ok === true);

@@ -96,6 +96,27 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
     });
   });
 
+  // --- discovery (P2) -------------------------------------------------------
+  //
+  // Semuanya HANYA MEMBACA: GET, dan tidak satu pun mengubah OBS, TikTok, atau
+  // state Controller. Dibiarkan sebagai GET justru supaya itu jelas.
+
+  app.get("/api/obs/scenes", async (_req, res) => {
+    const r = await controller.discoverObsScenes();
+    // 200 walau gagal: "OBS tidak nyala" adalah jawaban yang sah untuk
+    // pertanyaan "scene apa saja yang ada", bukan kesalahan server. UI
+    // menampilkannya sebagai keadaan, bukan sebagai kegagalan permintaan.
+    res.json(r);
+  });
+
+  app.get("/api/tiktok/status", async (_req, res) => {
+    res.json(await controller.discoverTikTokStatus());
+  });
+
+  app.get("/api/tiktok/products", async (_req, res) => {
+    res.json(await controller.discoverTikTokProducts());
+  });
+
   // --- ubah -----------------------------------------------------------------
 
   app.put("/api/config", loopbackOnly, (req, res) => {
@@ -120,7 +141,25 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
         errors: translateFieldErrors(saved.errors || []),
       });
     }
-    res.json({ ok: true, config: redactConfig(saved.config), version: CONFIG_VERSION });
+    // Perubahan yang disimpan saat automation berjalan TIDAK diterapkan panas.
+    // Snapshot yang sedang dipakai tetap berlaku sampai restart — satu pemutaran
+    // tidak boleh berpindah trigger atau balasan di tengah jalan.
+    const note = controller.noteConfigSaved();
+    res.json({
+      ok: true,
+      config: redactConfig(saved.config),
+      version: CONFIG_VERSION,
+      restartRequired: note.restartRequired === true,
+      ...(note.restartRequired ? { notice: translate("restart-required") } : {}),
+    });
+  });
+
+  // Validasi pemetaan terhadap scene OBS dan katalog LIVE yang ditemukan.
+  // Endpoint terpisah karena UI memerlukannya saat customer menyunting mapping,
+  // jauh sebelum ia menekan Start.
+  app.post("/api/mappings/validate", loopbackOnly, async (_req, res) => {
+    const r = await controller.validateMappings();
+    res.json(r);
   });
 
   app.post("/api/preflight", loopbackOnly, async (_req, res) => {

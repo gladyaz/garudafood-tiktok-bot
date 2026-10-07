@@ -71,6 +71,38 @@ const CATALOG = Object.freeze({
   "dispatch-threw": "Something went wrong while handling this scene.",
   "service-error": "The pin service hit an unexpected problem.",
 
+  // --- P2: discovery OBS ---
+  "obs-timeout": "OBS did not respond in time.",
+  "obs-scene-list-unreadable": "The scene list could not be read from OBS.",
+
+  // --- P2: discovery TikTok ---
+  "tiktok-not-logged-in": "You are not signed in to TikTok. Sign in once, then try again.",
+  "wrong-tiktok-account": "The TikTok account on screen is not the one you configured.",
+  "live-not-active": "Your TikTok LIVE is not on air yet.",
+  "product-dashboard-unavailable": "The TikTok product dashboard could not be opened.",
+  "product-discovery-timeout": "Reading your LIVE products took too long.",
+  "expected-shop-not-configured": "The expected shop name has not been set yet.",
+  "discovery-not-configured": "Product discovery is not available in this build.",
+  "discovery-unavailable-while-running": "Stop the automation first. Products can only be read while it is stopped.",
+
+  // --- P2: validasi pemetaan ---
+  "no-triggers": "This scene has no trigger words yet.",
+  "ambiguous-trigger": "Two scenes use the same trigger word.",
+  "empty-product-title": "This scene has no product selected.",
+  "product-missing": "This scene is missing its product field.",
+  "scene-playback-unknown": "This scene has no video settings, so it cannot be played.",
+  "reply-required-when-autocomment-enabled": "This scene needs a reply, because automatic replies are turned on.",
+  "mapping-validation-failed": "Some of your scene mappings need fixing.",
+
+  // --- P2: config runtime ---
+  "runtime-config-missing": "The generated runtime settings file is missing.",
+  "runtime-config-unreadable": "The generated runtime settings file could not be read.",
+  "runtime-config-invalid-json": "The generated runtime settings file is damaged.",
+  "runtime-config-id-mismatch": "The generated runtime settings file was modified after it was created.",
+  "runtime-config-write-failed": "The runtime settings could not be prepared.",
+  "runtime-config-generation-mismatch": "The bot and the pin service are using different settings.",
+  "restart-required": "Your changes are saved. Restart the automation to use them.",
+
   // --- AutoComment ---
   "real-comment-send-disabled": "Automatic chat replies are turned off.",
   "pin-state-unreadable": "The pin could not be confirmed, so no reply was sent.",
@@ -120,6 +152,7 @@ const FIELD_PROBLEMS = Object.freeze({
   "version-missing": "is missing its version number",
   "version-unsupported": "was made by a different version of the app",
   "port-conflicts-with-obs": "cannot be the same as the OBS port",
+  "product-missing": "needs a product, or null if this scene pins nothing",
 });
 
 function translateFieldErrors(errors = []) {

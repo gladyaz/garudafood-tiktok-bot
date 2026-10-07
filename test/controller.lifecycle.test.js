@@ -484,8 +484,9 @@ test("ENV anak datang dari config, dan flag izin TIDAK pernah dari config", asyn
   assert.equal(bot.spawnEnv.AUTOPIN_TIMEOUT_MS, "15000");
   assert.equal(bot.spawnEnv.OBS_PORT, "4455");
   assert.equal(bot.spawnEnv.SCENE_REPLAY_COOLDOWN_MS, "120000");
-  assert.equal(bot.spawnEnv.AUTOPIN_PRODUCT_PAX_1, "Garuda Ting Ting");
-  assert.equal(bot.spawnEnv.AUTOPIN_PRODUCT_PAX_2, "Gery Potato");
+  // Pemetaan TIDAK lewat env sejak P2: ia berjalan lewat artefak config runtime.
+  // Lihat test/controller.runtime.test.js untuk pembuktian jalurnya.
+  assert.equal(bot.spawnEnv.AUTOPIN_PRODUCT_PAX_1, undefined);
 
   // Izin mengirim chat sungguhan HANYA lewat argumen baris perintah, dan hanya
   // ke service. Tidak ada nilai di config.json yang bisa menyalakannya.
@@ -501,9 +502,16 @@ test("ENV anak tidak mewarisi environment Controller secara diam-diam", async ()
   // Hanya nilai yang memang dibutuhkan untuk menjalankan node yang diteruskan.
   // Sisa nilai di environment Controller tidak boleh bisa mengubah perilaku bot
   // tanpa terlihat di config.
+  //
+  // AILIVE_RUNTIME_CONFIG adalah SATU-SATUNYA variabel yang P2 tambahkan, dan ia
+  // berisi PATH ke artefak config runtime — bukan pemetaannya. Daftar ini adalah
+  // kontraknya: variabel baru harus lewat sini dulu, dengan sadar.
   const keys = Object.keys(bot.spawnEnv).filter((k) => k !== "PATH" && k !== "SystemRoot");
-  const unexpected = keys.filter((k) => !/^(TIKTOK_|OBS_|AUTOPIN_|AUTOCOMMENT_|SCENE_REPLAY_)/.test(k));
+  const unexpected = keys.filter(
+    (k) => !/^(TIKTOK_|OBS_|AUTOPIN_|AUTOCOMMENT_|SCENE_REPLAY_)/.test(k) && k !== "AILIVE_RUNTIME_CONFIG"
+  );
   assert.deepEqual(unexpected, [], "env anak tidak boleh berisi nilai asing: " + unexpected.join(","));
+  assert.equal(typeof bot.spawnEnv.AILIVE_RUNTIME_CONFIG, "string", "path artefak harus diteruskan");
 });
 
 test("CHROME automation dibersihkan SESUDAH service mati, bukan sebelum", async () => {

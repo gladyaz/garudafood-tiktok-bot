@@ -29,10 +29,15 @@
     {
       "scene": "PAX-1",
       "product": {
-        "title": "Contoh Judul Produk"
+        "title": "Judul produk persis seperti di daftar LIVE"
       },
-      "triggers": ["spill etalase 1"],
+      "triggers": ["spill etalase 1", "etalase satu"],
       "reply": "Etalase 1 sudah aku pin ya kak"
+    },
+    {
+      "scene": "AI LIVE_FAQ_CO",
+      "product": null,
+      "triggers": ["cara checkout", "cara order"]
     }
   ]
 }
