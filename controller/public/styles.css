@@ -546,3 +546,36 @@ main {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* --- settings -------------------------------------------------------------- */
+
+.settings-grid {
+  display: grid;
+  gap: 12px 16px;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 760px) {
+  .settings-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Pesan kesalahan per field, supaya customer tahu kotak mana yang salah
+   daripada membaca satu spanduk merah yang tidak menunjuk apa pun. */
+.field-error {
+  font-size: 12px;
+  color: var(--error);
+}
+
+.field input[aria-invalid="true"] {
+  border-color: #e8b4af;
+  background: #fffaf9;
+}
+
+.pw-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31px;
+}

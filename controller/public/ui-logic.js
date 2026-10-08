@@ -333,22 +333,154 @@
         state: "connected",
         label: "Connected as " + identity,
         tone: TONE.READY,
-        canLogin: stopped && !busy,
+        canLogin: stopped && !busy && !(status.config && status.config.present === false),
         canCheck: false,
         canCancel: false,
         hint: "",
       };
     }
 
+    // Login butuh expectedShop untuk memeriksa akun yang masuk. Tanpa config, ia
+    // pasti gagal dengan expected-shop-not-configured — jadi tombolnya tidak boleh
+    // mengundang klik itu.
+    var noConfig = !!(status.config && status.config.present === false);
+
     return {
       state: "signed-out",
       label: "Not signed in",
       tone: TONE.ATTENTION,
       // Login hanya saat berhenti: service memegang profil Chrome saat berjalan.
-      canLogin: stopped && !busy,
+      canLogin: stopped && !busy && !noConfig,
       canCheck: false,
       canCancel: false,
-      hint: stopped ? "" : "Stop the automation first.",
+      hint: noConfig ? "Save your settings first." : stopped ? "" : "Stop the automation first.",
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings (P4.1)
+  // ---------------------------------------------------------------------------
+
+  // Batas port. Nilainya sengaja sama dengan validator di
+  // controller/config-manager.js, dan ada tes kontrak yang membandingkan
+  // penerimaan/penolakan keduanya pada nilai batas (1, 65535, 0, 65536) — supaya
+  // kalau salah satu berubah, yang merah adalah tesnya, bukan LIVE.
+  var PORT_MIN = 1;
+  var PORT_MAX = 65535;
+
+  // Config -> bentuk formulir.
+  //
+  // Password OBS TIDAK PERNAH ikut: server hanya mengirim `passwordSet` (lihat
+  // redactConfig). Formulir cukup tahu "sudah diisi atau belum", bukan isinya.
+  // Nilai yang tidak pernah sampai ke halaman tidak bisa bocor dari halaman.
+  function settingsToForm(config) {
+    var c = config || {};
+    var obs = c.obs || {};
+    var st = c.settings || {};
+    return {
+      tiktokUsername: (c.tiktok && c.tiktok.username) || "",
+      expectedShop: st.expectedShop || "",
+      obsHost: obs.host || "",
+      obsPort: obs.port === undefined || obs.port === null ? "" : String(obs.port),
+      obsPasswordSet: obs.passwordSet === true,
+      // Password BARU yang sedang diketik. Kosong = jangan diubah.
+      obsPassword: "",
+      // true hanya kalau customer sengaja memilih mengosongkan password.
+      obsPasswordClear: false,
+    };
+  }
+
+  // Validasi formulir.
+  //
+  // Lebih KETAT daripada skema config, dan itu disengaja. Skema harus tetap
+  // menerima `tiktok.username: ""` karena defaultConfig() memakainya — kalau skema
+  // mewajibkan non-empty, config bawaan menjadi tidak valid dan Controller tidak
+  // bisa memberi UI titik awal apa pun.
+  //
+  // Pembagiannya: skema menjaga BENTUK, formulir menjaga KELENGKAPAN, preflight
+  // menjaga KESIAPAN. Server tetap yang berwenang — pesan per field darinya
+  // ditampilkan apa adanya kalau ia menolak.
+  function validateSettingsForm(form) {
+    var f = form || {};
+    var errors = {};
+
+    if (isBlank(f.tiktokUsername)) {
+      errors.tiktokUsername = "Enter the TikTok username that goes LIVE.";
+    }
+    if (isBlank(f.expectedShop)) {
+      errors.expectedShop = "Enter the account name exactly as it appears in your LIVE console.";
+    }
+    if (isBlank(f.obsHost)) {
+      errors.obsHost = "Enter the computer running OBS, usually 127.0.0.1.";
+    }
+
+    var portRaw = String(f.obsPort === undefined || f.obsPort === null ? "" : f.obsPort).trim();
+    if (portRaw === "") {
+      errors.obsPort = "Enter the OBS WebSocket port, usually 4455.";
+    } else if (!/^[0-9]+$/.test(portRaw)) {
+      errors.obsPort = "The port must be a whole number.";
+    } else {
+      var port = Number(portRaw);
+      if (port < PORT_MIN || port > PORT_MAX) {
+        errors.obsPort = "The port must be between " + PORT_MIN + " and " + PORT_MAX + ".";
+      }
+    }
+
+    // Password OBS OPSIONAL: OBS bisa dijalankan tanpa autentikasi, dan memaksa
+    // password di sini akan menolak konfigurasi OBS yang sah.
+
+    var keys = Object.keys(errors);
+    return { ok: keys.length === 0, errors: errors, fields: keys };
+  }
+
+  // Formulir -> potongan config. Hanya field yang diurus formulir ini yang
+  // disentuh; sisanya (gerbang AutoPIN/AutoComment, batas waktu, direktori)
+  // dibiarkan apa adanya.
+  function applySettingsToConfig(base, form) {
+    if (!base) return null;
+    var next = JSON.parse(JSON.stringify(base));
+    var f = form || {};
+
+    next.tiktok = next.tiktok || {};
+    next.tiktok.username = String(f.tiktokUsername || "").trim();
+
+    next.settings = next.settings || {};
+    next.settings.expectedShop = String(f.expectedShop || "").trim();
+
+    next.obs = next.obs || {};
+    next.obs.host = String(f.obsHost || "").trim();
+    next.obs.port = Number(String(f.obsPort).trim());
+
+    // passwordSet adalah penanda buatan server, bukan field config. Mengirimnya
+    // kembali hanya akan ditolak validator.
+    delete next.obs.passwordSet;
+    delete next.obs.password;
+
+    var typed = String(f.obsPassword || "");
+    if (f.obsPasswordClear === true) {
+      // Dikosongkan dengan sengaja.
+      next.obs.password = "";
+    } else if (typed !== "") {
+      next.obs.password = typed;
+    }
+    // Kalau keduanya tidak ada, field password SENGAJA tidak dikirim: backend
+    // memperlakukan password yang tidak dikirim sebagai "jangan diubah"
+    // (mergeSecrets). Itulah yang membuat password tidak perlu pernah kembali ke
+    // halaman.
+
+    return next;
+  }
+
+  // Apakah bagian Settings perlu terbuka, dan apakah ia boleh disunting.
+  function settingsView(view) {
+    var status = (view && view.status) || null;
+    var controls = controlsFor(view);
+    return {
+      // Belum ada config: itulah pekerjaan pertama customer.
+      firstRun: !!(status && status.config && status.config.present === false),
+      configured: !!(status && status.config && status.config.present === true),
+      editable: controls.editingEnabled,
+      hint: controls.editingEnabled ? "" : "Settings can only be changed while the automation is stopped.",
     };
   }
 
@@ -666,6 +798,12 @@
     automationTone: automationTone,
     controlsFor: controlsFor,
     loginView: loginView,
+    settingsToForm: settingsToForm,
+    validateSettingsForm: validateSettingsForm,
+    applySettingsToConfig: applySettingsToConfig,
+    settingsView: settingsView,
+    PORT_MIN: PORT_MIN,
+    PORT_MAX: PORT_MAX,
     mappingIssues: mappingIssues,
     resolvedTitles: resolvedTitles,
     blankMapping: blankMapping,

@@ -23,6 +23,10 @@
 
   var state = {
     config: null, // config terakhir yang dibaca dari server (sudah teredaksi)
+    settings: null, // bentuk formulir Settings; password tersimpan TIDAK ada di sini
+    settingsErrors: {}, // pesan per field dari validasi formulir
+    settingsDirty: false,
+    changingPassword: false, // customer sedang mengganti password OBS
     rows: [], // baris formulir yang sedang disunting
     scenes: [], // dari /api/obs/scenes
     products: [], // dari /api/tiktok/products
@@ -51,6 +55,10 @@
       "save-btn", "save-state", "run-state", "run-note", "start-btn", "stop-btn",
       "preflight", "activity", "activity-empty", "activity-hint",
       "login-btn", "login-check-btn", "login-cancel-btn", "login-hint",
+      "settings-hint", "settings-state", "save-settings-btn",
+      "set-tiktok-username", "set-expected-shop", "set-obs-host", "set-obs-port",
+      "set-obs-password", "obs-password-label", "obs-password-change", "obs-password-cancel",
+      "err-tiktokUsername", "err-expectedShop", "err-obsHost", "err-obsPort",
     ].forEach(function (id) {
       el[id] = $(id);
     });
@@ -349,8 +357,76 @@
     setText(el["login-hint"], lv.hint);
   }
 
+  // Pasangan field formulir <-> elemen input. Satu tempat, supaya membaca dan
+  // menulis formulir tidak bisa menyimpang satu sama lain.
+  var SETTINGS_FIELDS = [
+    ["tiktokUsername", "set-tiktok-username"],
+    ["expectedShop", "set-expected-shop"],
+    ["obsHost", "set-obs-host"],
+    ["obsPort", "set-obs-port"],
+  ];
+
+  function readSettingsForm() {
+    var f = Object.assign({}, state.settings || {});
+    SETTINGS_FIELDS.forEach(function (pair) {
+      f[pair[0]] = el[pair[1]] ? el[pair[1]].value : "";
+    });
+    // Password hanya dibaca kalau customer memang sedang menggantinya.
+    f.obsPassword = state.changingPassword && el["set-obs-password"] ? el["set-obs-password"].value : "";
+    f.obsPasswordClear = state.changingPassword && f.obsPassword === "" ? true : false;
+    return f;
+  }
+
+  function renderSettings() {
+    var sv = U.settingsView(state);
+    var f = state.settings || U.settingsToForm(null);
+
+    SETTINGS_FIELDS.forEach(function (pair) {
+      var node = el[pair[1]];
+      if (!node) return;
+      // Nilai hanya ditulis ulang kalau customer tidak sedang mengetik di kotak itu;
+      // polling status tidak boleh memindahkan kursor atau menghapus ketikan.
+      if (document.activeElement !== node) node.value = f[pair[0]] === undefined ? "" : String(f[pair[0]]);
+      node.disabled = !sv.editable;
+
+      var errNode = el["err-" + pair[0]];
+      var msg = state.settingsErrors[pair[0]];
+      if (errNode) {
+        errNode.hidden = !msg;
+        setText(errNode, msg || "");
+      }
+      node.setAttribute("aria-invalid", msg ? "true" : "false");
+    });
+
+    // Password OBS: yang tersimpan tidak pernah ada di halaman, jadi yang
+    // ditampilkan hanya keadaannya.
+    var pwInput = el["set-obs-password"];
+    if (pwInput) {
+      pwInput.hidden = !state.changingPassword;
+      pwInput.disabled = !sv.editable;
+      if (!state.changingPassword) pwInput.value = "";
+    }
+    setText(
+      el["obs-password-label"],
+      state.changingPassword
+        ? "Type the new password, or leave empty to remove it."
+        : f.obsPasswordSet
+          ? "Password is configured."
+          : "No password set."
+    );
+    el["obs-password-change"].hidden = state.changingPassword;
+    el["obs-password-change"].disabled = !sv.editable;
+    el["obs-password-change"].textContent = f.obsPasswordSet ? "Change" : "Set password";
+    el["obs-password-cancel"].hidden = !state.changingPassword;
+    el["obs-password-cancel"].disabled = !sv.editable;
+
+    el["save-settings-btn"].disabled = !sv.editable || (!state.settingsDirty && sv.configured);
+    setText(el["settings-hint"], sv.hint);
+  }
+
   function renderAll() {
     renderReadiness();
+    renderSettings();
     renderLogin();
     renderMappings();
     renderControls();
@@ -377,8 +453,15 @@
         state.config = r.body.defaults;
         state.rows = [];
       }
+      // Formulir Settings dibangun dari config yang sama. Password tersimpan TIDAK
+      // ikut — server hanya mengirim passwordSet.
+      state.settings = U.settingsToForm(state.config);
+      state.settingsErrors = {};
+      state.settingsDirty = false;
+      state.changingPassword = false;
       state.dirty = false;
       setText(el["save-state"], "");
+      setText(el["settings-state"], "");
     });
   }
 
@@ -586,6 +669,72 @@
     });
   }
 
+  // --- Settings -------------------------------------------------------------
+
+  function onSaveSettings() {
+    var form = readSettingsForm();
+
+    // Validasi formulir lebih dulu, supaya field yang kurang disorot tanpa perlu
+    // bolak-balik ke server.
+    var verdict = U.validateSettingsForm(form);
+    state.settings = form;
+    state.settingsErrors = verdict.errors;
+    if (!verdict.ok) {
+      setText(el["settings-state"], "Not saved");
+      showBanner("Some settings need attention.", "attention");
+      renderSettings();
+      return Promise.resolve({ ok: false });
+    }
+
+    return withBusy("Saving settings…", function () {
+      // Dibangun dari config yang TERAKHIR DIBACA, jadi mapping dan setelan lain
+      // tidak tersentuh. Password yang tidak diubah tidak dikirim sama sekali.
+      var payload = U.applySettingsToConfig(state.config, form);
+      payload.mappings = (state.rows || []).map(U.rowToMapping);
+
+      return api("/api/config", { method: "PUT", body: payload }).then(function (r) {
+        if (!(r.body && r.body.ok)) {
+          // Server yang berwenang. Pesan per field darinya ditampilkan apa adanya;
+          // config valid yang terakhir TIDAK tersentuh karena saveConfig
+          // memvalidasi sebelum menulis.
+          var msgs = (r.body && r.body.errors ? r.body.errors : []).map(function (e) {
+            return e.userMessage;
+          });
+          setText(el["settings-state"], "Not saved");
+          showBanner(msgs.length ? msgs.join(" · ") : U.messageOf(r.body, "The settings could not be saved."), "error");
+          renderAll();
+          return { ok: false };
+        }
+
+        // Tersimpan. Formulir dibangun ulang dari hasil server — termasuk
+        // passwordSet yang baru — dan kotak password ditutup lagi.
+        state.config = r.body.config;
+        state.settings = U.settingsToForm(r.body.config);
+        state.settingsErrors = {};
+        state.settingsDirty = false;
+        state.changingPassword = false;
+        setText(el["settings-state"], "Saved");
+        showBanner(r.body.restartRequired ? "Changes saved. Stop and restart the automation to apply them." : "", r.body.restartRequired ? "attention" : null);
+
+        // Kesiapan disegarkan: dengan OBS dan akun terisi, discovery sekarang bisa
+        // menjawab, dan LOGIN TIKTOK boleh dipakai.
+        return loadStatus()
+          .then(loadDiscovery)
+          .then(loadValidation)
+          .then(function () {
+            renderAll();
+            return { ok: true };
+          });
+      });
+    });
+  }
+
+  function markSettingsDirty() {
+    state.settingsDirty = true;
+    setText(el["settings-state"], "Unsaved changes");
+    el["save-settings-btn"].disabled = !U.settingsView(state).editable;
+  }
+
   // --- login TikTok ---------------------------------------------------------
   //
   // Aplikasi TIDAK PERNAH menyentuh kredensial. Tombol ini hanya meminta
@@ -661,6 +810,24 @@
     el["save-btn"].addEventListener("click", onSave);
     el["start-btn"].addEventListener("click", onStart);
     el["stop-btn"].addEventListener("click", onStop);
+    el["save-settings-btn"].addEventListener("click", onSaveSettings);
+    SETTINGS_FIELDS.forEach(function (pair) {
+      var node = el[pair[1]];
+      if (node) node.addEventListener("input", markSettingsDirty);
+    });
+    el["set-obs-password"].addEventListener("input", markSettingsDirty);
+    el["obs-password-change"].addEventListener("click", function () {
+      state.changingPassword = true;
+      markSettingsDirty();
+      renderSettings();
+      if (el["set-obs-password"]) el["set-obs-password"].focus();
+    });
+    el["obs-password-cancel"].addEventListener("click", function () {
+      // Membatalkan penggantian: password yang tersimpan dibiarkan apa adanya,
+      // karena ia tidak pernah ada di halaman untuk bisa hilang.
+      state.changingPassword = false;
+      renderSettings();
+    });
     el["login-btn"].addEventListener("click", onLogin);
     el["login-check-btn"].addEventListener("click", onLoginCheck);
     el["login-cancel-btn"].addEventListener("click", onLoginCancel);

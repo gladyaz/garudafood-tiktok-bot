@@ -217,11 +217,33 @@ test("app.js tidak mengambil keputusan: semuanya lewat AiLiveUI", () => {
 
 test("tidak ada rahasia di berkas statis mana pun", async () => {
   // Berkas-berkas ini dikirim apa adanya ke browser.
+  //
+  // Yang dilarang adalah NAMA VARIABEL ENVIRONMENT internal dan PATH di disk —
+  // bukan kata "password" di mana pun. Sejak P4.1 formulir Settings memang punya
+  // field bernama `obsPassword`, dan itu nama field formulir, bukan rahasia:
+  // nilainya tidak pernah dikirim server ke halaman (hanya `passwordSet`).
+  //
+  // Membedakan keduanya penting. Tes yang melarang kata "password" akan merah
+  // karena nama field yang sah, lalu orang akan melemahkannya — dan yang hilang
+  // adalah penjagaan terhadap kebocoran yang sesungguhnya.
   for (const name of ["index.html", "app.js", "ui-logic.js", "styles.css"]) {
     const src = fs.readFileSync(path.join(PUBLIC_DIR, name), "utf8");
-    assert.ok(!/OBS_PASSWORD|obsPassword/i.test(src), name);
+    assert.ok(!/OBS_PASSWORD/.test(src), name + " tidak boleh menyebut nama env OBS_PASSWORD");
     assert.ok(!/\.autopin-profile/.test(src), name + " tidak boleh menyebut path profil");
     assert.ok(!/AUTOPIN_PRODUCT_|AILIVE_RUNTIME_CONFIG/.test(src), name + " tidak boleh menyebut env internal");
+    assert.ok(!/data\/config\.json/.test(src), name + " tidak boleh menyebut path config");
+  }
+});
+
+test("berkas statis tidak memuat satu pun NILAI rahasia", async () => {
+  // Arah sebaliknya, dan yang sesungguhnya penting: tidak ada nilai yang terlihat
+  // seperti kredensial yang di-hardcode ke halaman.
+  for (const name of ["index.html", "app.js", "ui-logic.js"]) {
+    const src = fs.readFileSync(path.join(PUBLIC_DIR, name), "utf8");
+    // Tidak ada penugasan literal ke field password.
+    assert.ok(!/password\s*[:=]\s*["'][^"']+["']/i.test(src), name + " tidak boleh menetapkan nilai password");
+    // Dan tidak ada token/cookie/sesi yang disimpan di browser.
+    assert.ok(!/localStorage|sessionStorage|document\.cookie/.test(src), name);
   }
 });
 

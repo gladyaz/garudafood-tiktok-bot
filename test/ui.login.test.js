@@ -295,30 +295,51 @@ test("halaman punya tombol login, dan semua id-nya nyata", () => {
   }
 });
 
-test("halaman TIDAK PERNAH punya field password", () => {
-  // Aplikasi tidak pernah meminta, menerima, atau menyimpan password TikTok.
+test("halaman TIDAK PERNAH meminta kredensial TikTok", () => {
+  // Aturan yang tidak bisa ditawar: aplikasi tidak pernah meminta, menerima,
+  // menyimpan, mencatat, atau mengirimkan password TikTok. Login TikTok selalu
+  // dilakukan customer sendiri di jendela browser.
   //
-  // Diperiksa dari MARKUP, bukan dari kata "password" di mana pun: komentar yang
-  // menjelaskan "password tidak pernah diminta" sendiri memuat kata itu, dan tes
-  // yang mencari kata akan merah karena prosa — lalu orang akan melemahkannya.
+  // CATATAN PENTING soal cakupan: sejak P4.1 halaman MEMANG punya satu input
+  // password — untuk OBS WebSocket di komputer customer sendiri. Itu hal yang
+  // berbeda: kredensial layanan lokal yang memang harus diisi customer, bukan
+  // kredensial akun TikTok-nya. Jadi yang dilarang di sini adalah input untuk
+  // TikTok, bukan input password mana pun.
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
   const markup = html.replace(/<!--[\s\S]*?-->/g, "");
 
-  assert.ok(!/type\s*=\s*["']password["']/i.test(markup), "tidak boleh ada input password");
-  // Tidak ada kontrol apa pun yang namanya mengandung password.
-  assert.ok(!/(?:name|id)\s*=\s*["'][^"']*password[^"']*["']/i.test(markup), "tidak boleh ada kontrol bernama password");
-  // Dan tidak ada form sama sekali: halaman ini tidak pernah mengirim kredensial
-  // ke mana pun.
-  assert.ok(!/<form\b/i.test(markup), "tidak boleh ada <form>");
+  // SATU-SATUNYA input password yang diizinkan adalah milik OBS.
+  const pwInputs = markup.match(/<input[^>]*type\s*=\s*["']password["'][^>]*>/gi) || [];
+  assert.equal(pwInputs.length, 1, "hanya boleh ada satu input password: " + pwInputs.join(" | "));
+  assert.match(pwInputs[0], /id="set-obs-password"/, "dan itu harus milik OBS");
 
-  // app.js tidak pernah membaca atau mengirim password.
+  // Tidak ada kontrol apa pun yang mengaitkan TikTok dengan kredensial.
+  assert.ok(
+    !/(?:name|id)\s*=\s*["'][^"']*tiktok[^"']*(?:pass|pwd|secret|token|cookie)[^"']*["']/i.test(markup),
+    "tidak boleh ada kontrol kredensial TikTok"
+  );
+  // Dan tidak ada <form>: halaman ini tidak pernah mengirim kredensial ke mana pun
+  // selain lewat PUT /api/config ke 127.0.0.1.
+  assert.ok(!/<form\b/i.test(markup), "tidak boleh ada <form>");
+});
+
+test("app.js tidak pernah menyentuh kredensial TikTok, dan tidak menyimpan password OBS", () => {
   const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
   const appCode = app
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split(/\r?\n/)
     .filter((l) => !/^\s*\/\//.test(l))
     .join("\n");
-  assert.ok(!/password/i.test(appCode), "app.js tidak boleh menyentuh password");
+
+  // Tidak ada jalur kredensial TikTok sama sekali.
+  assert.ok(!/tiktokPassword|tiktok_password|loginPassword/i.test(appCode));
+  assert.ok(!/cookie|document\.cookie|localStorage|sessionStorage/i.test(appCode), "tidak menyimpan apa pun di browser");
+
+  // Password OBS hanya dibaca saat sedang diganti, dan dikosongkan sesudahnya.
+  assert.match(appCode, /state\.changingPassword && el\["set-obs-password"\]/);
+  assert.match(appCode, /if \(!state\.changingPassword\) pwInput\.value = ""/);
+  // Dan ia tidak pernah dibaca dari balasan server.
+  assert.ok(!/body\.config\.obs\.password/.test(appCode), "password tersimpan tidak pernah dibaca dari server");
 });
 
 test("loginView: tombol yang benar di tiap keadaan", () => {
