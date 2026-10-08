@@ -494,16 +494,30 @@
       state.scenes = r.body && Array.isArray(r.body.scenes) ? r.body.scenes : [];
     })];
 
-    if (c.discoveryAllowed) {
-      jobs.push(guarded(api("/api/tiktok/status")).then(function (r) {
-        if (r) state.tiktok = r.body;
-      }));
-      jobs.push(guarded(api("/api/tiktok/products")).then(function (r) {
-        if (!r) return;
-        state.products = r.body && Array.isArray(r.body.products) ? r.body.products : [];
-      }));
-    }
-    return Promise.all(jobs);
+    // Discovery TikTok DISERIALKAN, dan itu wajib.
+    //
+    // /api/tiktok/status dan /api/tiktok/products MASING-MASING membuka Chrome
+    // dengan profil automation yang SAMA, dan Chrome mengunci satu direktori
+    // profil ke satu proses. Dijalankan bersamaan, salah satunya kalah dengan
+    // `profile-in-use`.
+    //
+    // Terlihat di UI sungguhan pada 2026-10-08: status menang (identitas terbaca,
+    // "Connected as agen_mulia_abadi") sementara products kalah, sehingga panel
+    // kesiapan melaporkan "Products: None detected" padahal katalognya tidak
+    // pernah benar-benar dibaca. Angka yang salah itu sekarang ikut menentukan
+    // apakah START BOT boleh ditekan, jadi ia harus benar.
+    return Promise.all(jobs).then(function () {
+      if (!c.discoveryAllowed) return null;
+      return guarded(api("/api/tiktok/status"))
+        .then(function (r) {
+          if (r) state.tiktok = r.body;
+          return guarded(api("/api/tiktok/products"));
+        })
+        .then(function (r) {
+          if (!r) return;
+          state.products = r.body && Array.isArray(r.body.products) ? r.body.products : [];
+        });
+    });
   }
 
   function loadValidation() {
@@ -514,9 +528,20 @@
 
   // --- aksi -----------------------------------------------------------------
 
-  function withBusy(label, fn) {
+  // `target` adalah id label status yang BOLEH ditulis operasi ini.
+  //
+  // Sebelum P4.1.1 fungsi ini selalu menulis ke "save-state", yaitu label milik
+  // bagian Mapping. Akibatnya menyimpan Settings menampilkan "Saving settings…"
+  // di sebelah tombol Save Changes milik Mapping — dan label itu tertinggal di
+  // sana walau Settings sudah melaporkan "Saved". Refresh, Start, dan Stop juga
+  // menimpanya dengan cara yang sama.
+  //
+  // Sekarang setiap operasi hanya boleh menyentuh labelnya sendiri, dan yang tidak
+  // punya label (Refresh/Start/Stop) tidak menulis ke mana pun — kemajuannya sudah
+  // terlihat dari tombol yang mati, pill automation, dan spanduk.
+  function withBusy(label, fn, target) {
     state.busy = true;
-    setText(el["save-state"], label);
+    if (target) setText(el[target], label);
     renderControls();
     return Promise.resolve()
       .then(fn)
@@ -566,7 +591,7 @@
         if (r.ok) return loadValidation().then(renderAll);
         renderAll();
       });
-    });
+    }, "save-state");
   }
 
   function onRefresh() {
@@ -575,7 +600,6 @@
         .then(loadStatus)
         .then(loadValidation)
         .then(function () {
-          setText(el["save-state"], state.dirty ? "Unsaved changes" : "");
           renderAll();
         });
     });
@@ -663,7 +687,6 @@
         .then(loadDiscovery)
         .then(loadValidation)
         .then(function () {
-          setText(el["save-state"], "");
           renderAll();
         });
     });
@@ -726,7 +749,7 @@
             return { ok: true };
           });
       });
-    });
+    }, "settings-state");
   }
 
   function markSettingsDirty() {

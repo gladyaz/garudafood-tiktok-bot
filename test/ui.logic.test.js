@@ -209,12 +209,27 @@ test("katalog kosong: nilai tersimpan tetap dapat opsi supaya tidak hilang", () 
   assert.equal(extra.value, "Apa Saja");
 });
 
+
+// Kesiapan yang LENGKAP. Sejak P4.1.1, Start menuntut semuanya terbukti terpenuhi —
+// jadi tes yang ingin melihat Start hidup harus menyediakan semuanya.
+function readyView(over) {
+  return Object.assign(
+    {
+      status: { automation: "STOPPED", config: { present: true }, login: { active: false } },
+      obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1"] },
+      tiktok: { ok: true, identity: "toko uji", identityOk: true, live: true, productCount: 3 },
+      validation: { ok: true, mappings: [{ ok: true }] },
+    },
+    over || {}
+  );
+}
+
 // --- kendali tombol ----------------------------------------------------------
 
 const S = U.STATES;
 
-test("STOPPED: Start hidup, Stop mati, penyuntingan hidup", () => {
-  const c = U.controlsFor({ status: { automation: S.STOPPED } });
+test("STOPPED + kesiapan LENGKAP: Start hidup, Stop mati, penyuntingan hidup", () => {
+  const c = U.controlsFor(readyView());
   assert.equal(c.startEnabled, true);
   assert.equal(c.stopEnabled, false);
   assert.equal(c.editingEnabled, true);
@@ -250,7 +265,7 @@ test("STARTING dan STOPPING: Start mati", () => {
 
 test("ERROR: boleh mencoba lagi dan boleh membereskan", () => {
   // Sesudah rollback, operator harus bisa mencoba lagi tanpa merestart Controller.
-  const c = U.controlsFor({ status: { automation: S.ERROR } });
+  const c = U.controlsFor(readyView({ status: { automation: S.ERROR, config: { present: true }, login: { active: false } } }));
   assert.equal(c.startEnabled, true);
   assert.equal(c.stopEnabled, true);
   assert.equal(c.editingEnabled, true);
@@ -690,20 +705,120 @@ test("config belum pernah disimpan: START BOT MATI", () => {
   // Tanpa config, Start pasti gagal di preflight. Tombol yang mengundang klik yang
   // sudah pasti gagal membuat orang berhenti membaca pesannya — dan pesan
   // preflight-lah yang nanti dibutuhkan saat kegagalannya benar-benar penting.
-  const c = U.controlsFor({ status: { automation: "STOPPED", config: { present: false } } });
+  const c = U.controlsFor(readyView({ status: { automation: "STOPPED", config: { present: false }, login: { active: false } } }));
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Add your mappings and press Save Changes first.");
+  assert.equal(c.startReason, "Save your settings first.");
   // Tapi penyuntingan tetap hidup: justru itu yang harus dilakukan customer.
   assert.equal(c.editingEnabled, true);
 });
 
-test("config sudah ada: START BOT hidup", () => {
-  const c = U.controlsFor({ status: { automation: "STOPPED", config: { present: true } } });
-  assert.equal(c.startEnabled, true);
+test("config sudah ada DAN kesiapan lengkap: START BOT hidup", () => {
+  assert.equal(U.controlsFor(readyView()).startEnabled, true);
 });
 
-test("status tanpa blok config sama sekali tidak mematikan Start", () => {
-  // Bentuk lama/ringkas tidak boleh membuat tombol mati tanpa sebab.
-  const c = U.controlsFor({ status: { automation: "STOPPED" } });
-  assert.equal(c.startEnabled, true);
+test("FAIL-CLOSED: kesiapan yang BELUM DIKETAHUI mematikan Start", () => {
+  // "Belum tahu" bukan "aman". Satu-satunya cara tombol ini hidup adalah kalau
+  // setiap syarat sudah terbukti terpenuhi.
+  for (const missing of ["obs", "tiktok", "validation"]) {
+    const view = readyView();
+    delete view[missing];
+    const c = U.controlsFor(view);
+    assert.equal(c.startEnabled, false, "tanpa " + missing + " harus mati");
+    assert.match(c.startReason, /Checking/, missing + ": " + c.startReason);
+  }
+});
+
+// --- REGRESI P4.1.1: gerbang START BOT ---------------------------------------
+//
+// Terlihat di UI SUNGGUHAN pada 2026-10-08: START BOT hidup padahal LIVE belum on
+// air, nol produk terdeteksi, dan nol pemetaan ada. Preflight memang akan
+// menolaknya, tapi tombol yang mengundang klik yang sudah pasti gagal membuat orang
+// berhenti membaca pesannya — dan pesan preflight itulah yang nanti dibutuhkan saat
+// kegagalannya benar-benar penting.
+
+test("REGRESI screenshot: OBS+TikTok tersambung, tapi LIVE off + 0 produk + 0 mapping => START MATI", () => {
+  // Keadaan PERSIS dari layar yang dilaporkan.
+  const view = {
+    status: {
+      automation: "STOPPED",
+      config: { present: true },
+      login: { active: false, state: "idle", identity: "agen_mulia_abadi" },
+      run: { armed: false },
+    },
+    obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1", "PAX-2"] },
+    tiktok: { ok: true, identity: "agen_mulia_abadi", identityOk: true, live: false, productCount: 0 },
+    validation: { ok: false, reason: "no-mappings", mappings: [], userMessage: "No scene has a product mapped to it yet." },
+  };
+
+  const c = U.controlsFor(view);
+  assert.equal(c.startEnabled, false, "START BOT HARUS mati");
+  // Dan alasannya yang paling bisa ditindaklanjuti lebih dulu.
+  assert.equal(c.startReason, "Your TikTok LIVE is not on air yet.");
+
+  // Ketiga penghalangnya disebut, bukan hanya satu.
+  const keys = U.startBlockers(view).map((b) => b.key);
+  assert.deepEqual(keys, ["live", "products", "mappings"]);
+
+  // Stop dan penyuntingan TIDAK terpengaruh: operator tetap harus bisa membetulkan.
+  assert.equal(c.editingEnabled, true);
+});
+
+test("REGRESI: masing-masing syarat kesiapan sendirian sudah cukup mematikan Start", () => {
+  const cases = [
+    ["obs mati", { obs: { ok: false, error: { userMessage: "OBS is not connected." } } }, "obs"],
+    ["tiktok gagal", { tiktok: { ok: false, error: { userMessage: "You are not signed in to TikTok. Sign in once, then try again." } } }, "tiktok"],
+    ["akun salah", { tiktok: { ok: true, identityOk: false, live: true, productCount: 5 } }, "identity"],
+    ["LIVE off", { tiktok: { ok: true, identityOk: true, live: false, productCount: 5 } }, "live"],
+    ["nol produk", { tiktok: { ok: true, identityOk: true, live: true, productCount: 0 } }, "products"],
+    ["jumlah produk tak diketahui", { tiktok: { ok: true, identityOk: true, live: true } }, "products"],
+    ["mapping bermasalah", { validation: { ok: false, userMessage: "Some of your scene mappings need fixing." } }, "mappings"],
+  ];
+  for (const [label, over, expectedKey] of cases) {
+    const view = readyView(over);
+    const c = U.controlsFor(view);
+    assert.equal(c.startEnabled, false, label + " harus mematikan Start");
+    assert.ok(
+      U.startBlockers(view).some((b) => b.key === expectedKey),
+      label + ": penghalang " + expectedKey + " harus disebut, dapat " + JSON.stringify(U.startBlockers(view).map((b) => b.key))
+    );
+  }
+});
+
+test("REGRESI: kesiapan lengkap TAPI login aktif => Start tetap mati", () => {
+  const view = readyView({
+    status: { automation: "STOPPED", config: { present: true }, login: { active: true, state: "waiting" } },
+  });
+  const c = U.controlsFor(view);
+  assert.equal(c.startEnabled, false);
+  assert.equal(c.startReason, "Finish or cancel the TikTok sign-in first.");
+});
+
+test("REGRESI: backend tidak terjangkau mengalahkan kesiapan apa pun", () => {
+  const c = U.controlsFor(readyView({ backendUnreachable: true }));
+  assert.equal(c.startEnabled, false);
+  assert.equal(c.startReason, "Controller is not reachable.");
+  assert.deepEqual(U.startBlockers(readyView({ backendUnreachable: true })).map((b) => b.key), ["backend"]);
+});
+
+test("REGRESI: alasan Start tidak pernah berisi kode mesin", () => {
+  // Pesannya dari server (userMessage) atau kalimat biasa; tidak pernah kode.
+  const view = readyView({
+    obs: { ok: false, reason: "obs-unavailable", error: { code: "obs-unavailable", userMessage: "OBS is not connected." } },
+    tiktok: { ok: false, reason: "tiktok-not-logged-in", error: { code: "tiktok-not-logged-in", userMessage: "You are not signed in to TikTok. Sign in once, then try again." } },
+    validation: { ok: false, reason: "no-mappings", userMessage: "No scene has a product mapped to it yet." },
+  });
+  const raw = JSON.stringify(U.startBlockers(view));
+  for (const code of ["obs-unavailable", "tiktok-not-logged-in", "no-mappings"]) {
+    assert.ok(!raw.includes(code), code + " tidak boleh tampil ke customer");
+  }
+});
+
+test("REGRESI: Stop TIDAK PERNAH diblokir oleh kesiapan", () => {
+  // Apa pun keadaan kesiapannya, automation yang berjalan harus selalu bisa
+  // dihentikan. Tombol Stop yang mati saat sesuatu masih hidup adalah keadaan yang
+  // paling tidak boleh ada.
+  for (const st of ["RUNNING", "DEGRADED", "STARTING", "STOPPING", "ERROR"]) {
+    const c = U.controlsFor({ status: { automation: st, config: { present: true } } });
+    assert.equal(c.stopEnabled, true, st + " harus tetap bisa dihentikan");
+  }
 });

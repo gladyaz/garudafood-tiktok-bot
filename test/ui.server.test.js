@@ -488,6 +488,13 @@ test("RUNNING mematikan penyuntingan; STOPPED menyalakannya lagi", async () => {
   await withServer({}, async ({ base }) => {
     let status = (await getJson(base, "/api/status")).body;
     assert.equal(U.controlsFor({ status }).editingEnabled, true);
+    // Kesiapan lengkap disuplai terpisah: sejak P4.1.1 Start menuntut semuanya.
+    const ready = {
+      obs: { ok: true, scenes: SCENES },
+      tiktok: { ok: true, identityOk: true, live: true, productCount: 1 },
+      validation: { ok: true, mappings: [{ ok: true }] },
+    };
+    assert.equal(U.controlsFor(Object.assign({ status }, ready)).startEnabled, true);
 
     await uiStartSequence(base);
     status = (await getJson(base, "/api/status")).body;
@@ -500,7 +507,7 @@ test("RUNNING mematikan penyuntingan; STOPPED menyalakannya lagi", async () => {
 
     await send(base, "/api/stop", "POST");
     status = (await getJson(base, "/api/status")).body;
-    const stopped = U.controlsFor({ status });
+    const stopped = U.controlsFor(Object.assign({ status }, ready));
     assert.equal(stopped.editingEnabled, true);
     assert.equal(stopped.startEnabled, true);
   });

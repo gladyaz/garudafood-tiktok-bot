@@ -488,6 +488,75 @@
   // Kendali tombol
   // ---------------------------------------------------------------------------
 
+  // Semua alasan START BOT tidak boleh ditekan, dalam urutan paling bisa
+  // ditindaklanjuti lebih dulu.
+  //
+  // FAIL-CLOSED SEPENUHNYA. Sebelum P4.1.1 fungsi ini hanya melihat state
+  // automation, sehingga START BOT tetap hidup walau LIVE belum on air, nol produk
+  // terdeteksi, dan nol pemetaan ada — terlihat di UI sungguhan pada 2026-10-08.
+  // Preflight memang akan menolaknya, tapi tombol yang mengundang klik yang sudah
+  // pasti gagal membuat orang berhenti membaca pesannya. Dan pesan preflight itulah
+  // yang nanti dibutuhkan saat kegagalannya benar-benar penting.
+  //
+  // Kesiapan yang BELUM DIKETAHUI juga memblokir. "Belum tahu" bukan "aman":
+  // satu-satunya cara tombol ini hidup adalah kalau setiap syarat sudah terbukti
+  // terpenuhi.
+  function startBlockers(view) {
+    var v = view || {};
+    var status = v.status || null;
+
+    // Tiga hal ini menutup semuanya, jadi tidak perlu daftar panjang.
+    if (v.backendUnreachable) return [{ key: "backend", message: "Controller is not reachable." }];
+    if (!status) return [{ key: "status", message: "Loading…" }];
+    if (v.busy) return [{ key: "busy", message: "Working…" }];
+
+    var out = [];
+
+    // --- syarat dasar ---
+    if (status.config && status.config.present === false) {
+      out.push({ key: "config", message: "Save your settings first." });
+    }
+    if (status.login && status.login.active) {
+      out.push({ key: "login", message: "Finish or cancel the TikTok sign-in first." });
+    }
+
+    var s = status.automation;
+    var stopped = s === STATES.STOPPED;
+    var errored = s === STATES.ERROR;
+    var known =
+      stopped || errored || s === STATES.RUNNING || s === STATES.DEGRADED ||
+      s === STATES.STARTING || s === STATES.STOPPING || s === STATES.PREFLIGHT;
+
+    if (!known) out.push({ key: "state", message: "Automation state is unknown." });
+    else if (s === STATES.RUNNING || s === STATES.DEGRADED) out.push({ key: "state", message: "Automation is already running." });
+    else if (s === STATES.STARTING || s === STATES.PREFLIGHT) out.push({ key: "state", message: "Automation is already starting." });
+    else if (s === STATES.STOPPING) out.push({ key: "state", message: "Automation is still stopping." });
+
+    // --- kesiapan. Kalimatnya dari server kalau ada; "Checking…" berarti BELUM
+    //     DIKETAHUI, dan itu tetap memblokir. ---
+    var obs = v.obs;
+    if (!obs) out.push({ key: "obs", message: "Checking OBS…" });
+    else if (obs.ok !== true) out.push({ key: "obs", message: messageOf(obs, "OBS is not connected.") });
+
+    var tk = v.tiktok;
+    if (!tk) {
+      out.push({ key: "tiktok", message: "Checking TikTok…" });
+    } else if (tk.ok !== true) {
+      out.push({ key: "tiktok", message: messageOf(tk, "TikTok is not ready.") });
+    } else {
+      if (tk.identityOk === false) out.push({ key: "identity", message: "The TikTok account on screen is not the one you configured." });
+      if (tk.live !== true) out.push({ key: "live", message: "Your TikTok LIVE is not on air yet." });
+      if (typeof tk.productCount !== "number") out.push({ key: "products", message: "Checking LIVE products…" });
+      else if (tk.productCount < 1) out.push({ key: "products", message: "No LIVE products detected." });
+    }
+
+    var val = v.validation;
+    if (!val) out.push({ key: "mappings", message: "Checking your mappings…" });
+    else if (val.ok !== true) out.push({ key: "mappings", message: messageOf(val, "Some of your scene mappings need fixing.") });
+
+    return out;
+  }
+
   // Satu-satunya tempat yang memutuskan tombol mana boleh ditekan.
   //
   // FAIL-CLOSED: state yang tidak dikenal, backend yang tidak terjangkau, atau
@@ -540,8 +609,13 @@
     // menjanjikan sesuatu yang tidak akan terjadi.
     var editingEnabled = !busy && (stopped || errored);
 
+    // Start hidup HANYA kalau tidak ada satu pun penghalang. Semua syaratnya ada
+    // di startBlockers(), termasuk kesiapan yang belum diketahui.
+    var blockers = startBlockers(view);
+
     return {
-      startEnabled: !busy && !loginActive && !noConfig && (stopped || errored) && known,
+      startEnabled: blockers.length === 0,
+      startBlockers: blockers,
       stopEnabled: !busy && (running || transitioning || errored),
       editingEnabled: editingEnabled,
       refreshEnabled: !busy && !loginActive,
@@ -549,19 +623,9 @@
       // berjalan. P2 menolaknya di server; UI tidak boleh terus memintanya.
       // Discovery produk juga memakai profil itu.
       discoveryAllowed: (stopped || errored) && !loginActive,
-      startReason: startBlockedReason({ busy: busy, state: s, known: known, loginActive: loginActive, noConfig: noConfig }),
+      // Penghalang PERTAMA, yaitu yang paling bisa ditindaklanjuti.
+      startReason: blockers.length > 0 ? blockers[0].message : "",
     };
-  }
-
-  function startBlockedReason(x) {
-    if (x.busy) return "Working…";
-    if (x.loginActive) return "Finish or cancel the TikTok sign-in first.";
-    if (x.noConfig) return "Add your mappings and press Save Changes first.";
-    if (!x.known) return "Automation state is unknown.";
-    if (x.state === STATES.RUNNING || x.state === STATES.DEGRADED) return "Automation is already running.";
-    if (x.state === STATES.STARTING || x.state === STATES.PREFLIGHT) return "Automation is already starting.";
-    if (x.state === STATES.STOPPING) return "Automation is still stopping.";
-    return "";
   }
 
   // ---------------------------------------------------------------------------
@@ -797,6 +861,7 @@
     automationLabel: automationLabel,
     automationTone: automationTone,
     controlsFor: controlsFor,
+    startBlockers: startBlockers,
     loginView: loginView,
     settingsToForm: settingsToForm,
     validateSettingsForm: validateSettingsForm,

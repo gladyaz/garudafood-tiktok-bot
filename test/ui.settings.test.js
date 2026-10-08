@@ -308,7 +308,7 @@ test("blank state: START BOT dan LOGIN TIKTOK keduanya MATI", () => {
   const status = { automation: "STOPPED", config: { present: false } };
   const c = U.controlsFor({ status });
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Add your mappings and press Save Changes first.");
+  assert.equal(c.startReason, "Save your settings first.");
 
   const lv = U.loginView({ status });
   assert.equal(lv.canLogin, false);
@@ -563,4 +563,135 @@ test("Settings adalah section TERPISAH dari Mapping", () => {
   // Dan tombol simpannya berbeda.
   assert.ok(html.includes('id="save-settings-btn"'));
   assert.ok(html.includes('id="save-btn"'));
+});
+
+// --- REGRESI P4.1.1: label status Settings dan Mapping saling independen -------
+//
+// Terlihat di UI sungguhan pada 2026-10-08: "Saving settings…" muncul di sebelah
+// tombol Save Changes milik Mapping, dan tertinggal di sana walau Settings sudah
+// melaporkan "Saved" dan tidak ada satu pun mapping.
+//
+// Sebabnya withBusy() selalu menulis ke "save-state" — label milik Mapping —
+// apa pun operasinya. Refresh, Start, dan Stop menimpanya dengan cara yang sama.
+
+test("REGRESI: withBusy hanya menulis ke label yang DISEBUT pemanggilnya", () => {
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+
+  // Tidak ada lagi penulisan tanpa syarat ke save-state di dalam withBusy.
+  const withBusyBody = /function withBusy\([\s\S]*?\n  \}/.exec(app);
+  assert.ok(withBusyBody, "withBusy harus bisa ditemukan");
+  assert.ok(
+    !/setText\(el\["save-state"\]/.test(withBusyBody[0]),
+    "withBusy tidak boleh menulis ke label Mapping"
+  );
+  assert.match(withBusyBody[0], /if \(target\) setText\(el\[target\], label\)/);
+});
+
+test("REGRESI: setiap label hanya ditulis fungsi miliknya sendiri", () => {
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const lines = app.split(/\r?\n/);
+
+  // Untuk setiap penulisan label, cari fungsi terdekat di atasnya.
+  const writes = [];
+  lines.forEach((line, i) => {
+    const m = /setText\(el\["(save-state|settings-state)"\]/.exec(line);
+    if (!m) return;
+    let fn = "?";
+    for (let j = i; j >= 0; j -= 1) {
+      const f = /^\s*function ([a-zA-Z]+)\(/.exec(lines[j]);
+      if (f) {
+        fn = f[1];
+        break;
+      }
+    }
+    writes.push({ label: m[1], fn });
+  });
+
+  assert.ok(writes.length > 0, "harus ada penulisan label");
+
+  // Fungsi yang BOLEH menyentuh label Mapping, dan yang boleh menyentuh Settings.
+  // Daftar tertutup: fungsi baru harus lewat sini dulu, dengan sadar.
+  const MAPPING_OWNERS = ["markDirty", "loadConfig", "saveConfig"];
+  const SETTINGS_OWNERS = ["loadConfig", "onSaveSettings", "markSettingsDirty"];
+
+  for (const w of writes) {
+    const allowed = w.label === "save-state" ? MAPPING_OWNERS : SETTINGS_OWNERS;
+    assert.ok(allowed.includes(w.fn), w.fn + "() tidak boleh menulis ke " + w.label);
+  }
+
+  // Dan tidak ada fungsi yang menulis ke KEDUANYA selain loadConfig, yang memang
+  // meresetnya bersama saat config dimuat ulang.
+  const both = [...new Set(writes.map((w) => w.fn))].filter(
+    (fn) => writes.some((w) => w.fn === fn && w.label === "save-state") && writes.some((w) => w.fn === fn && w.label === "settings-state")
+  );
+  assert.deepEqual(both, ["loadConfig"]);
+});
+
+test("REGRESI: Refresh, Start, dan Stop tidak menulis ke label mana pun", () => {
+  // Kemajuan ketiganya sudah terlihat dari tombol yang mati, pill automation, dan
+  // spanduk — tidak perlu menumpangi label milik section lain.
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  // Isi fungsi diambil dengan indeks, bukan dengan RegExp yang dibangun dari
+  // string: pola berisi banyak backslash mudah rusak saat berpindah tangan, dan
+  // regex yang rusak membuat tes gagal karena pemeriksanya — bukan karena kodenya.
+  function bodyOf(name) {
+    const start = app.indexOf("function " + name + "() {");
+    if (start === -1) return null;
+    const end = app.indexOf("\n  }", start);
+    return end === -1 ? app.slice(start) : app.slice(start, end + 4);
+  }
+
+  for (const fn of ["onRefresh", "onStart", "onStop"]) {
+    const body = bodyOf(fn);
+    assert.ok(body, fn + " harus bisa ditemukan");
+    assert.ok(
+      !/setText\(el\["(save-state|settings-state)"\]/.test(body),
+      fn + "() tidak boleh menulis ke label Settings/Mapping"
+    );
+  }
+});
+
+// --- REGRESI P4.1.1: discovery TikTok diserialkan -----------------------------
+//
+// /api/tiktok/status dan /api/tiktok/products MASING-MASING membuka Chrome dengan
+// profil automation yang SAMA, dan Chrome mengunci satu direktori profil ke satu
+// proses. Dijalankan bersamaan, salah satunya kalah dengan `profile-in-use`.
+//
+// Terjadi di UI sungguhan pada 2026-10-08:
+//   [CONTROLLER_TIKTOK_DISCOVERY_FAILED] {"detail":"NOT_READY: profile-in-use"}
+// status menang (identitas terbaca) sementara products kalah, sehingga panel
+// kesiapan melaporkan "Products: None detected" padahal katalognya tidak pernah
+// benar-benar dibaca. Angka itu sekarang ikut menentukan apakah START BOT boleh
+// ditekan, jadi ia harus benar.
+
+test("REGRESI: dua panggilan discovery TikTok TIDAK dijalankan bersamaan", () => {
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const body = /function loadDiscovery\(\)[\s\S]*?\n  \}/.exec(app);
+  assert.ok(body, "loadDiscovery harus bisa ditemukan");
+
+  // Keduanya TIDAK boleh berada di dalam daftar yang sama-sama di-Promise.all.
+  assert.ok(
+    !/jobs\.push\([\s\S]*?api\("\/api\/tiktok\/status"\)/.test(body[0]),
+    "status tidak boleh ikut jobs paralel"
+  );
+  assert.ok(
+    !/jobs\.push\([\s\S]*?api\("\/api\/tiktok\/products"\)/.test(body[0]),
+    "products tidak boleh ikut jobs paralel"
+  );
+
+  // Dan products diminta SESUDAH status selesai.
+  const iStatus = body[0].indexOf('api("/api/tiktok/status")');
+  const iProducts = body[0].indexOf('api("/api/tiktok/products")');
+  assert.ok(iStatus > -1 && iProducts > -1, "keduanya harus tetap dipanggil");
+  assert.ok(iStatus < iProducts, "status lebih dulu, lalu products");
+  assert.match(body[0], /\.then\(function \(r\) \{[\s\S]*?return guarded\(api\("\/api\/tiktok\/products"\)\);/);
+});
+
+test("REGRESI: discovery OBS tetap boleh paralel (sumber dayanya berbeda)", () => {
+  // OBS lewat WebSocket, bukan profil Chrome. Menyerialkannya hanya memperlambat
+  // tanpa alasan.
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const body = /function loadDiscovery\(\)[\s\S]*?\n  \}/.exec(app)[0];
+  assert.match(body, /var jobs = \[guarded\(api\("\/api\/obs\/scenes"\)\)/);
+  assert.match(body, /Promise\.all\(jobs\)/);
 });
