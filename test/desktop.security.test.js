@@ -121,8 +121,32 @@ test("penutupan DITAHAN sampai pembersihan selesai", () => {
 });
 
 test("shutdown yang TIDAK bersih dilaporkan, bukan disembunyikan", () => {
-  assert.match(MAIN, /showErrorBox/);
-  assert.match(MAIN, /app\.exit\(result\.ok \? 0 : 1\)/);
+  assert.match(MAIN, /SHUTDOWN_INCOMPLETE/);
+  // Dilaporkan ke customer DAN keluar dengan kode gagal. P4.2 memindahkan
+  // keluarnya ke mekanisme bersama supaya ia tidak lagi bergantung pada dialog
+  // yang diklik; lihat tes berikutnya untuk alasannya.
+  assert.match(MAIN, /createExitAnnouncer/);
+  assert.match(MAIN, /announceThenExit\(1,/);
+  // Jalur bersih tetap keluar 0, dan itu TIDAK boleh ikut lewat jalur dialog.
+  assert.match(MAIN, /app\.exit\(0\)/);
+});
+
+test("REGRESI P4.2: desktop TIDAK memakai dialog yang bisa menahan keluarnya aplikasi", () => {
+  // Pada 2026-10-08 startup gagal dan aplikasinya TETAP HIDUP memegang kunci
+  // satu-instance sampai dimatikan lewat Task Manager. Sebabnya satu baris:
+  //
+  //     dialog.showErrorBox(...)   // MODAL, memblokir sampai diklik
+  //     app.exit(1);               // tidak pernah tercapai
+  //
+  // Saat startup gagal belum ada jendela, jadi kotaknya tidak terlihat dan tidak
+  // ada yang bisa mengkliknya. Varian sinkron DILARANG di sini, selamanya.
+  for (const name of ["main.js", "startup.js"]) {
+    const src = stripComments(fs.readFileSync(path.join(DESKTOP, name), "utf8"));
+    assert.ok(!/showErrorBox/.test(src), name + " tidak boleh memakai showErrorBox");
+    assert.ok(!/showMessageBoxSync/.test(src), name + " tidak boleh memakai showMessageBoxSync");
+  }
+  // Yang dipakai adalah versi yang mengembalikan Promise.
+  assert.match(MAIN, /showMessageBox\(/);
 });
 
 test("main.js tidak mengandung keputusan lifecycle: semuanya di lifecycle.js", () => {
@@ -142,7 +166,7 @@ test("argumen izin aksi nyata TIDAK diteruskan dari desktop", () => {
 });
 
 test("tidak ada rahasia maupun path profil di berkas desktop", () => {
-  for (const name of ["main.js", "lifecycle.js", "controller-child.js"]) {
+  for (const name of ["main.js", "lifecycle.js", "controller-child.js", "startup.js", "node-path.js"]) {
     const src = stripComments(fs.readFileSync(path.join(DESKTOP, name), "utf8"));
     assert.ok(!/OBS_PASSWORD|obsPassword/i.test(src), name);
     assert.ok(!/\.autopin-profile/.test(src), name + " tidak boleh menyebut path profil");
@@ -325,18 +349,19 @@ test("REGRESI: pencarian Node mengenali electron dan FAIL-CLOSED", () => {
 });
 
 test("REGRESI: aplikasi TIDAK menyala kalau Node tidak ditemukan", () => {
-  assert.match(MAIN, /resolveNodePath\(\)/);
-  assert.match(MAIN, /if \(!node\.ok\)/);
-  assert.match(MAIN, /Node\.js was not found/);
-  // Dan pencariannya terjadi SEBELUM lifecycle dibangun.
-  //
-  // Dibandingkan dengan PEMANGGILANNYA, bukan dengan `buildLifecycle(` begitu saja:
-  // yang terakhir juga cocok dengan deklarasi fungsinya di bagian atas berkas, dan
-  // perbandingannya akan selalu salah arah.
-  assert.ok(
-    MAIN.indexOf("resolveNodePath()") < MAIN.indexOf("buildLifecycle(node.nodePath)"),
-    "Node harus dicari sebelum Controller dinyalakan"
-  );
+  // P4.2 memindahkan keputusannya ke desktop/startup.js yang murni, jadi jaminan
+  // "Node dicari SEBELUM Controller dinyalakan" sekarang diuji sebagai PERILAKU
+  // di test/desktop.startup.test.js — jauh lebih kuat daripada mencocokkan urutan
+  // teks di berkas. Yang tersisa diperiksa di sini hanya sambungannya.
+  assert.match(MAIN, /resolveNode:\s*\(\)\s*=>\s*resolveNodePath\(\)/);
+  assert.match(MAIN, /createStartupFlow/);
+  // Dan main.js TIDAK boleh lagi memutuskan sendiri apa yang terjadi kalau Node
+  // tidak ada; kalau ia mulai memutuskan, keputusan itu lolos dari tes offline.
+  assert.ok(!/if \(!node\.ok\)/.test(MAIN), "keputusan node harus di startup.js");
+
+  const STARTUP = fs.readFileSync(path.join(DESKTOP, "startup.js"), "utf8");
+  assert.match(STARTUP, /NODE_NOT_FOUND/);
+  assert.match(STARTUP, /node-not-found/);
 });
 
 test("REGRESI: perlindungan yatim tetap mencari node.exe (jadi anaknya harus node.exe)", () => {

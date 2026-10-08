@@ -28,6 +28,7 @@ const { createPreflight, firstFailure } = require("./preflight");
 const { createActivityFeed } = require("./activity");
 const { translate } = require("./errors");
 const { validateMappings } = require("./mapping-validator");
+const { memoThunk } = require("./lazy");
 const { createProfileOwnership, OWNER } = require("./profile-owner");
 const { createRunAuthority } = require("./run-authority");
 const { createLoginFlow } = require("./login");
@@ -193,6 +194,10 @@ function createController({
 
   // Probe preflight yang memakai adapter discovery sungguhan kalau ada. Kalau
   // tidak ada, preflight memakai default-nya sendiri — dan di tes selalu di-inject.
+  // P4.2: boleh array (seperti semula) atau fungsi yang baru dibaca saat
+  // pertama dipakai. Lihat controller/lazy.js dan controller/index.js.
+  const scenesOf = memoThunk(playableScenes);
+
   const discoveryProbes = {};
   if (obsDiscovery) {
     discoveryProbes.probeObs = async ({ host, port, password }) => {
@@ -222,7 +227,9 @@ function createController({
       {
         cwd,
         validateConfig,
-        playableScenes,
+        // Thunk yang SAMA, bukan nilainya: satu pembacaan, satu cache, dipakai
+        // preflight dan validasi pemetaan bersama.
+        playableScenes: scenesOf,
         listOrphans: orphanSweeper
           ? async () => {
               // Penyapu yang sama dipakai untuk MENGHITUNG saja di preflight.
@@ -777,7 +784,7 @@ function createController({
       obsScenes,
       products,
       autoCommentEnabled: config.settings.autoCommentEnabled === true,
-      playableScenes,
+      playableScenes: scenesOf(),
     });
 
     return {

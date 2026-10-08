@@ -30,8 +30,28 @@ const { createServer, DEFAULT_PORT } = require("./server");
 const { createObsDiscovery } = require("./discovery/obs");
 const { createTikTokDiscovery } = require("./discovery/tiktok");
 const { toAutopinConfig } = require("./config-manager");
+const { memoThunk, lazyFacade } = require("./lazy");
+// Hanya untuk nama variabelnya; modulnya ringan (satu berkas, fs + crypto).
+// Namanya diIMPOR, bukan ditulis ulang, supaya ia tidak bisa menyimpang.
+const { RUNTIME_CONFIG_ENV } = require("../runtime/runtime-config");
 
 const ROOT = path.resolve(__dirname, "..");
+
+// --- tahap boot (P4.2) --------------------------------------------------------
+//
+// Satu baris per tonggak, dengan milidetik sejak proses dimulai. Gunanya satu:
+// kalau cold start melambat lagi, kita tahu TAHAP MANA yang menghabiskan waktu
+// — bukan menebak lalu menaikkan timeout.
+//
+// process.uptime() dipakai karena ia dihitung dari awal proses, jadi biaya
+// require di tingkat modul ikut terukur. Yang dicetak hanya nama tahap dan
+// angka: tidak ada config, tidak ada path, tidak ada rahasia.
+const bootMs = () => Math.round(process.uptime() * 1000);
+function bootStage(name) {
+  console.log("[CONTROLLER_BOOT] stage=" + name + " ms=" + bootMs());
+}
+
+bootStage("modules-loaded");
 
 // Flag yang diteruskan ke service AutoPIN. Daftar TERTUTUP: Controller tidak
 // pernah meneruskan argumen sembarang ke proses yang mengklik akun sungguhan.
@@ -156,35 +176,63 @@ function createWindowsChromeKiller({ profileDirName = "autopin-profile" } = {}) 
 //
 // Dimuat MALAS (require di dalam fungsi) supaya Puppeteer tidak ikut dimuat ke
 // proses Controller sampai discovery benar-benar diminta.
+// P4.2: dulu komentar di atas sudah mengatakan "dimuat malas", tapi fungsi ini
+// dipanggil di main() SEBELUM server.start(), jadi Puppeteer tetap ikut termuat
+// saat boot — 235 berkas modul dibayar sebelum port terikat, demi pekerjaan yang
+// baru dibutuhkan kalau customer meminta discovery atau login. Sekarang
+// kelambatannya nyata: yang dikembalikan adalah pembungkus yang memuat modulnya
+// saat PERTAMA DIPANGGIL.
+const BROWSER_SPECS = Object.freeze({
+  launchBrowser: ["browser", "launchBrowser"],
+  getPage: ["browser", "getPage"],
+  openConsole: ["browser", "openConsole"],
+  closeBrowser: ["browser", "closeBrowser"],
+  collectProducts: ["products", "collectProducts"],
+  readIdentity: ["products", "readIdentity"],
+  checkIdentity: ["core", "checkIdentity"],
+  // isExpectedConsole dipinjam dari service: fungsi URL murni yang SAMA yang
+  // dipakai sebelum mengklik apa pun. Menyalinnya ke sini akan menyimpang,
+  // persis seperti salinan normalizeTitleKey di P2.
+  isExpectedConsole: ["service", "isExpectedConsole"],
+});
+
+const BROWSER_MODULES = Object.freeze([
+  "../autopin/browser",
+  "../autopin/products",
+  "../autopin/core",
+  "../autopin/service",
+]);
+
 function buildBrowserDeps() {
-  let browserMod;
-  let productsMod;
-  let coreMod;
-  let serviceMod;
+  // Instalasi yang rusak tetap terdeteksi SAAT BOOT, persis seperti sebelumnya,
+  // supaya Controller melaporkan "discovery not configured" dan bukan meledak
+  // nanti di tengah permintaan customer.
+  //
+  // require.resolve() hanya memetakan nama ke path berkas; ia TIDAK menjalankan
+  // modulnya, jadi Puppeteer tidak ikut termuat karena pemeriksaan ini.
   try {
-    browserMod = require("../autopin/browser");
-    productsMod = require("../autopin/products");
-    coreMod = require("../autopin/core");
-    // isExpectedConsole dipinjam dari service: fungsi URL murni yang SAMA yang
-    // dipakai sebelum mengklik apa pun. Menyalinnya ke sini akan menyimpang,
-    // persis seperti salinan normalizeTitleKey di P2.
-    serviceMod = require("../autopin/service");
+    for (const spec of BROWSER_MODULES) require.resolve(spec);
   } catch {
     return null;
   }
-  return {
-    launchBrowser: browserMod.launchBrowser,
-    getPage: browserMod.getPage,
-    openConsole: browserMod.openConsole,
-    closeBrowser: browserMod.closeBrowser,
-    collectProducts: productsMod.collectProducts,
-    readIdentity: productsMod.readIdentity,
-    checkIdentity: coreMod.checkIdentity,
-    isExpectedConsole: serviceMod.isExpectedConsole,
-    // Customer config -> bentuk config yang dipahami launchBrowser/openConsole.
-    // Tanpa ini, profileDir undefined dan browser gagal dibuka.
-    toBrowserConfig: toAutopinConfig,
-  };
+
+  return Object.assign(
+    lazyFacade({
+      load: () => ({
+        browser: require("../autopin/browser"),
+        products: require("../autopin/products"),
+        core: require("../autopin/core"),
+        service: require("../autopin/service"),
+      }),
+      specs: BROWSER_SPECS,
+    }),
+    {
+      // Customer config -> bentuk config yang dipahami launchBrowser/openConsole.
+      // Tanpa ini, profileDir undefined dan browser gagal dibuka. Ini sudah ringan
+      // (config-manager), jadi tidak perlu ditunda.
+      toBrowserConfig: toAutopinConfig,
+    }
+  );
 }
 
 function buildTikTokDiscovery(deps) {
@@ -205,6 +253,12 @@ function buildTikTokDiscovery(deps) {
 // index.js hanya menjalankan startLive() kalau ia modul utama, dan di sini ia
 // bukan. Yang ikut termuat adalah dotenv dan objek OBSWebSocket yang belum
 // tersambung ke mana pun — tidak ada koneksi, tidak ada browser, tidak ada bot.
+//
+// P4.2: dioper sebagai FUNGSI, bukan hasilnya. Memanggilnya saat boot berarti
+// memuat index.js — dan bersamanya obs-websocket-js serta tiktok-live-connector,
+// 117 berkas modul — hanya untuk mendapatkan daftar NAMA SCENE. Daftar itu baru
+// dibutuhkan saat preflight atau validasi pemetaan dijalankan, bukan saat
+// dashboard disajikan. Hasilnya diingat oleh memoThunk, jadi tetap dibaca sekali.
 function readPlayableScenes() {
   try {
     const bot = require("../index");
@@ -218,6 +272,7 @@ async function main(argv) {
   const { port, serviceArgs, parentPipe, nodePath } = parseArgs(argv);
   const onWindows = process.platform === "win32";
   const browserDeps = buildBrowserDeps();
+  bootStage("deps-resolved");
 
   const controller = createController({
     cwd: ROOT,
@@ -232,17 +287,36 @@ async function main(argv) {
     // P2
     obsDiscovery: createObsDiscovery(),
     tiktokDiscovery: buildTikTokDiscovery(browserDeps),
-    playableScenes: readPlayableScenes(),
+    // SATU kasus sengaja TIDAK ditunda.
+    //
+    // Kalau AILIVE_RUNTIME_CONFIG kebetulan ada di environment Controller —
+    // bukan jalur normal, karena Controller menaruhnya di environment ANAK, tapi
+    // mungkin terjadi di jalur manual — maka index.js akan process.exit(1) saat
+    // dimuat, dan process.exit TIDAK bisa ditangkap try/catch. Menundanya berarti
+    // memindahkan kematian itu dari boot ke tengah permintaan customer, dan
+    // Controller yang mati saat preflight jauh lebih buruk daripada Controller
+    // yang menolak menyala. Jadi untuk kasus itu daftarnya dibaca di muka,
+    // persis seperti sebelum P4.2.
+    playableScenes: process.env[RUNTIME_CONFIG_ENV] ? readPlayableScenes() : readPlayableScenes,
     // Alur login memakai fungsi browser yang SAMA dengan discovery dan dengan
     // jalur pin. Satu sesi, satu profil, satu gerbang identitas.
     loginDeps: browserDeps,
   });
 
+  bootStage("controller-created");
+
   const server = createServer({ controller, port });
+  bootStage("server-created");
+
+  // Kesiapan startup adalah "server HTTP lokal hidup" — BUKAN OBS tersambung,
+  // bukan TikTok terbaca, bukan Chrome terbuka. Tidak ada satu pun sistem luar
+  // yang disentuh sampai titik ini, dan itu memang disengaja: dashboard harus
+  // bisa muncul walau OBS mati dan LIVE belum menyala.
+  bootStage("listen-begin");
   const addr = await server.start();
 
   console.log(
-    "[CONTROLLER_LISTENING] host=" + addr.host + " port=" + addr.port +
+    "[CONTROLLER_LISTENING] host=" + addr.host + " port=" + addr.port + " ms=" + bootMs() +
       (serviceArgs.length > 0 ? ' serviceArgs="' + serviceArgs.join(" ") + '"' : "")
   );
   console.log("[CONTROLLER_READY] note=\"nothing is running yet; POST /api/start to begin\"");

@@ -20,6 +20,7 @@
 
 const netDefault = require("node:net");
 const { validateMappings } = require("./mapping-validator");
+const { memoThunk } = require("./lazy");
 const fsDefault = require("node:fs");
 const pathDefault = require("node:path");
 
@@ -134,10 +135,18 @@ function createPreflight({
   // Pemetaan ke scene di luar daftar ini ditolak, karena Controller tidak punya
   // cara mengetahui nama input media-nya dan menebak durasi berarti mengubah
   // perilaku pemutaran. null = jangan periksa.
+  //
+  // P4.2: boleh berupa ARRAY (seperti semula, dan seperti di seluruh tes) ATAU
+  // fungsi yang baru dibaca saat preflight benar-benar dijalankan. Bentuk kedua
+  // yang dipakai aplikasi desktop: membacanya saat boot berarti memuat index.js
+  // beserta obs-websocket-js dan tiktok-live-connector sebelum port terikat.
   playableScenes = null,
   cwd = process.cwd(),
   path = pathDefault,
 } = {}) {
+  // Dibaca sekali, saat pertama dibutuhkan. Lihat controller/lazy.js.
+  const scenesOf = memoThunk(playableScenes);
+
   // Hasil selalu punya SEMUA nama check, supaya tidak ada check yang hilang tanpa
   // terlihat. Check yang tidak dijalankan ditandai skipped, bukan dihapus.
   function blank() {
@@ -289,7 +298,7 @@ function createPreflight({
         obsScenes,
         products: catalogue,
         autoCommentEnabled: s.autoCommentEnabled === true,
-        playableScenes,
+        playableScenes: scenesOf(),
       });
       checks.mappings = verdict.ok
         ? { ok: true, count: config.mappings.length }

@@ -144,30 +144,53 @@ function createDesktopLifecycle({
       });
     }
 
+    const startedAt = now();
     const ready = await waitForReady();
     if (!ready.ok) {
       // Startup gagal WAJIB tidak meninggalkan proses tersembunyi.
       await killController("start-failed");
       state = STATE.FAILED;
       lastError = ready.code;
-      log("CONTROLLER_NOT_READY", { code: ready.code });
-      return { ok: false, code: ready.code };
+      // Tahap boot terakhir ikut dilaporkan: "timeout" saja tidak memberi tahu
+      // apa pun, sementara "timeout di tahap listen-begin" langsung menunjuk
+      // tempatnya. Lihat controller/index.js -> bootStage().
+      log("CONTROLLER_NOT_READY", {
+        code: ready.code,
+        ms: now() - startedAt,
+        stage: ready.stage || "",
+      });
+      return { ok: false, code: ready.code, stage: ready.stage || null };
     }
 
     state = STATE.READY;
-    log("CONTROLLER_READY", { pid: child.pid });
+    log("CONTROLLER_READY", { pid: child.pid, ms: now() - startedAt });
     return { ok: true, pid: child.pid };
   }
+
+  // Membedakan LAMBAT dari MENGGANTUNG.
+  //
+  // Child yang masih hidup dan masih melaporkan tahap boot ditunggu sampai batas
+  // waktunya — mesin yang dingin memang berhak lambat. Tapi child yang sudah mati
+  // atau sudah mengabarkan kegagalan fatal TIDAK ditunggu: itu hanya menunda kabar
+  // buruk yang sudah pasti, dan di layar customer penundaannya terasa seperti
+  // aplikasi yang membeku.
+  //
+  // PID yang masih ada TIDAK pernah dianggap sebagai tanda sehat. Satu-satunya
+  // bukti kesiapan adalah server HTTP-nya menjawab.
+  const stageOf = () => (child && typeof child.bootStage === "function" ? child.bootStage() : null);
 
   async function waitForReady() {
     const deadline = now() + budget.readyMs;
     while (now() < deadline) {
-      if (childExited) return { ok: false, code: "controller-start-failed" };
+      if (childExited) return { ok: false, code: "controller-start-failed", stage: stageOf() };
+      if (child && typeof child.fatal === "function" && child.fatal()) {
+        return { ok: false, code: "controller-boot-failed", stage: stageOf() };
+      }
       const r = await waitReady();
       if (r && r.ok) return { ok: true };
       await sleep(budget.readyPollMs);
     }
-    return { ok: false, code: "controller-start-timeout" };
+    return { ok: false, code: "controller-start-timeout", stage: stageOf() };
   }
 
   // --- stop ----------------------------------------------------------------

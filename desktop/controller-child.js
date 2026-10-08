@@ -92,6 +92,31 @@ function spawnControllerChild({
     log("CONTROLLER_CHILD_ERROR", { detail: String((err && err.message) || "").slice(0, 120) });
   });
 
+  // --- tonggak boot & kabar fatal (P4.2) ------------------------------------
+  //
+  // Dua hal dibaca dari aliran log Controller, dan keduanya untuk SATU tujuan:
+  // membedakan "lambat" dari "menggantung".
+  //
+  //   bootStage   tahap terakhir yang dilaporkan Controller. Kalau kesiapan
+  //               habis waktunya, laporannya bisa menyebut tahap mana yang
+  //               tertinggal — bukan sekadar "timeout".
+  //   fatal       Controller mengabarkan kegagalan startup. Menunggu sampai batas
+  //               waktu sesudah itu hanya menunda kabar buruk yang sudah pasti.
+  let bootStage = null;
+  let fatal = null;
+
+  const BOOT_RE = /^\[CONTROLLER_BOOT\]\s+stage=([a-z-]+)/;
+  const FATAL_RE = /^\[CONTROLLER_(FATAL|BOOT_FAILED)\]/;
+
+  function noteLine(line) {
+    const b = BOOT_RE.exec(line);
+    if (b) {
+      bootStage = b[1];
+      return;
+    }
+    if (fatal === null && FATAL_RE.test(line)) fatal = line.slice(0, 200);
+  }
+
   // Baris demi baris, supaya log Controller tetap terbaca utuh.
   function attach(stream, channel) {
     if (!stream) return;
@@ -105,6 +130,7 @@ function spawnControllerChild({
         const line = buffer.slice(0, idx).replace(/\r$/, "");
         buffer = buffer.slice(idx + 1);
         if (line !== "") {
+          noteLine(line);
           try {
             onLine({ channel, line });
           } catch {
@@ -122,6 +148,14 @@ function spawnControllerChild({
 
   return {
     pid: child.pid,
+
+    // Tahap boot terakhir yang dikabarkan Controller, atau null kalau belum ada
+    // satu pun. Dipakai laporan timeout supaya ia menyebut DI MANA ia tertinggal.
+    bootStage: () => bootStage,
+
+    // Baris kegagalan startup dari Controller, atau null. Kehadirannya berarti
+    // Controller sudah menyerah; menunggunya siap tidak ada gunanya lagi.
+    fatal: () => fatal,
 
     // Minta Controller membereskan dirinya: ia akan menghentikan bot, service,
     // Chrome automation, dan jendela login sebelum keluar.

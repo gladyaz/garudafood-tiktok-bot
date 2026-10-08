@@ -29,6 +29,7 @@ const path = require("node:path");
 const { app, BrowserWindow, dialog, shell } = require("electron");
 
 const { createDesktopLifecycle } = require("./lifecycle");
+const { createStartupFlow, createExitAnnouncer } = require("./startup");
 const { spawnControllerChild, createReadinessProbe } = require("./controller-child");
 const { resolveNodePath } = require("./node-path");
 
@@ -177,18 +178,42 @@ async function gracefulQuit() {
   if (!result.ok) {
     // TIDAK mengaku bersih saat tidak bersih.
     log("SHUTDOWN_INCOMPLETE", { code: result.code, remaining: result.remaining });
-    try {
-      dialog.showErrorBox(
-        "AI LIVE HOST did not shut down cleanly",
+    // Cacat yang sama dengan jalur startup: showErrorBox memblokir sampai diklik,
+    // jadi app.exit() di bawahnya tidak pernah dijalankan dan Electron tetap hidup
+    // memegang kunci satu-instance. Mekanismenya dipakai bersama, bukan disalin.
+    createExitAnnouncer({ showFailure, exit: (code) => app.exit(code), log }).announceThenExit(1, {
+      title: "AI LIVE HOST did not shut down cleanly",
+      message:
         "Some background processes may still be running. Open Task Manager and close any remaining " +
-          "node.exe or Chrome windows that belong to AI LIVE HOST."
-      );
-    } catch {
-      /* dialog gagal bukan alasan menahan keluar */
-    }
+        "node.exe or Chrome windows that belong to AI LIVE HOST.",
+    });
+    return;
   }
 
-  app.exit(result.ok ? 0 : 1);
+  app.exit(0);
+}
+
+// --- kabar kegagalan ----------------------------------------------------------
+
+// showErrorBox MEMBLOKIR sampai ada yang menekan OK, dan saat startup gagal belum
+// ada jendela sama sekali — jadi kotaknya tidak terlihat dan baris sesudahnya
+// tidak pernah dijalankan. Itu sebab persis dari "aplikasi gagal tapi tetap hidup
+// memegang kunci satu-instance" pada 2026-10-08.
+//
+// Versi asinkronnya mengembalikan Promise, jadi desktop/startup.js bisa keluar
+// saat diklik ATAU saat batas waktunya habis — mana yang lebih dulu.
+function showFailure({ title, message }) {
+  return dialog
+    .showMessageBox({
+      type: "error",
+      title: "AI LIVE HOST",
+      message: title,
+      detail: message,
+      buttons: ["OK"],
+      defaultId: 0,
+      noLink: true,
+    })
+    .then(() => undefined);
 }
 
 // --- startup ------------------------------------------------------------------
@@ -220,37 +245,22 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    // Node sungguhan dicari LEBIH DULU. Kalau tidak ada, aplikasi TIDAK menyala:
-    // Controller yang berjalan tanpa bisa menyalakan bot-nya adalah aplikasi yang
-    // terlihat sehat sampai customer menekan START BOT.
-    const node = resolveNodePath();
-    if (!node.ok) {
-      log("NODE_NOT_FOUND", { reason: node.reason });
-      dialog.showErrorBox(
-        "AI LIVE HOST could not start.",
-        "Node.js was not found on this computer. Install Node.js, then open AI LIVE HOST again."
-      );
-      app.exit(1);
-      return;
-    }
-    log("NODE_RESOLVED", { from: node.from });
-
-    lifecycle = buildLifecycle(node.nodePath);
-    const started = await lifecycle.start();
-
-    if (!started.ok) {
-      log("CONTROLLER_START_FAILED", { code: started.code });
-      dialog.showErrorBox(
-        "AI LIVE HOST could not start.",
-        "The local controller did not start. Close any other copy of AI LIVE HOST and try again."
-      );
-      // Tidak meninggalkan proses tersembunyi: lifecycle.start() sudah
-      // membereskan child-nya sendiri saat gagal.
-      app.exit(1);
-      return;
-    }
-
-    createWindow();
+    // Seluruh keputusan startup ada di desktop/startup.js, yang murni dan diuji
+    // offline. Yang tertinggal di sini hanya sambungan ke Electron.
+    const startup = createStartupFlow({
+      resolveNode: () => resolveNodePath(),
+      buildLifecycle: (nodePath) => {
+        lifecycle = buildLifecycle(nodePath);
+        return lifecycle;
+      },
+      createWindow,
+      showFailure,
+      // Keluar membebaskan kunci satu-instance. Tanpa ini, double-click
+      // berikutnya ditolak oleh instance yang sudah tidak berguna.
+      exit: (code) => app.exit(code),
+      log,
+    });
+    await startup.run();
   });
 }
 
