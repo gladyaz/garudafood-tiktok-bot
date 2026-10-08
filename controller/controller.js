@@ -30,6 +30,8 @@ const { translate } = require("./errors");
 const { validateMappings } = require("./mapping-validator");
 const { memoThunk } = require("./lazy");
 const { createProfileOwnership, OWNER } = require("./profile-owner");
+// Jejak baris mentah anak. MURNI dan OPSIONAL — lihat controller/child-trace.js.
+const { createChildTracer, traceEnabled } = require("./child-trace");
 const { createRunAuthority } = require("./run-authority");
 const { createLoginFlow } = require("./login");
 const {
@@ -118,6 +120,9 @@ function createController({
   //
   // Kosong di jalur manual, dan di situ seluruh perilakunya seperti sebelum P5.
   paths = null,
+  // Environment untuk membaca saklar diagnostik. Di-inject hanya oleh tes;
+  // produksi memakai process.env.
+  env = process.env,
   // P4: fungsi browser untuk alur login. Di-inject; tanpa ini login melaporkan
   // dirinya tidak terkonfigurasi dan TIDAK membuka apa pun.
   loginDeps = null,
@@ -179,6 +184,32 @@ function createController({
     }
   }
 
+  // Penulis jejak baris mentah anak. MATI kecuali diminta lewat environment.
+  //
+  // Tujuannya satu: sesudah sebuah run LIVE, rantai MATCH -> QUEUE -> PLAY ->
+  // AUTOPIN_REQUEST -> konfirmasi (after=/via=) -> AUTOCOMMENT -> rekonsiliasi
+  // -> PLAYBACK_END bisa dibaca kembali. Tanpa ini, activity feed membuang
+  // baris yang tidak dikenalinya dan membuang juga field state=/via=.
+  //
+  // Tulisnya ke stdout Controller, BUKAN ke berkas baru: dari sana aplikasi
+  // desktop sudah menuliskannya ke log dukungan yang berotasi (5 MB x 3) dan
+  // tersunting. Satu sink, satu kebijakan rotasi, satu redactor — bukan salinan
+  // kedua yang nanti menyimpang.
+  const childTraceOn = traceEnabled(env);
+  const traceChildLine = createChildTracer({
+    enabled: childTraceOn,
+    write: (text) => console.log(text),
+  });
+
+  // Diumumkan SEKALI saat Controller dibangun, dan hanya kalau menyala.
+  //
+  // Gunanya bukan kelengkapan log: jejak yang diminta tapi diam-diam MATI
+  // (variabel tidak sampai ke proses anak, nilai salah ketik) baru terlihat
+  // SESUDAH satu run LIVE selesai — yaitu saat buktinya sudah hilang dan
+  // LIVE-nya harus diulang. Satu baris di muka mengubahnya menjadi sesuatu yang
+  // bisa diperiksa SEBELUM menekan START BOT.
+  if (childTraceOn) log("CHILD_TRACE", { enabled: true, note: "raw bot/service lines -> support log" });
+
   const pm = createProcessManager({
     cwd,
     spawn,
@@ -189,9 +220,17 @@ function createController({
     sleep,
     killAutomationChrome,
     orphanSweeper,
-    onLine: ({ line, at }) => {
+    onLine: ({ role, line, at }) => {
+      // Jalur yang sudah ada TIDAK berubah sedikit pun: activity feed tetap
+      // menerima baris yang sama, lebih dulu, dan tetap yang menentukan
+      // kesiapan bot.
       const ev = activity.ingest({ line, at: at ? new Date(at).toISOString() : undefined });
       if (ev && BOT_READY_TYPES.includes(ev.type)) noteBotReady();
+
+      // Dan HANYA kalau jejak diminta: baris mentah diteruskan ke stdout
+      // Controller, dari mana aplikasi desktop menuliskannya ke log dukungan
+      // yang sudah berotasi dan tersunting. Lihat traceChildLine().
+      traceChildLine(role, line);
     },
     onExit: ({ role, code, signal, expected }) => {
       if (expected) return; // kematian yang kita minta; bukan kejadian.

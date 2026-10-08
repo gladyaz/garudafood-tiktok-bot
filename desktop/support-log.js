@@ -78,6 +78,29 @@ const REDACTIONS = Object.freeze([
   },
   // token=…   access_token=…   apiKey=…   secret=…
   { re: /\b([a-z_]*token|api[_-]?key|secret)("?\s*[:=]\s*)("?)[^\s",}]+\3/gi, to: '$1$2"<redacted>"' },
+
+  // ---------------------------------------------------------------------------
+  // IDENTITAS PENONTON
+  //
+  // Dibutuhkan sejak jejak baris anak ada (controller/child-trace.js). Baris
+  // `[MATCH] scene=PAX-1 user=<nama> via=<trigger>` memuat nama penonton, dan
+  // log ini DIKIRIMKAN customer saat melaporkan masalah. Nama orang lain tidak
+  // boleh ikut terkirim; yang dibutuhkan audit adalah `via=` (trigger mana yang
+  // cocok), bukan siapa yang mengetiknya.
+  //
+  // Nilainya dimakan sampai `key=` BERIKUTNYA atau akhir baris, bukan sampai
+  // spasi pertama. Itu disengaja: nama penonton hampir selalu MEMUAT SPASI, dan
+  // pola `user=(\S+)` hanya akan menyunting kata pertama lalu membiarkan sisanya
+  // tertulis — penyuntingan yang terlihat berhasil padahal bocor.
+  {
+    re: /\b(user|nickname|uniqueId|displayName|requesterNickname)=.*?(?=\s+[a-zA-Z][a-zA-Z0-9_]*=|$)/g,
+    to: "$1=<redacted>",
+  },
+
+  // Isi komentar penonton. `[TIKTOK_CHAT]` sudah DITOLAK oleh allowlist jejak,
+  // jadi ini lapis kedua — untuk kalau suatu saat ada baris lain yang membawa
+  // `comment="..."` dan lolos ke sini.
+  { re: /\bcomment="(?:[^"\\]|\\.)*"/g, to: 'comment="<redacted>"' },
 ]);
 
 function redactLine(line) {
