@@ -203,3 +203,148 @@ test("npm run desktop menjalankan Electron dengan shell-nya", () => {
   const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8"));
   assert.equal(pkg.scripts.desktop, "electron desktop/main.js");
 });
+
+// --- REGRESI: Controller harus dijalankan sebagai NODE, bukan sebagai Electron --
+//
+// Ditemukan saat `npm run desktop` dijalankan pertama kali pada 2026-10-08, dan
+// TIDAK tertangkap tes mana pun sebelum itu.
+//
+// Di dalam Electron, process.execPath adalah electron.exe — bukan node. Jadi
+// perintah `execPath controller/index.js` diartikan Electron sebagai "buka
+// aplikasi di direktori itu", bukan "jalankan skrip Node ini". Controller tidak
+// pernah menyala, health check kehabisan waktu, dan customer hanya melihat
+// "AI LIVE HOST could not start." tanpa petunjuk apa pun.
+//
+// Harness lifecycle tidak bisa menangkap ini: ia memakai pegangan child PALSU,
+// jadi tidak ada binary yang sungguhan dijalankan. Yang bisa menangkapnya adalah
+// memeriksa environment yang BENAR-BENAR dipakai spawn.
+
+test("REGRESI: child Controller mendapat ELECTRON_RUN_AS_NODE", () => {
+  const { spawnControllerChild } = require("../desktop/controller-child");
+
+  let captured = null;
+  // spawn palsu: tidak ada proses yang benar-benar dijalankan, tapi argumen dan
+  // environment-nya diperiksa apa adanya.
+  const fakeSpawn = (cmd, argv, opts) => {
+    captured = { cmd, argv, opts };
+    const { EventEmitter } = require("node:events");
+    const ch = new EventEmitter();
+    ch.pid = 1234;
+    ch.stdout = new EventEmitter();
+    ch.stdout.setEncoding = () => {};
+    ch.stderr = new EventEmitter();
+    ch.stderr.setEncoding = () => {};
+    ch.stdin = { writable: true, write: () => {} };
+    ch.kill = () => {};
+    return ch;
+  };
+
+  // Modul memakai spawn dari node:child_process secara langsung, jadi ia di-patch
+  // sementara — satu-satunya cara memeriksa pemanggilan sebenarnya tanpa
+  // menjalankan proses apa pun.
+  const cp = require("node:child_process");
+  const original = cp.spawn;
+  cp.spawn = fakeSpawn;
+  try {
+    // Dimuat ulang supaya ia mengambil spawn yang sudah dipatch.
+    delete require.cache[require.resolve("../desktop/controller-child")];
+    const { spawnControllerChild: fresh } = require("../desktop/controller-child");
+    fresh({ cwd: "/fake", nodePath: "/fake/electron.exe", port: 4782 });
+  } finally {
+    cp.spawn = original;
+    delete require.cache[require.resolve("../desktop/controller-child")];
+  }
+
+  assert.ok(captured, "spawn harus dipanggil");
+  assert.equal(captured.opts.env.ELECTRON_RUN_AS_NODE, "1", "tanpa ini Controller tidak akan pernah menyala di bawah Electron");
+  // Dan argumen wajibnya tetap ada.
+  assert.ok(captured.argv.some((a) => String(a).includes("controller")), "menjalankan controller/index.js");
+  assert.ok(captured.argv.includes("--port=4782"));
+  assert.ok(captured.argv.includes("--parent-pipe"), "kanal shutdown induk-anak");
+  // stdin harus pipe: itulah kanal permintaan berhenti.
+  assert.deepEqual(captured.opts.stdio, ["pipe", "pipe", "pipe"]);
+});
+
+test("REGRESI: environment induk diteruskan, tidak ditimpa seluruhnya", () => {
+  // PATH dan SystemRoot tetap dibutuhkan untuk menjalankan binary di Windows.
+  const src = stripComments(fs.readFileSync(path.join(DESKTOP, "controller-child.js"), "utf8"));
+  assert.match(src, /Object\.assign\(\{\}, env, \{ ELECTRON_RUN_AS_NODE: "1" \}\)/);
+});
+
+// --- REGRESI: anak Controller WAJIB node.exe, bukan electron.exe --------------
+//
+// Lapisan kedua dari bug yang sama, dan yang lebih berbahaya.
+//
+// Kalau Controller sendiri berjalan sebagai electron.exe (karena
+// ELECTRON_RUN_AS_NODE), maka process.execPath DI DALAMNYA juga electron.exe — dan
+// controller/process-manager.js memakai itu untuk menyalakan bot dan service.
+//
+// Akibatnya bot menjadi electron.exe, dan SELURUH perlindungan proses yatim
+// berhenti menemukannya: scripts/stop-all.ps1 dan penyapu di controller/index.js
+// keduanya mencari Name='node.exe'. Itu mengulang insiden LIVE 2026-10-05 dengan
+// bentuk yang persis sama — pemeriksaan tetap hijau, dan yang disembunyikannya
+// tetap bot yang hidup di akun sungguhan.
+
+test("REGRESI: desktop meneruskan path Node sungguhan untuk anak Controller", () => {
+  const src = stripComments(fs.readFileSync(path.join(DESKTOP, "controller-child.js"), "utf8"));
+  assert.match(src, /nodePathForChildren/);
+  assert.match(src, /--node-path=/);
+});
+
+test("REGRESI: Controller menerima --node-path dan memakainya", () => {
+  const { parseArgs } = require("../controller/index.js");
+  const parsed = parseArgs(["--port=4782", "--parent-pipe", "--node-path=C:/Program Files/nodejs/node.exe"]);
+  assert.equal(parsed.nodePath, "C:/Program Files/nodejs/node.exe");
+
+  // Jalur manual tidak menyetelnya, dan di situ process.execPath memang benar.
+  assert.equal(parseArgs([]).nodePath, null);
+
+  const idx = stripComments(fs.readFileSync(path.resolve(__dirname, "..", "controller", "index.js"), "utf8"));
+  assert.match(idx, /nodePath \? \{ nodePath \} : \{\}/, "diteruskan ke createController");
+});
+
+test("REGRESI: pencarian Node mengenali electron dan FAIL-CLOSED", () => {
+  const { resolveNodePath, looksLikeElectron } = require("../desktop/node-path");
+
+  assert.equal(looksLikeElectron("C:/x/electron.exe"), true);
+  assert.equal(looksLikeElectron("/usr/bin/electron"), true);
+  assert.equal(looksLikeElectron("C:/Program Files/nodejs/node.exe"), false);
+
+  // Dijalankan dengan node biasa: execPath sudah benar.
+  const underNode = resolveNodePath({ execPath: "C:/Program Files/nodejs/node.exe" });
+  assert.equal(underNode.ok, true);
+  assert.equal(underNode.from, "execPath");
+
+  // Dijalankan di bawah Electron tanpa Node di PATH: DITOLAK, tidak jatuh kembali
+  // ke electron.exe. Controller yang menyala tapi tidak bisa menyalakan bot-nya
+  // adalah keadaan yang hanya terlihat saat customer menekan START BOT.
+  const noNode = resolveNodePath({ execPath: "C:/x/electron.exe", env: {} });
+  assert.equal(noNode.ok, false);
+  assert.equal(noNode.reason, "node-not-found");
+  assert.equal("nodePath" in noNode, false, "tidak boleh mengembalikan path apa pun");
+});
+
+test("REGRESI: aplikasi TIDAK menyala kalau Node tidak ditemukan", () => {
+  assert.match(MAIN, /resolveNodePath\(\)/);
+  assert.match(MAIN, /if \(!node\.ok\)/);
+  assert.match(MAIN, /Node\.js was not found/);
+  // Dan pencariannya terjadi SEBELUM lifecycle dibangun.
+  //
+  // Dibandingkan dengan PEMANGGILANNYA, bukan dengan `buildLifecycle(` begitu saja:
+  // yang terakhir juga cocok dengan deklarasi fungsinya di bagian atas berkas, dan
+  // perbandingannya akan selalu salah arah.
+  assert.ok(
+    MAIN.indexOf("resolveNodePath()") < MAIN.indexOf("buildLifecycle(node.nodePath)"),
+    "Node harus dicari sebelum Controller dinyalakan"
+  );
+});
+
+test("REGRESI: perlindungan yatim tetap mencari node.exe (jadi anaknya harus node.exe)", () => {
+  // Kontrak yang mengikat kedua sisi. Kalau suatu saat anak-anaknya diizinkan
+  // menjadi electron.exe, tes ini mengingatkan bahwa pola pencariannya harus
+  // berubah juga — dan itu keputusan besar, bukan perubahan sambil lalu.
+  const stopAll = fs.readFileSync(path.resolve(__dirname, "..", "scripts", "stop-all.ps1"), "utf8");
+  assert.match(stopAll, /Name='node\.exe'/);
+  const idx = stripComments(fs.readFileSync(path.resolve(__dirname, "..", "controller", "index.js"), "utf8"));
+  assert.match(idx, /Name='node\.exe'/);
+});

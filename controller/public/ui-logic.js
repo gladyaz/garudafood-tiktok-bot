@@ -389,6 +389,12 @@
     // pertama supaya tombolnya tidak pernah mengundang klik yang pasti gagal.
     var loginActive = !!(status.login && status.login.active);
 
+    // Config belum pernah disimpan: Start PASTI gagal di preflight. Tombol yang
+    // mengundang klik yang sudah pasti gagal membuat orang berhenti membaca
+    // pesannya — dan pesan preflight-lah yang nanti dibutuhkan saat kegagalannya
+    // benar-benar penting.
+    var noConfig = !!(status.config && status.config.present === false);
+
     var s = status.automation;
     var stopped = s === STATES.STOPPED;
     var running = s === STATES.RUNNING || s === STATES.DEGRADED;
@@ -403,7 +409,7 @@
     var editingEnabled = !busy && (stopped || errored);
 
     return {
-      startEnabled: !busy && !loginActive && (stopped || errored) && known,
+      startEnabled: !busy && !loginActive && !noConfig && (stopped || errored) && known,
       stopEnabled: !busy && (running || transitioning || errored),
       editingEnabled: editingEnabled,
       refreshEnabled: !busy && !loginActive,
@@ -411,13 +417,14 @@
       // berjalan. P2 menolaknya di server; UI tidak boleh terus memintanya.
       // Discovery produk juga memakai profil itu.
       discoveryAllowed: (stopped || errored) && !loginActive,
-      startReason: startBlockedReason({ busy: busy, state: s, known: known, loginActive: loginActive }),
+      startReason: startBlockedReason({ busy: busy, state: s, known: known, loginActive: loginActive, noConfig: noConfig }),
     };
   }
 
   function startBlockedReason(x) {
     if (x.busy) return "Working…";
     if (x.loginActive) return "Finish or cancel the TikTok sign-in first.";
+    if (x.noConfig) return "Add your mappings and press Save Changes first.";
     if (!x.known) return "Automation state is unknown.";
     if (x.state === STATES.RUNNING || x.state === STATES.DEGRADED) return "Automation is already running.";
     if (x.state === STATES.STARTING || x.state === STATES.PREFLIGHT) return "Automation is already starting.";

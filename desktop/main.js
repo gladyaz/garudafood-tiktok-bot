@@ -30,6 +30,7 @@ const { app, BrowserWindow, dialog, shell } = require("electron");
 
 const { createDesktopLifecycle } = require("./lifecycle");
 const { spawnControllerChild, createReadinessProbe } = require("./controller-child");
+const { resolveNodePath } = require("./node-path");
 
 const ROOT = path.resolve(__dirname, "..");
 const PORT = 4782;
@@ -63,13 +64,16 @@ async function api(pathname, method = "GET") {
   }
 }
 
-function buildLifecycle() {
+function buildLifecycle(nodeForChildren) {
   const probe = createReadinessProbe({ port: PORT });
   return createDesktopLifecycle({
     spawnController: () =>
       spawnControllerChild({
         cwd: ROOT,
         port: PORT,
+        // Bot dan service WAJIB node.exe, bukan electron.exe: seluruh
+        // perlindungan proses yatim mencari Name='node.exe'. Lihat node-path.js.
+        nodePathForChildren: nodeForChildren,
         // Argumen yang mengizinkan aksi nyata TIDAK diteruskan dari sini.
         // Otoritasnya per-run dan diberikan Controller sendiri saat START BOT
         // lolos preflight (controller/run-authority.js).
@@ -216,7 +220,22 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    lifecycle = buildLifecycle();
+    // Node sungguhan dicari LEBIH DULU. Kalau tidak ada, aplikasi TIDAK menyala:
+    // Controller yang berjalan tanpa bisa menyalakan bot-nya adalah aplikasi yang
+    // terlihat sehat sampai customer menekan START BOT.
+    const node = resolveNodePath();
+    if (!node.ok) {
+      log("NODE_NOT_FOUND", { reason: node.reason });
+      dialog.showErrorBox(
+        "AI LIVE HOST could not start.",
+        "Node.js was not found on this computer. Install Node.js, then open AI LIVE HOST again."
+      );
+      app.exit(1);
+      return;
+    }
+    log("NODE_RESOLVED", { from: node.from });
+
+    lifecycle = buildLifecycle(node.nodePath);
     const started = await lifecycle.start();
 
     if (!started.ok) {

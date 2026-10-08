@@ -55,6 +55,19 @@ function parseArgs(argv) {
     // Induk (aplikasi desktop) memakai stdin untuk meminta berhenti. Jalur manual
     // dari terminal TIDAK menyetel ini, jadi perilakunya tidak berubah.
     parentPipe: argv.includes("--parent-pipe"),
+    // Path Node untuk menyalakan bot dan service.
+    //
+    // Diisi aplikasi desktop, karena di dalam Electron process.execPath adalah
+    // electron.exe. Bot dan service WAJIB node.exe: seluruh perlindungan proses
+    // yatim (scripts/stop-all.ps1 dan penyapu di sini) mencari Name='node.exe',
+    // dan anak yang bernama lain akan tersembunyi dari semuanya.
+    //
+    // Kosong = pakai process.execPath, yang benar untuk jalur manual `node
+    // controller/index.js`.
+    nodePath: (function () {
+      const a = argv.find((x) => x.startsWith("--node-path="));
+      return a ? a.slice("--node-path=".length) : null;
+    })(),
   };
 }
 
@@ -202,13 +215,15 @@ function readPlayableScenes() {
 }
 
 async function main(argv) {
-  const { port, serviceArgs, parentPipe } = parseArgs(argv);
+  const { port, serviceArgs, parentPipe, nodePath } = parseArgs(argv);
   const onWindows = process.platform === "win32";
   const browserDeps = buildBrowserDeps();
 
   const controller = createController({
     cwd: ROOT,
     serviceArgs,
+    // null = process.execPath (jalur manual). Diisi hanya oleh aplikasi desktop.
+    ...(nodePath ? { nodePath } : {}),
     // Penyapu hanya dipasang di Windows: di platform lain ia tidak ada, dan
     // process-manager akan melaporkan dirinya tidak terkonfigurasi daripada
     // berpura-pura menyapu.

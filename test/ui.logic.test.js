@@ -683,3 +683,27 @@ test("modul bisa dimuat sebagai skrip browser maupun modul Node", () => {
   assert.equal(typeof sandbox.AiLiveUI.suggestForScene, "function");
   assert.deepEqual(sandbox.AiLiveUI.suggestForScene("PAX-4"), U.suggestForScene("PAX-4"));
 });
+
+// --- Start digerbang keberadaan config (P4) ---------------------------------
+
+test("config belum pernah disimpan: START BOT MATI", () => {
+  // Tanpa config, Start pasti gagal di preflight. Tombol yang mengundang klik yang
+  // sudah pasti gagal membuat orang berhenti membaca pesannya — dan pesan
+  // preflight-lah yang nanti dibutuhkan saat kegagalannya benar-benar penting.
+  const c = U.controlsFor({ status: { automation: "STOPPED", config: { present: false } } });
+  assert.equal(c.startEnabled, false);
+  assert.equal(c.startReason, "Add your mappings and press Save Changes first.");
+  // Tapi penyuntingan tetap hidup: justru itu yang harus dilakukan customer.
+  assert.equal(c.editingEnabled, true);
+});
+
+test("config sudah ada: START BOT hidup", () => {
+  const c = U.controlsFor({ status: { automation: "STOPPED", config: { present: true } } });
+  assert.equal(c.startEnabled, true);
+});
+
+test("status tanpa blok config sama sekali tidak mematikan Start", () => {
+  // Bentuk lama/ringkas tidak boleh membuat tombol mati tanpa sebab.
+  const c = U.controlsFor({ status: { automation: "STOPPED" } });
+  assert.equal(c.startEnabled, true);
+});

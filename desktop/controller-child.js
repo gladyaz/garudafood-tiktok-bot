@@ -17,6 +17,7 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { pidAlive } = require("../runtime/single-instance");
+const { resolveNodePath } = require("./node-path");
 
 const CONTROLLER_SCRIPT = path.join("controller", "index.js");
 
@@ -29,20 +30,43 @@ function spawnControllerChild({
   port = 4782,
   args = [],
   env = process.env,
+  // Path Node untuk anak-anak Controller (bot dan service AutoPIN).
+  nodePathForChildren = null,
   onLine = () => {},
   log = () => {},
 } = {}) {
   const file = path.join(cwd, CONTROLLER_SCRIPT);
 
+  // Path Node SUNGGUHAN diteruskan ke Controller, dan Controller memakainya untuk
+  // menyalakan bot dan service. Tanpa itu, anak-anaknya menjadi electron.exe dan
+  // scripts/stop-all.ps1 berhenti menemukannya — mengulang insiden 2026-10-05
+  // dengan bentuk yang persis sama. Lihat desktop/node-path.js.
+  const childArgs = [file, "--port=" + String(port), "--parent-pipe"];
+  if (nodePathForChildren) childArgs.push("--node-path=" + nodePathForChildren);
+
   const child = spawn(
     nodePath,
-    [file, "--port=" + String(port), "--parent-pipe"].concat(args),
+    childArgs.concat(args),
     {
       cwd,
       // stdin PIPE: itulah kanal permintaan berhenti. stdout/stderr ikut
       // ditangkap supaya kegagalan start bisa dilaporkan, bukan hilang.
       stdio: ["pipe", "pipe", "pipe"],
-      env,
+      // ELECTRON_RUN_AS_NODE membuat binary Electron berperilaku sebagai Node biasa.
+      //
+      // WAJIB, dan ini bukan kehati-hatian teoretis. Di dalam Electron,
+      // process.execPath adalah electron.exe — BUKAN node. Tanpa variabel ini,
+      // perintahnya menjadi `electron.exe controller/index.js`, yang diartikan
+      // Electron sebagai "buka aplikasi di direktori itu", bukan "jalankan skrip
+      // Node ini". Controller tidak pernah menyala, health check kehabisan waktu,
+      // dan aplikasi hanya menampilkan "could not start" tanpa petunjuk apa pun.
+      //
+      // Terjadi sungguhan pada 2026-10-08: tes lolos karena harness-nya dijalankan
+      // dengan `node` (di situ execPath memang node), lalu `npm run desktop`
+      // gagal di percobaan pertama.
+      //
+      // Aman di kedua arah: Node biasa mengabaikan variabel yang tidak dikenalnya.
+      env: Object.assign({}, env, { ELECTRON_RUN_AS_NODE: "1" }),
       windowsHide: true,
     }
   );

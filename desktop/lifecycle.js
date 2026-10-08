@@ -69,6 +69,10 @@ function createDesktopLifecycle({
   timeouts = {},
   now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  // Tag log di sini TIDAK memuat awalan "DESKTOP_": pemanggilnya yang
+  // menambahkannya. Sebelum ini keduanya menambahkan, dan keluarannya menjadi
+  // [DESKTOP_DESKTOP_STOPPING] — log adalah alat utama operator di repo ini,
+  // jadi ia tidak boleh terbaca seperti kesalahan ketik.
   log = () => {},
 } = {}) {
   const budget = Object.assign({}, DEFAULT_TIMEOUTS, timeouts);
@@ -180,7 +184,7 @@ function createDesktopLifecycle({
     inFlightStop = (async () => {
       try {
         state = STATE.STOPPING;
-        log("DESKTOP_STOPPING", {});
+        log("STOPPING", {});
 
         // 1. Automation dulu. Inilah tahap yang kalau dilewati akan meninggalkan
         //    bot dan service hidup tanpa induk, masih memegang profil Chrome,
@@ -199,7 +203,7 @@ function createDesktopLifecycle({
         state = STATE.STOPPED;
         if (!clean) {
           lastError = "shutdown-incomplete";
-          log("DESKTOP_SHUTDOWN_INCOMPLETE", {
+          log("SHUTDOWN_INCOMPLETE", {
             automation: stopped.ok ? "ok" : stopped.code,
             controller: gone.ok ? "ok" : gone.code,
             remaining: swept.remaining || 0,
@@ -212,7 +216,7 @@ function createDesktopLifecycle({
             remaining: swept.remaining || 0,
           };
         }
-        log("DESKTOP_STOPPED", {});
+        log("STOPPED", {});
         return { ok: true };
       } finally {
         inFlightStop = null;
