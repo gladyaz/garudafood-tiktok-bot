@@ -18,6 +18,9 @@
 // dioper dari index.js. Menerapkannya = mengubah core, dan core sedang frozen.
 
 const fsDefault = require("node:fs");
+// autopin/config.js MURNI (satu-satunya require di dalamnya adalah node:path),
+// jadi memuatnya di proses Controller tidak menyeret Puppeteer ke mana pun.
+const { loadConfig: autopinConfig } = require("../autopin/config");
 
 const CONFIG_VERSION = 1;
 
@@ -355,6 +358,27 @@ function toEnv(config, { base = {} } = {}) {
   return env;
 }
 
+// Config customer -> bentuk config yang dipahami autopin/browser.js dan
+// autopin/products.js (profileDir yang sudah diresolusi, consoleUrl, chromePath,
+// batas waktu navigasi, dan seterusnya).
+//
+// DIKOMPOSISIKAN dari dua pemeta yang sudah ada, bukan ditulis ulang:
+//
+//   toEnv(config)            customer config -> environment
+//   autopinConfig(env)       environment     -> config autopin
+//
+// Kenapa penting: percobaan pertama di P2 meneruskan config CUSTOMER langsung ke
+// launchBrowser(). Bentuknya berbeda — launchBrowser membaca config.profileDir
+// sementara customer config menyimpannya di config.settings.profileDir — jadi
+// profileDir-nya undefined dan ensurePrivateDir() langsung melempar. Tesnya tidak
+// menangkap itu karena fake-nya mengabaikan argumennya.
+//
+// Dengan dikomposisikan, satu-satunya sumber bentuk tetap autopin/config.js. Kalau
+// ia menambah field, jalur ini ikut mendapatkannya tanpa ada yang perlu ingat.
+function toAutopinConfig(config, { base = {} } = {}) {
+  return autopinConfig(toEnv(config, { base }));
+}
+
 // Field yang tersimpan di config tapi belum sampai ke core.
 //
 // Di P1 daftar ini berisi mappings[].triggers dan mappings[].reply. Sejak P2
@@ -401,6 +425,7 @@ module.exports = {
   validateConfig,
   defaultConfig,
   toEnv,
+  toAutopinConfig,
   unmappedFields,
   redactConfig,
   mergeSecrets,

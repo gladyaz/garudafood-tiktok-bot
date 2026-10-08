@@ -31,6 +31,17 @@
           <span id="readiness-hint" class="hint"></span>
         </div>
         <dl id="readiness" class="readiness"></dl>
+
+        <!-- Login TikTok. Password TIDAK PERNAH diminta di sini: aplikasi hanya
+             membuka jendela browser, dan customer login sendiri di dalamnya. -->
+        <div class="login-row">
+          <div class="login-actions">
+            <button id="login-btn" type="button" class="btn btn-secondary">LOGIN TIKTOK</button>
+            <button id="login-check-btn" type="button" class="btn btn-primary" hidden>CHECK LOGIN</button>
+            <button id="login-cancel-btn" type="button" class="btn btn-secondary" hidden>CANCEL</button>
+          </div>
+          <p id="login-hint" class="hint" aria-live="polite"></p>
+        </div>
       </section>
 
       <!-- Panduan pertama kali, hanya saat belum ada config -->

@@ -241,6 +241,10 @@
       });
     }
 
+    // Akun TikTok: keadaan login, terpisah dari "TikTok terhubung".
+    var lv = loginView(data);
+    rows.push({ label: "TikTok Account", value: lv.label, tone: lv.tone });
+
     // Automation
     rows.push({ label: "Automation", value: automationLabel(status), tone: automationTone(status) });
 
@@ -287,6 +291,67 @@
     }
   }
 
+
+  // ---------------------------------------------------------------------------
+  // Login TikTok
+  // ---------------------------------------------------------------------------
+
+  // Satu tempat yang memutuskan bagaimana bagian "TikTok Account" tampil.
+  //
+  // Tiga keadaan, dan tombolnya berbeda di tiap keadaan. `identity` yang
+  // ditampilkan adalah nama akun yang TERBUKTI dibaca dari halaman — bukan nilai
+  // yang ditulis customer di config, karena yang kedua hanya harapan.
+  function loginView(view) {
+    var status = (view && view.status) || null;
+    var login = status && status.login ? status.login : null;
+    var tiktok = (view && view.tiktok) || null;
+    var busy = !!(view && view.busy);
+    var automation = status ? status.automation : null;
+    var stopped = automation === STATES.STOPPED || automation === STATES.ERROR;
+
+    if (!status) {
+      return { state: "unknown", label: "Checking…", tone: TONE.NEUTRAL, canLogin: false, canCheck: false, canCancel: false, hint: "" };
+    }
+
+    if (login && login.active) {
+      return {
+        state: "waiting",
+        label: "Waiting for login…",
+        tone: TONE.ATTENTION,
+        canLogin: false,
+        canCheck: !busy,
+        canCancel: !busy,
+        hint: "Complete the TikTok login in the browser window, then press Check Login.",
+      };
+    }
+
+    // Identitas yang terbukti: dari login yang berhasil, atau dari discovery yang
+    // berhasil membaca halaman dashboard.
+    var identity = (login && login.identity) || (tiktok && tiktok.ok && tiktok.identity) || null;
+    if (identity) {
+      return {
+        state: "connected",
+        label: "Connected as " + identity,
+        tone: TONE.READY,
+        canLogin: stopped && !busy,
+        canCheck: false,
+        canCancel: false,
+        hint: "",
+      };
+    }
+
+    return {
+      state: "signed-out",
+      label: "Not signed in",
+      tone: TONE.ATTENTION,
+      // Login hanya saat berhenti: service memegang profil Chrome saat berjalan.
+      canLogin: stopped && !busy,
+      canCheck: false,
+      canCancel: false,
+      hint: stopped ? "" : "Stop the automation first.",
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Kendali tombol
   // ---------------------------------------------------------------------------
@@ -319,6 +384,11 @@
       };
     }
 
+    // Jendela login terbuka memegang profil Chrome yang dibutuhkan service, jadi
+    // selama itu Start TIDAK boleh hidup. Server juga menolaknya; ini lapis
+    // pertama supaya tombolnya tidak pernah mengundang klik yang pasti gagal.
+    var loginActive = !!(status.login && status.login.active);
+
     var s = status.automation;
     var stopped = s === STATES.STOPPED;
     var running = s === STATES.RUNNING || s === STATES.DEGRADED;
@@ -333,19 +403,21 @@
     var editingEnabled = !busy && (stopped || errored);
 
     return {
-      startEnabled: !busy && (stopped || errored) && known,
+      startEnabled: !busy && !loginActive && (stopped || errored) && known,
       stopEnabled: !busy && (running || transitioning || errored),
       editingEnabled: editingEnabled,
-      refreshEnabled: !busy,
+      refreshEnabled: !busy && !loginActive,
       // Discovery produk memakai profil Chrome yang dipegang service saat
       // berjalan. P2 menolaknya di server; UI tidak boleh terus memintanya.
-      discoveryAllowed: stopped || errored,
-      startReason: startBlockedReason({ busy: busy, state: s, known: known }),
+      // Discovery produk juga memakai profil itu.
+      discoveryAllowed: (stopped || errored) && !loginActive,
+      startReason: startBlockedReason({ busy: busy, state: s, known: known, loginActive: loginActive }),
     };
   }
 
   function startBlockedReason(x) {
     if (x.busy) return "Working…";
+    if (x.loginActive) return "Finish or cancel the TikTok sign-in first.";
     if (!x.known) return "Automation state is unknown.";
     if (x.state === STATES.RUNNING || x.state === STATES.DEGRADED) return "Automation is already running.";
     if (x.state === STATES.STARTING || x.state === STATES.PREFLIGHT) return "Automation is already starting.";
@@ -472,6 +544,8 @@
       case "TIKTOK_DISCONNECTED": return "Disconnected from TikTok LIVE";
       case "BOT_CRASHED": return "The bot stopped unexpectedly";
       case "SERVICE_CRASHED": return "The pin service stopped unexpectedly";
+      case "LOGIN_WAITING": return "Waiting for TikTok login";
+      case "LOGIN_OK": return "Signed in to TikTok";
       case "STATE": return e.to ? "Status: " + e.to : "Status changed";
       default: return e.message ? String(e.message) : String(e.type || "");
     }
@@ -584,6 +658,7 @@
     automationLabel: automationLabel,
     automationTone: automationTone,
     controlsFor: controlsFor,
+    loginView: loginView,
     mappingIssues: mappingIssues,
     resolvedTitles: resolvedTitles,
     blankMapping: blankMapping,

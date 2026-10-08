@@ -103,6 +103,30 @@ const CATALOG = Object.freeze({
   "runtime-config-generation-mismatch": "The bot and the pin service are using different settings.",
   "restart-required": "Your changes are saved. Restart the automation to use them.",
 
+  // --- P4: login TikTok dan kepemilikan profil ---
+  "login-not-configured": "TikTok sign-in is not available in this build.",
+  "login-already-in-progress": "A TikTok sign-in window is already open.",
+  "login-not-in-progress": "No TikTok sign-in is in progress.",
+  "login-not-finished": "Sign-in is not finished yet. Complete it in the browser window, then check again.",
+  "login-window-closed": "The sign-in window was closed before sign-in finished.",
+  "login-browser-failed": "The sign-in window could not be opened.",
+  "login-in-progress": "Finish or cancel the TikTok sign-in first.",
+  "login-unavailable-while-running": "Stop the automation first. You can only sign in while it is stopped.",
+  "profile-busy-login": "A TikTok sign-in window is open. Finish or cancel it first.",
+  "profile-busy-automation": "The automation is using the browser. Stop it first.",
+  "profile-busy-external": "Another Chrome window is using the browser profile. Close it and try again.",
+  "not-profile-owner": "The browser profile is in use by something else.",
+  "unknown-profile-owner": "Internal problem while reserving the browser.",
+  "discovery-unavailable-during-login": "Finish or cancel the TikTok sign-in first, then refresh.",
+
+  // --- P4: otoritas run ---
+  "run-already-armed": "A run is already authorized. Stop the automation first.",
+
+  // --- P4: desktop ---
+  "controller-start-failed": "AI LIVE HOST could not start.",
+  "controller-not-ready": "AI LIVE HOST is still starting.",
+  "shutdown-requires-stopped": "Stop the automation before shutting down.",
+
   // --- AutoComment ---
   "real-comment-send-disabled": "Automatic chat replies are turned off.",
   "pin-state-unreadable": "The pin could not be confirmed, so no reply was sent.",

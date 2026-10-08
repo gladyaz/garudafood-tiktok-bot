@@ -28,6 +28,9 @@ const { createPreflight, firstFailure } = require("./preflight");
 const { createActivityFeed } = require("./activity");
 const { translate } = require("./errors");
 const { validateMappings } = require("./mapping-validator");
+const { createProfileOwnership, OWNER } = require("./profile-owner");
+const { createRunAuthority } = require("./run-authority");
+const { createLoginFlow } = require("./login");
 const {
   buildRuntimeConfig,
   writeRuntimeConfig,
@@ -107,6 +110,9 @@ function createController({
   playableScenes = null,
   // Direktori artefak config runtime. Satu berkas per run Controller.
   runtimeDir = null,
+  // P4: fungsi browser untuk alur login. Di-inject; tanpa ini login melaporkan
+  // dirinya tidak terkonfigurasi dan TIDAK membuka apa pun.
+  loginDeps = null,
 } = {}) {
   const budget = Object.assign({}, DEFAULT_TIMEOUTS, timeouts);
   const fsImpl = fs || fsDefault;
@@ -138,6 +144,18 @@ function createController({
   });
 
   const configManager = createConfigManager({ file: configPath, fs });
+
+  // --- P4: kepemilikan profil, otoritas run, dan alur login -----------------
+  //
+  // Tiga hal yang semuanya hidup HANYA di memori proses ini. Tidak satu pun
+  // disimpan ke disk: profil siapa yang memegang, apakah run ini berwenang
+  // melakukan aksi nyata, dan apakah ada jendela login yang terbuka. Semuanya
+  // kembali ke keadaan aman begitu Controller restart.
+  const ownership = createProfileOwnership({ log, now });
+  const runAuthority = createRunAuthority({ log, now });
+  const loginFlow = createLoginFlow(
+    Object.assign({ ownership, log, now }, loginDeps || {})
+  );
 
   // Readiness bot dideteksi dari baris log-nya, bukan dengan bertanya ke TikTok.
   // Satu-satunya pihak yang tahu bot sudah tersambung adalah bot itu sendiri.
@@ -335,6 +353,10 @@ function createController({
     sm.to(STATES.ERROR, { reason: code });
     log("START_ROLLBACK", { code });
 
+    // Izin dibatalkan LEBIH DULU. Kalau cleanup di bawah gagal separuh jalan,
+    // yang paling tidak boleh tertinggal adalah otoritas melakukan aksi nyata.
+    runAuthority.disarm("start-failed:" + code);
+
     const result = await pm.stopAll({ graceMs: stopGraceMs });
 
     const ps = pm.getProcessState();
@@ -346,6 +368,9 @@ function createController({
       // Tidak bisa dibuktikan mati. Controller TETAP di ERROR dan mengatakannya;
       // ia tidak pernah melaporkan bersih saat tidak bersih.
       log("START_ROLLBACK_INCOMPLETE", { orphans: orphans.map((o) => o.role + ":" + o.pid).join(",") });
+      // Profil SENGAJA tidak dilepas: ada proses yang masih hidup dan mungkin
+      // masih memegangnya. Melaporkannya bebas akan mengizinkan login membuka
+      // profil yang sedang dipakai.
       lastError = Object.assign(translate(code, { detail }), { orphans });
       return { ok: false, state: sm.state(), error: lastError };
     }
@@ -353,6 +378,8 @@ function createController({
     // Artefak config runtime dibuang: run ini tidak pernah jadi, jadi generasinya
     // tidak boleh tertinggal di disk untuk membingungkan run berikutnya.
     discardRuntimeArtifact();
+    // Profil dilepas: service sudah mati, jadi tidak ada lagi yang memegangnya.
+    ownership.forceRelease("rollback");
     sm.to(STATES.STOPPED, { reason: "rollback-complete" });
     log("START_ROLLBACK_DONE", { chrome: result.chrome && result.chrome.killed ? result.chrome.killed : 0 });
     lastError = translate(code, { detail });
@@ -371,6 +398,12 @@ function createController({
     }
     if (inFlightStop) {
       return { ok: false, state: sm.state(), error: translate("start-rejected-busy", { detail: "stop-in-progress" }) };
+    }
+    // Login aktif memegang profil Chrome yang dibutuhkan service. Ditolak SINKRON,
+    // sebelum await pertama, supaya tidak ada celah di mana keduanya lolos.
+    if (loginFlow.state() !== "idle") {
+      log("START_REFUSED", { code: "login-in-progress" });
+      return { ok: false, state: sm.state(), error: translate("login-in-progress") };
     }
 
     const entered = sm.to(STATES.PREFLIGHT, { reason: "start-requested" });
@@ -422,6 +455,30 @@ function createController({
       return rollback("orphans-remain", "remaining=" + (swept.remaining || "?"));
     }
 
+    // --- kepemilikan profil Chrome -----------------------------------------
+    // Service akan membuka profil ini. Diambil SEBELUM apa pun dinyalakan, supaya
+    // login tidak bisa menyelip di antara preflight dan spawn.
+    const claim = ownership.acquire(OWNER.AUTOMATION);
+    if (!claim.ok) {
+      sm.to(STATES.STOPPED, { reason: claim.reason });
+      lastError = translate(claim.reason);
+      log("START_REFUSED", { code: claim.reason });
+      return { ok: false, state: sm.state(), error: lastError };
+    }
+
+    // --- otoritas run ------------------------------------------------------
+    // Inilah titik di mana customer "menekan tombol" berubah menjadi izin nyata.
+    // Hanya di sini, hanya sesudah preflight hijau, dan hanya untuk run ini.
+    //
+    // Hak paling kecil: flag kirim chat diberikan HANYA kalau customer memang
+    // menyalakan AutoComment. Izin yang tidak dibutuhkan adalah izin yang suatu
+    // hari akan terpakai karena alasan yang salah.
+    const armed = runAuthority.arm({ realSend: config.settings.autoCommentEnabled === true });
+    if (!armed.ok) {
+      return rollback(armed.reason, "run authority");
+    }
+    log("RUN_START", { runId: armed.runId, realSend: armed.realSend });
+
     // --- snapshot config runtime -------------------------------------------
     // Dibuat SEKALI, lalu dibaca oleh KEDUA anak. Setelah titik ini, menyimpan
     // config baru tidak mengubah apa pun yang sedang berjalan: berkasnya tidak
@@ -442,7 +499,11 @@ function createController({
     env[RUNTIME_CONFIG_ENV] = artifact.file;
 
     // --- service ------------------------------------------------------------
-    const svc = pm.startService({ env, args: serviceArgs });
+    // Argumen service = argumen operator (baris perintah) + argumen otoritas run.
+    // Yang kedua hanya berisi flag kirim nyata, dan hanya saat run ini bersenjata.
+    // Bot TIDAK pernah mendapatkannya: bot tidak mengirim chat, ia memintanya.
+    const svcArgs = serviceArgs.concat(runAuthority.serviceArgs());
+    const svc = pm.startService({ env, args: svcArgs });
     if (!svc.ok) {
       return rollback(svc.code, "service spawn");
     }
@@ -542,6 +603,10 @@ function createController({
         // berikutnya tidak bisa menemukan berkas lama dan membuat generasi mana
         // yang sedang dipakai jadi pertanyaan.
         discardRuntimeArtifact();
+        // Run berakhir: otoritas aksi nyata LENYAP. Start berikutnya harus
+        // mendapatkannya lagi dari preflight yang hijau.
+        runAuthority.disarm("stopped");
+        ownership.forceRelease("stopped");
         configChangedWhileRunning = false;
         botReady = false;
         lastError = null;
@@ -582,6 +647,14 @@ function createController({
       // Config disimpan sesudah automation menyala. Perubahan tidak diterapkan
       // panas; snapshot yang sedang dipakai tetap berlaku sampai restart.
       restartRequired: configChangedWhileRunning,
+      // P4. Semuanya metadata aman:
+      //   login    apakah ada jendela login terbuka, dan identitas yang TERBUKTI
+      //   run      id acak + apakah aksi nyata bersenjata untuk run ini
+      //   profile  siapa yang memegang profil Chrome
+      // Tidak ada cookie, token, sesi, maupun path profil di sini.
+      login: loginFlow.describe(),
+      run: runAuthority.describe(),
+      profile: { owner: ownership.owner() },
     };
     if (ps.service.startedAt) out.service.startedAt = ps.service.startedAt;
     if (ps.bot.startedAt) out.bot.startedAt = ps.bot.startedAt;
@@ -616,8 +689,18 @@ function createController({
   // yang terjadi bukan error yang rapi, tapi risiko merusak sesi login yang
   // sedang dipakai service untuk memin produk sungguhan di tengah LIVE.
   function profileBusy() {
+    // Dua sumber, dan keduanya perlu. Kepemilikan eksplisit menangkap jendela
+    // login yang terbuka; proses service yang hidup menangkap sisa run yang
+    // kepemilikannya belum sempat tercatat (mis. sesudah crash).
+    if (!ownership.isFree()) return true;
     const ps = pm.getProcessState();
     return ps.service.running === true;
+  }
+
+  // Alasan yang spesifik, supaya customer tahu apa yang harus dilakukan.
+  function profileBusyReason() {
+    if (ownership.heldBy(OWNER.LOGIN)) return "discovery-unavailable-during-login";
+    return "discovery-unavailable-while-running";
   }
 
   async function discoverObsScenes() {
@@ -635,7 +718,7 @@ function createController({
 
   async function discoverTikTokStatus() {
     if (!tiktokDiscovery) return { ok: false, error: translate("discovery-not-configured") };
-    if (profileBusy()) return { ok: false, error: translate("discovery-unavailable-while-running") };
+    if (profileBusy()) return { ok: false, error: translate(profileBusyReason()) };
     const loaded = configManager.loadConfig();
     if (!loaded.ok) return { ok: false, error: translate(loaded.code) };
     const r = await tiktokDiscovery.status(loaded.config);
@@ -653,7 +736,7 @@ function createController({
 
   async function discoverTikTokProducts() {
     if (!tiktokDiscovery) return { ok: false, error: translate("discovery-not-configured") };
-    if (profileBusy()) return { ok: false, error: translate("discovery-unavailable-while-running") };
+    if (profileBusy()) return { ok: false, error: translate(profileBusyReason()) };
     const loaded = configManager.loadConfig();
     if (!loaded.ok) return { ok: false, error: translate(loaded.code) };
     const r = await tiktokDiscovery.products(loaded.config);
@@ -708,6 +791,50 @@ function createController({
     };
   }
 
+  // --- P4: alur login TikTok ------------------------------------------------
+  //
+  // Controller tidak pernah melihat kredensial. Ia hanya membuka jendela dengan
+  // profil yang benar, lalu membaca nama akun yang terlihat sesudah customer
+  // selesai login sendiri.
+
+  async function startTikTokLogin() {
+    // Login hanya saat automation BERHENTI. Saat berjalan, service memegang
+    // profil, dan memaksa membukanya bisa merusak sesi yang sedang dipakai
+    // mengklik produk sungguhan.
+    if (sm.isBusyForStart()) {
+      return { ok: false, error: translate("login-unavailable-while-running") };
+    }
+    const loaded = configManager.loadConfig();
+    if (!loaded.ok) return { ok: false, error: translate(loaded.code) };
+
+    const r = await loginFlow.start(loaded.config);
+    if (!r.ok) return { ok: false, error: translate(r.reason) };
+    activity.push({ type: "LOGIN_WAITING", message: "Waiting for TikTok login" });
+    return { ok: true, loginInProgress: true, login: loginFlow.describe() };
+  }
+
+  function tikTokLoginStatus() {
+    return { ok: true, login: loginFlow.describe() };
+  }
+
+  async function checkTikTokLogin() {
+    const loaded = configManager.loadConfig();
+    if (!loaded.ok) return { ok: false, error: translate(loaded.code) };
+
+    const r = await loginFlow.check(loaded.config);
+    if (!r.ok) return { ok: false, error: translate(r.reason), login: loginFlow.describe() };
+
+    activity.push({ type: "LOGIN_OK", message: "Signed in to TikTok" });
+    // identity adalah nama akun yang TERLIHAT di halaman — sudah publik bagi
+    // siapa pun yang menonton LIVE itu. Tidak ada cookie, token, atau sesi.
+    return { ok: true, loggedIn: true, identity: r.identity, login: loginFlow.describe() };
+  }
+
+  async function cancelTikTokLogin() {
+    const r = await loginFlow.cancel();
+    return { ok: true, cancelled: r.cancelled === true, login: loginFlow.describe() };
+  }
+
   // Dipanggil server sesudah config disimpan. Perubahan TIDAK diterapkan panas:
   // snapshot yang sedang dipakai tetap berlaku sampai restart.
   function noteConfigSaved() {
@@ -740,7 +867,13 @@ function createController({
     // dengan tag yang sama tapi isi berbeda membuat log sulit dibaca, dan log
     // adalah alat utama operator di repo ini.
     log("SHUTDOWN_CLEANUP", { state: sm.state() });
-    return stopAutomation();
+    // Jendela login yang terbuka juga milik Controller. Membiarkannya berarti
+    // meninggalkan Chrome yang memegang profil sesudah Controller mati — persis
+    // bentuk proses yatim yang P1 dibuat untuk mencegah.
+    await loginFlow.cleanup("controller-shutdown");
+    const r = await stopAutomation();
+    runAuthority.disarm("controller-shutdown");
+    return r;
   }
 
   return {
@@ -753,6 +886,14 @@ function createController({
     discoverObsScenes,
     discoverTikTokStatus,
     discoverTikTokProducts,
+    // P4
+    startTikTokLogin,
+    tikTokLoginStatus,
+    checkTikTokLogin,
+    cancelTikTokLogin,
+    runAuthority,
+    ownership,
+    __login: loginFlow,
     validateMappings: validateMappingsNow,
     noteConfigSaved,
     runtimeConfigId: () => (runtimeArtifact ? runtimeArtifact.id : null),

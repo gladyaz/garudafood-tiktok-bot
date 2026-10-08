@@ -68,13 +68,20 @@ function createTikTokDiscovery({
   collectProducts = null,
   readIdentity = null,
   checkIdentity = null,
+  // Pemeriksa "halaman yang terbuka memang dashboard produk". Fungsi yang SAMA
+  // yang dipakai autopin/service.js sebelum mengklik apa pun.
+  isExpectedConsole = null,
+  // Customer config -> bentuk config yang dipahami launchBrowser/openConsole.
+  // Wajib: meneruskan customer config apa adanya membuat profileDir undefined.
+  toBrowserConfig = null,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   log = () => {},
 } = {}) {
   function missingDeps() {
-    return [launchBrowser, getPage, openConsole, closeBrowser, collectProducts, readIdentity, checkIdentity].some(
-      (d) => typeof d !== "function"
-    );
+    return [
+      launchBrowser, getPage, openConsole, closeBrowser,
+      collectProducts, readIdentity, checkIdentity, isExpectedConsole, toBrowserConfig,
+    ].some((d) => typeof d !== "function");
   }
 
   // Satu sesi browser read-only: buka, kerjakan satu fungsi, tutup. Browser
@@ -92,14 +99,25 @@ function createTikTokDiscovery({
 
     try {
       const work = (async () => {
-        browser = await launchBrowser(config);
+        // Config DITERJEMAHKAN lebih dulu. launchBrowser membaca
+        // config.profileDir, sementara customer config menyimpannya di
+        // config.settings.profileDir — meneruskannya apa adanya membuat
+        // profileDir undefined dan ensurePrivateDir() langsung melempar.
+        const bcfg = toBrowserConfig(config);
+        browser = await launchBrowser(bcfg);
         const page = await getPage(browser);
-        const opened = await openConsole(page, config);
-        // openConsole melaporkan kalau halaman yang terbuka bukan dashboard
-        // produk — biasanya karena sesi login sudah kadaluarsa dan TikTok
-        // mengalihkan ke halaman lain.
-        if (opened && opened.ok === false) {
-          return { ok: false, reason: opened.reason === "unexpected-page" ? "tiktok-not-logged-in" : "product-dashboard-unavailable" };
+        await openConsole(page, bcfg);
+
+        // openConsole TIDAK mengembalikan { ok }: ia melempar saat navigasi gagal,
+        // dan kalau berhasil ia mengembalikan { url, title, settled, readyMs }.
+        // Jadi "benarkah ini dashboard produk" harus diperiksa dari URL halaman,
+        // dengan fungsi yang SAMA yang dipakai service sebelum mengklik.
+        //
+        // Inilah pembeda "sesi login kadaluarsa" dari "dashboard tidak terbuka":
+        // TikTok mengalihkan ke halaman lain saat belum login, dan halamannya
+        // tetap memuat dengan sukses.
+        if (!isExpectedConsole(page.url(), bcfg.consoleUrl)) {
+          return { ok: false, reason: "tiktok-not-logged-in" };
         }
         return fn(page);
       })();
@@ -120,6 +138,15 @@ function createTikTokDiscovery({
         }
       }
     }
+  }
+
+  // Bentuk hasil readIdentity() dinormalkan di SATU tempat: ia mengembalikan
+  // array string. Toleran terhadap null supaya halaman tanpa avatar tidak
+  // melempar, tapi TIDAK menebak bentuk lain — bentuk yang salah berarti
+  // identitas tidak terbaca, dan itu harus gagal, bukan dikarang.
+  async function readObserved(page) {
+    const seen = await readIdentity(page);
+    return Array.isArray(seen) ? seen.filter((x) => typeof x === "string" && x.trim() !== "") : [];
   }
 
   // Identitas yang terlihat di halaman harus LOLOS gerbang yang sama dengan
@@ -143,8 +170,10 @@ function createTikTokDiscovery({
 
   async function status(config) {
     return withPage(config, async (page) => {
-      const seen = await readIdentity(page);
-      const observed = seen && Array.isArray(seen.observed) ? seen.observed : [];
+      // readIdentity() mengembalikan ARRAY nama yang terbaca di halaman — bentuk
+      // yang sama yang diteruskan autopin/service.js ke checkIdentity(). Membaca
+      // `.observed` darinya selalu undefined, dan identitas akan SELALU gagal.
+      const observed = await readObserved(page);
       const idv = verifyIdentity(config, observed);
 
       // Katalog dibaca juga di /status, karena "LIVE sedang berjalan" tidak bisa
@@ -172,8 +201,7 @@ function createTikTokDiscovery({
 
   async function products(config) {
     return withPage(config, async (page) => {
-      const seen = await readIdentity(page);
-      const observed = seen && Array.isArray(seen.observed) ? seen.observed : [];
+      const observed = await readObserved(page);
       const idv = verifyIdentity(config, observed);
       // Identitas diperiksa SEBELUM katalog dikembalikan. Katalog dari toko yang
       // salah lebih berbahaya daripada tidak ada katalog: ia terlihat benar.

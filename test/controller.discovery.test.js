@@ -183,16 +183,24 @@ const RAW_PRODUCTS = [
 
 // Halaman palsu yang MENCATAT setiap evaluate, supaya tes bisa membuktikan tidak
 // ada fungsi pengubah yang pernah dijalankan di dalam halaman.
+const DASHBOARD_URL = "https://shop.tiktok.com/streamer/live/product/dashboard";
+
 function fakeTikTok({
   products = RAW_PRODUCTS,
   livePinButtonsOnPage = 2,
   identity = ["toko uji"],
-  openResult = { ok: true },
+  // URL halaman SESUDAH openConsole. Inilah cara produksi mengetahui sesi login
+  // masih berlaku: TikTok mengalihkan ke halaman lain kalau belum login, dan
+  // halaman itu tetap memuat dengan sukses.
+  pageUrl = DASHBOARD_URL,
   throwOn = null,
   hang = false,
 } = {}) {
   const events = [];
-  const page = { __page: true };
+  // Halaman palsu punya url(), karena itulah yang dipakai adapter untuk memeriksa
+  // "ini memang dashboard produk" — lewat fungsi isExpectedConsole yang sama
+  // dengan yang dipakai autopin/service.js.
+  const page = { __page: true, url: () => pageUrl };
   let browser = null;
 
   const deps = {
@@ -205,10 +213,12 @@ function fakeTikTok({
       events.push("getPage");
       return page;
     },
+    // Produksi mengembalikan { url, title, settled, readyMs } dan MELEMPAR saat
+    // navigasi gagal — ia tidak pernah mengembalikan { ok: false }.
     openConsole: async () => {
       events.push("openConsole");
       if (throwOn === "openConsole") throw new Error("boom");
-      return openResult;
+      return { url: pageUrl, title: "LIVE products", settled: true, readyMs: 120 };
     },
     closeBrowser: async () => {
       events.push("closeBrowser");
@@ -220,10 +230,14 @@ function fakeTikTok({
       if (hang) await new Promise(() => {});
       return { products, livePinButtonsOnPage, markers: products.length };
     },
+    // Mengembalikan ARRAY, sama seperti autopin/products.js readIdentity().
+    // Versi pertama fake ini mengembalikan { observed: [...] } — bentuk yang tidak
+    // pernah ada di produksi — sehingga adapter-nya membaca `.observed` dan
+    // identitas SELALU gagal di produksi tanpa satu pun tes jadi merah.
     readIdentity: async () => {
       events.push("readIdentity");
       if (throwOn === "readIdentity") throw new Error("boom");
-      return { observed: identity };
+      return identity;
     },
     checkIdentity: ({ expected, observed, forbidden }) => {
       events.push("checkIdentity");
@@ -242,9 +256,23 @@ function fakeTikTok({
   return { events, deps, isBrowserOpen: () => browser !== null };
 }
 
+// isExpectedConsole dan toBrowserConfig memakai implementasi PRODUKSI, bukan
+// tiruan: keduanya murni, dan justru di situ bug P2 bersembunyi.
+const { isExpectedConsole } = require("../autopin/service");
+const { toAutopinConfig } = require("../controller/config-manager");
+
 const tiktokWith = (opts, extra = {}) => {
   const f = fakeTikTok(opts);
-  return { f, d: createTikTokDiscovery({ ...f.deps, timeoutMs: 50, ...extra }) };
+  return {
+    f,
+    d: createTikTokDiscovery({
+      ...f.deps,
+      isExpectedConsole,
+      toBrowserConfig: toAutopinConfig,
+      timeoutMs: 50,
+      ...extra,
+    }),
+  };
 };
 
 test("TikTok: katalog terbaca dan dibentuk jadi objek terstruktur", async () => {
@@ -292,7 +320,7 @@ test("TikTok: HANYA fungsi baca yang dijalankan — tidak ada pin, ketik, atau u
 });
 
 test("TikTok: browser SELALU ditutup, termasuk saat gagal", async () => {
-  for (const opts of [{}, { throwOn: "collectProducts" }, { throwOn: "readIdentity" }, { openResult: { ok: false, reason: "unexpected-page" } }]) {
+  for (const opts of [{}, { throwOn: "collectProducts" }, { throwOn: "readIdentity" }, { pageUrl: "https://www.tiktok.com/login" }]) {
     const { f, d } = tiktokWith(opts);
     await d.products(goodConfig());
     assert.equal(f.isBrowserOpen(), false, "browser tertinggal pada: " + JSON.stringify(opts));
@@ -332,12 +360,12 @@ test("TikTok: expectedShop belum diisi -> ditolak, bukan dilewati", async () => 
 
 test("TikTok: halaman tak terduga -> tiktok-not-logged-in", async () => {
   // openConsole melaporkan ini saat sesi login kadaluarsa dan TikTok mengalihkan.
-  const { d } = tiktokWith({ openResult: { ok: false, reason: "unexpected-page" } });
+  const { d } = tiktokWith({ pageUrl: "https://www.tiktok.com/login" });
   assert.equal((await d.products(goodConfig())).reason, "tiktok-not-logged-in");
 });
 
 test("TikTok: dashboard tidak terbuka -> product-dashboard-unavailable", async () => {
-  const { d } = tiktokWith({ openResult: { ok: false, reason: "something-else" } });
+  const { d } = tiktokWith({ throwOn: "openConsole" });
   assert.equal((await d.products(goodConfig())).reason, "product-dashboard-unavailable");
 });
 
@@ -422,4 +450,68 @@ test("toPublicProduct: produk tanpa kontrol pin ditandai pinAvailable false", ()
 test("toPublicProduct: nomor yang bukan bilangan bulat jadi null", () => {
   assert.equal(toPublicProduct({ title: "x", number: null }).number, null);
   assert.equal(toPublicProduct({ title: "x", number: "2" }).number, null);
+});
+
+// --- KONTRAK BENTUK FUNGSI PRODUKSI -----------------------------------------
+//
+// Tes-tes di atas memakai fungsi browser palsu. Palsu itu hanya berguna kalau
+// bentuknya SAMA dengan yang asli — dan di P2 ia tidak sama, dalam tiga hal
+// sekaligus, sehingga discovery TikTok sebenarnya tidak pernah bisa bekerja di
+// produksi meskipun seluruh tesnya hijau:
+//
+//   1. readIdentity() mengembalikan ARRAY, bukan { observed: [...] }
+//   2. openConsole() MELEMPAR saat gagal dan mengembalikan { url, title, ... }
+//      saat berhasil — ia tidak pernah mengembalikan { ok: false }
+//   3. launchBrowser() membaca config.profileDir, sedangkan customer config
+//      menyimpannya di config.settings.profileDir
+//
+// Tes di bawah memeriksa bentuk aslinya langsung dari modul produksi. Kalau
+// bentuknya berubah, di sinilah yang merah lebih dulu — bukan saat LIVE.
+
+test("KONTRAK: readIdentity mengembalikan array, bukan objek ber-observed", () => {
+  // Diperiksa dari fungsi yang dieksekusi DI DALAM halaman, karena itulah yang
+  // menentukan bentuk hasilnya: readIdentity = page.evaluate(readIdentityInPage).
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require.resolve("../autopin/products.js"), "utf8");
+  const body = /function readIdentityInPage\(\)\s*\{([\s\S]*?)\n\}/.exec(src);
+  assert.ok(body, "readIdentityInPage harus bisa ditemukan");
+  assert.ok(/return \[\.\.\.new Set\(out\)\]/.test(body[1]), "harus mengembalikan array");
+  assert.ok(!/return \{/.test(body[1]), "tidak boleh mengembalikan objek");
+});
+
+test("KONTRAK: openConsole mengembalikan metadata halaman, tanpa field ok", () => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require.resolve("../autopin/browser.js"), "utf8");
+  const body = /async function openConsole\([\s\S]*?\n\}/.exec(src);
+  assert.ok(body, "openConsole harus bisa ditemukan");
+  assert.ok(/return \{ url:/.test(body[0]), "mengembalikan { url, title, settled, readyMs }");
+  assert.ok(!/\bok:\s*(true|false)/.test(body[0]), "tidak pernah mengembalikan field ok");
+  assert.ok(/throw new AutoPinError/.test(body[0]), "melempar saat navigasi gagal");
+});
+
+test("KONTRAK: launchBrowser memakai config.profileDir (bentuk autopin, bukan customer)", () => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require.resolve("../autopin/browser.js"), "utf8");
+  const body = /async function launchBrowser\([\s\S]*?\n\}/.exec(src);
+  assert.ok(/config\.profileDir/.test(body[0]), "membaca config.profileDir");
+  assert.ok(!/config\.settings/.test(body[0]), "tidak pernah membaca config.settings");
+
+  // Dan toAutopinConfig memang menyediakan bentuk itu.
+  const bcfg = toAutopinConfig(goodConfig());
+  assert.equal(typeof bcfg.profileDir, "string");
+  assert.ok(bcfg.profileDir.length > 0);
+  assert.equal(typeof bcfg.consoleUrl, "string");
+  assert.equal(typeof bcfg.navTimeoutMs, "number");
+  assert.equal("settings" in bcfg, false, "bentuk autopin, bukan customer");
+});
+
+test("KONTRAK: adapter MENOLAK jalan tanpa isExpectedConsole / toBrowserConfig", () => {
+  // Fail-closed. Keduanya wajib justru karena ketiadaannya-lah yang membuat bug
+  // P2 tidak terlihat: adapter tetap "berjalan" dan selalu melaporkan gagal.
+  const f = fakeTikTok({});
+  const d = createTikTokDiscovery({ ...f.deps, timeoutMs: 50 });
+  return d.products(goodConfig()).then((r) => {
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, "discovery-not-configured");
+  });
 });

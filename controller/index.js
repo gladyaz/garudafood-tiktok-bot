@@ -29,6 +29,7 @@ const { createController } = require("./controller");
 const { createServer, DEFAULT_PORT } = require("./server");
 const { createObsDiscovery } = require("./discovery/obs");
 const { createTikTokDiscovery } = require("./discovery/tiktok");
+const { toAutopinConfig } = require("./config-manager");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -51,6 +52,9 @@ function parseArgs(argv) {
   return {
     port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT,
     serviceArgs,
+    // Induk (aplikasi desktop) memakai stdin untuk meminta berhenti. Jalur manual
+    // dari terminal TIDAK menyetel ini, jadi perilakunya tidak berubah.
+    parentPipe: argv.includes("--parent-pipe"),
   };
 }
 
@@ -139,18 +143,23 @@ function createWindowsChromeKiller({ profileDirName = "autopin-profile" } = {}) 
 //
 // Dimuat MALAS (require di dalam fungsi) supaya Puppeteer tidak ikut dimuat ke
 // proses Controller sampai discovery benar-benar diminta.
-function buildTikTokDiscovery() {
+function buildBrowserDeps() {
   let browserMod;
   let productsMod;
   let coreMod;
+  let serviceMod;
   try {
     browserMod = require("../autopin/browser");
     productsMod = require("../autopin/products");
     coreMod = require("../autopin/core");
+    // isExpectedConsole dipinjam dari service: fungsi URL murni yang SAMA yang
+    // dipakai sebelum mengklik apa pun. Menyalinnya ke sini akan menyimpang,
+    // persis seperti salinan normalizeTitleKey di P2.
+    serviceMod = require("../autopin/service");
   } catch {
     return null;
   }
-  return createTikTokDiscovery({
+  return {
     launchBrowser: browserMod.launchBrowser,
     getPage: browserMod.getPage,
     openConsole: browserMod.openConsole,
@@ -158,8 +167,20 @@ function buildTikTokDiscovery() {
     collectProducts: productsMod.collectProducts,
     readIdentity: productsMod.readIdentity,
     checkIdentity: coreMod.checkIdentity,
-    log: (tag, fields) => console.log("[CONTROLLER_TIKTOK_" + tag + "]", JSON.stringify(fields || {})),
-  });
+    isExpectedConsole: serviceMod.isExpectedConsole,
+    // Customer config -> bentuk config yang dipahami launchBrowser/openConsole.
+    // Tanpa ini, profileDir undefined dan browser gagal dibuka.
+    toBrowserConfig: toAutopinConfig,
+  };
+}
+
+function buildTikTokDiscovery(deps) {
+  if (!deps) return null;
+  return createTikTokDiscovery(
+    Object.assign({}, deps, {
+      log: (tag, fields) => console.log("[CONTROLLER_TIKTOK_" + tag + "]", JSON.stringify(fields || {})),
+    })
+  );
 }
 
 // Scene yang punya detail pemutaran (mediaInputs/waitForMediaEnd/duration) di
@@ -181,8 +202,9 @@ function readPlayableScenes() {
 }
 
 async function main(argv) {
-  const { port, serviceArgs } = parseArgs(argv);
+  const { port, serviceArgs, parentPipe } = parseArgs(argv);
   const onWindows = process.platform === "win32";
+  const browserDeps = buildBrowserDeps();
 
   const controller = createController({
     cwd: ROOT,
@@ -194,8 +216,11 @@ async function main(argv) {
     killAutomationChrome: onWindows ? createWindowsChromeKiller() : null,
     // P2
     obsDiscovery: createObsDiscovery(),
-    tiktokDiscovery: buildTikTokDiscovery(),
+    tiktokDiscovery: buildTikTokDiscovery(browserDeps),
     playableScenes: readPlayableScenes(),
+    // Alur login memakai fungsi browser yang SAMA dengan discovery dan dengan
+    // jalur pin. Satu sesi, satu profil, satu gerbang identitas.
+    loginDeps: browserDeps,
   });
 
   const server = createServer({ controller, port });
@@ -230,6 +255,49 @@ async function main(argv) {
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  // Jalur berhenti dari INDUK (aplikasi desktop), lewat stdin.
+  //
+  // Kenapa stdin dan bukan sinyal: di Windows, child.kill("SIGTERM") memanggil
+  // TerminateProcess — handler di atas tidak pernah berjalan, dan Controller mati
+  // tanpa membereskan bot, service, maupun Chrome automation. Itu persis bentuk
+  // proses yatim yang P1 dibuat untuk mencegah.
+  //
+  // Kenapa bukan endpoint HTTP: sebuah proses yang bisa dimatikan lewat jaringan
+  // adalah permukaan serang yang tidak perlu ada, sekecil apa pun. Kepemilikan
+  // induk-anak sudah cukup, dan hanya induknya yang punya stdin ini.
+  // HANYA kalau induknya memang memintanya lewat --parent-pipe.
+  //
+  // Tanpa gerbang ini, `node controller/index.js` yang dijalankan dengan stdin
+  // tertutup (mis. stdio "ignore", atau `< /dev/null`) akan langsung melihat
+  // peristiwa "end" dan mematikan dirinya sendiri sedetik sesudah menyala. Jalur
+  // manual dari terminal tidak boleh berubah sedikit pun karena P4.
+  if (parentPipe && process.stdin && typeof process.stdin.on === "function") {
+    let buffer = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      buffer += String(chunk);
+      // Satu perintah per baris. Hanya satu yang dikenal; sisanya diabaikan, bukan
+      // ditebak artinya.
+      let idx;
+      while ((idx = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (line === "shutdown") shutdown("parent-request");
+      }
+    });
+    // stdin yang tertutup berarti induknya hilang. Controller tidak boleh hidup
+    // lebih lama dari aplikasi yang memilikinya.
+    process.stdin.on("end", () => shutdown("parent-gone"));
+    process.stdin.on("error", () => {
+      /* tidak ada stdin (dijalankan manual dari terminal): bukan masalah */
+    });
+    try {
+      process.stdin.resume();
+    } catch {
+      /* diabaikan */
+    }
+  }
 
   return { controller, server };
 }

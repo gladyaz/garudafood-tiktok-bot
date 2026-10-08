@@ -143,6 +143,34 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
     res.json(await controller.discoverTikTokProducts());
   });
 
+  // --- login TikTok (P4) ----------------------------------------------------
+  //
+  // Semuanya mutasi, jadi semuanya digerbang loopback. Tidak satu pun endpoint di
+  // sini menerima, meneruskan, atau mengembalikan kredensial: login dilakukan
+  // customer sendiri di jendela browser, dan yang dibaca dari halaman hanya nama
+  // akun yang sudah terlihat oleh siapa pun yang menonton LIVE itu.
+
+  app.post("/api/tiktok/login/start", loopbackOnly, async (_req, res) => {
+    const r = await controller.startTikTokLogin();
+    res.status(r.ok ? 200 : 409).json(r);
+  });
+
+  app.get("/api/tiktok/login/status", (_req, res) => {
+    res.json(controller.tikTokLoginStatus());
+  });
+
+  app.post("/api/tiktok/login/check", loopbackOnly, async (_req, res) => {
+    const r = await controller.checkTikTokLogin();
+    // 200 walau belum selesai: "belum login" adalah jawaban yang sah untuk
+    // pertanyaan "sudah selesai belum", bukan kesalahan server. UI menampilkannya
+    // sebagai keadaan supaya customer bisa menekan CHECK LOGIN lagi.
+    res.json(r);
+  });
+
+  app.post("/api/tiktok/login/cancel", loopbackOnly, async (_req, res) => {
+    res.json(await controller.cancelTikTokLogin());
+  });
+
   // --- ubah -----------------------------------------------------------------
 
   app.put("/api/config", loopbackOnly, (req, res) => {

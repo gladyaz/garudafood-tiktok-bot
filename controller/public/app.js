@@ -50,6 +50,7 @@
       "setup", "mappings", "mappings-empty", "mapping-hint", "add-mapping-btn",
       "save-btn", "save-state", "run-state", "run-note", "start-btn", "stop-btn",
       "preflight", "activity", "activity-empty", "activity-hint",
+      "login-btn", "login-check-btn", "login-cancel-btn", "login-hint",
     ].forEach(function (id) {
       el[id] = $(id);
     });
@@ -330,13 +331,27 @@
       el["readiness-hint"],
       c.discoveryAllowed ? "" : "Product details are only read while the automation is stopped."
     );
+    renderLogin();
     // Panduan pertama kali hanya saat belum ada config sama sekali.
     var noConfig = !!(state.status && state.status.config && state.status.config.present === false);
     el.setup.hidden = !noConfig;
   }
 
+  function renderLogin() {
+    var lv = U.loginView(state);
+    el["login-btn"].hidden = lv.state === "waiting";
+    el["login-btn"].disabled = !lv.canLogin;
+    el["login-btn"].textContent = lv.state === "connected" ? "SIGN IN AGAIN" : "LOGIN TIKTOK";
+    el["login-check-btn"].hidden = !lv.canCheck && lv.state !== "waiting";
+    el["login-check-btn"].disabled = !lv.canCheck;
+    el["login-cancel-btn"].hidden = !lv.canCancel && lv.state !== "waiting";
+    el["login-cancel-btn"].disabled = !lv.canCancel;
+    setText(el["login-hint"], lv.hint);
+  }
+
   function renderAll() {
     renderReadiness();
+    renderLogin();
     renderMappings();
     renderControls();
     renderActivity();
@@ -571,6 +586,57 @@
     });
   }
 
+  // --- login TikTok ---------------------------------------------------------
+  //
+  // Aplikasi TIDAK PERNAH menyentuh kredensial. Tombol ini hanya meminta
+  // Controller membuka jendela browser; customer login sendiri di dalamnya.
+
+  function onLogin() {
+    return withBusy("Opening sign-in…", function () {
+      showBanner("", null);
+      return api("/api/tiktok/login/start", { method: "POST" })
+        .then(function (r) {
+          if (r.body && r.body.ok) {
+            showBanner("Complete the TikTok login in the browser window, then press Check Login.", null);
+          } else {
+            showBanner(U.messageOf(r.body, "The sign-in window could not be opened."), "error");
+          }
+        })
+        .then(loadStatus)
+        .then(renderAll);
+    });
+  }
+
+  function onLoginCheck() {
+    return withBusy("Checking sign-in…", function () {
+      return api("/api/tiktok/login/check", { method: "POST" })
+        .then(function (r) {
+          if (r.body && r.body.ok) {
+            showBanner("Signed in as " + r.body.identity, "ready");
+          } else {
+            // "Belum selesai" bukan kegagalan: customer bisa menekan lagi.
+            showBanner(U.messageOf(r.body, "Sign-in is not finished yet."), "attention");
+          }
+        })
+        .then(loadStatus)
+        // Login yang berhasil melepas profil, jadi katalog produk bisa dibaca lagi.
+        .then(loadDiscovery)
+        .then(loadValidation)
+        .then(renderAll);
+    });
+  }
+
+  function onLoginCancel() {
+    return withBusy("Cancelling…", function () {
+      return api("/api/tiktok/login/cancel", { method: "POST" })
+        .then(function () {
+          showBanner("", null);
+        })
+        .then(loadStatus)
+        .then(renderAll);
+    });
+  }
+
   // --- polling --------------------------------------------------------------
 
   // Status dan activity murah: boleh sering. Discovery TIDAK ikut di sini.
@@ -595,6 +661,9 @@
     el["save-btn"].addEventListener("click", onSave);
     el["start-btn"].addEventListener("click", onStart);
     el["stop-btn"].addEventListener("click", onStop);
+    el["login-btn"].addEventListener("click", onLogin);
+    el["login-check-btn"].addEventListener("click", onLoginCheck);
+    el["login-cancel-btn"].addEventListener("click", onLoginCancel);
     el["add-mapping-btn"].addEventListener("click", function () {
       state.rows.push(U.mappingToRow(U.blankMapping()));
       markDirty();

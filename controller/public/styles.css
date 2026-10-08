@@ -530,3 +530,19 @@ main {
   display: grid;
   gap: 4px;
 }
+
+/* --- login row ------------------------------------------------------------ */
+
+.login-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 6px;
+}
+
+.login-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

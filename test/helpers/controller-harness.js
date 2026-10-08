@@ -303,6 +303,9 @@ function createHarness(overrides = {}) {
     obsDiscovery: overrides.obsDiscovery || null,
     tiktokDiscovery: overrides.tiktokDiscovery || null,
     playableScenes: overrides.playableScenes || null,
+    // P4: fungsi browser untuk alur login. Default null = login melaporkan dirinya
+    // tidak terkonfigurasi dan tidak membuka apa pun, jadi tes P1-P3 tidak berubah.
+    loginDeps: overrides.loginDeps || null,
     // Artefak config runtime ditulis ke fs PALSU, bukan ke disk.
     runtimeDir: "/fake/data/.runtime",
   });
