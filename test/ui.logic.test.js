@@ -301,13 +301,72 @@ test("FAIL-CLOSED: status belum dimuat mematikan Start", () => {
   assert.equal(c.editingEnabled, false);
 });
 
-test("busy mematikan semua aksi: double-click tidak bisa jadi dua operasi", () => {
-  const c = U.controlsFor({ busy: true, status: { automation: S.STOPPED } });
+test("busy mematikan AKSI: double-click tidak bisa jadi dua operasi", () => {
+  // Start/Stop/Refresh tetap dijaga `busy` global: itulah perlindungan
+  // double-click, dan menyalakan bot dua kali adalah arah yang berbahaya.
+  const c = U.controlsFor({ busy: true, busyOp: "refresh", status: { automation: S.STOPPED } });
   assert.equal(c.startEnabled, false);
   assert.equal(c.stopEnabled, false);
-  assert.equal(c.editingEnabled, false);
   assert.equal(c.refreshEnabled, false);
   assert.equal(c.startReason, "Working…");
+});
+
+test("REGRESI: pekerjaan latar TIDAK mengunci penyuntingan", () => {
+  // Terlihat di aplikasi TERPASANG pada 2026-10-08: automation STOPPED, tapi
+  // seluruh Settings — termasuk kedua checkbox aksi nyata — mati dan tidak
+  // pernah hidup lagi.
+  //
+  // Sebabnya `editingEnabled = !busy && (stopped || errored)`, dengan `busy`
+  // global yang dinyalakan Refresh. Refresh menjalankan discovery TikTok, yang
+  // di aplikasi terpasang ikut membuka Chrome (6-12 detik).
+  for (const op of ["refresh", "start", "stop", "loginStart", "loginCheck", "loginCancel"]) {
+    const c = U.controlsFor({ busy: true, busyOp: op, status: { automation: S.STOPPED } });
+    assert.equal(c.editingEnabled, true, op + " tidak boleh mengunci Settings");
+  }
+});
+
+test("hanya PENYIMPANAN config yang mengunci penyuntingan", () => {
+  // Dua penyimpanan bersamaan ke berkas config yang sama memang tidak masuk akal.
+  for (const op of ["saveSettings", "saveMappings"]) {
+    const c = U.controlsFor({ busy: true, busyOp: op, status: { automation: S.STOPPED } });
+    assert.equal(c.editingEnabled, false, op + " HARUS mengunci Settings");
+  }
+});
+
+test("busy tanpa nama operasi TIDAK mengunci penyuntingan", () => {
+  // Arah kegagalan sengaja permisif: mengunci karena salah tebak berarti
+  // customer tidak bisa mengatur aplikasinya sama sekali. Yang berbahaya adalah
+  // menyalakan bot, dan itu tetap dijaga `busy` global.
+  const c = U.controlsFor({ busy: true, status: { automation: S.STOPPED } });
+  assert.equal(c.editingEnabled, true);
+  assert.equal(c.startEnabled, false, "tapi Start tetap mati");
+});
+
+test("hint TIDAK menyuruh menghentikan automation yang SUDAH berhenti", () => {
+  // Kalimat lama dipakai untuk semua sebab, dan menjadi salah justru pada kasus
+  // paling membingungkan: automation sudah STOPPED tapi Settings mati.
+  const stoppedSaving = { busy: true, busyOp: "saveSettings", status: { automation: S.STOPPED, config: { present: true } } };
+  const sv = U.settingsView(stoppedSaving);
+  assert.equal(sv.editable, false);
+  assert.equal(sv.hint, "Saving your settings…");
+
+  // Dan penyimpanan MAPPING tidak mengaku sebagai penyimpanan Settings.
+  const savingMappings = U.settingsView({
+    busy: true, busyOp: "saveMappings",
+    status: { automation: S.STOPPED, config: { present: true } },
+  });
+  assert.equal(savingMappings.hint, "Saving your mapping…");
+  assert.ok(!/while the automation is stopped/.test(sv.hint), sv.hint);
+
+  // Dan saat memang berjalan, kalimat itu BENAR.
+  const running = U.settingsView({ status: { automation: S.RUNNING, config: { present: true } } });
+  assert.equal(running.editable, false);
+  assert.equal(running.hint, "Settings can only be changed while the automation is stopped.");
+
+  // Stopped dan tidak ada yang menulis config: tidak ada hint sama sekali.
+  const free = U.settingsView({ status: { automation: S.STOPPED, config: { present: true } } });
+  assert.equal(free.editable, true);
+  assert.equal(free.hint, "");
 });
 
 // --- kesiapan ---------------------------------------------------------------

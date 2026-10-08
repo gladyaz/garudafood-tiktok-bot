@@ -501,6 +501,29 @@
   }
 
   // Apakah bagian Settings perlu terbuka, dan apakah ia boleh disunting.
+  // Kenapa Settings tidak bisa disunting, kalau memang tidak bisa.
+  //
+  // Dulu SATU kalimat dipakai untuk semua sebab: "Settings can only be changed
+  // while the automation is stopped." Kalimat itu menjadi salah justru pada kasus
+  // yang paling membingungkan — automation SUDAH stopped, tapi Settings tetap
+  // mati. Customer lalu membaca kalimat yang menyuruhnya melakukan hal yang sudah
+  // ia lakukan.
+  function settingsHint(view) {
+    if (view && view.backendUnreachable) return "Controller is not reachable.";
+    var status = (view && view.status) || null;
+    // Belum dimuat: jangan menuduh apa pun.
+    if (!status) return "";
+    // Dibedakan per operasi: "Saving your settings" saat sebuah penyimpanan
+    // MAPPING sedang berjalan adalah kalimat yang salah, dan kalimat yang
+    // salah di tempat yang menjelaskan kenapa sesuatu terkunci justru yang
+    // paling membingungkan.
+    if (view && view.busyOp === "saveSettings") return "Saving your settings…";
+    if (view && view.busyOp === "saveMappings") return "Saving your mapping…";
+    var s = status.automation;
+    if (s === STATES.STOPPED || s === STATES.ERROR) return "";
+    return "Settings can only be changed while the automation is stopped.";
+  }
+
   function settingsView(view) {
     var status = (view && view.status) || null;
     var controls = controlsFor(view);
@@ -509,13 +532,44 @@
       firstRun: !!(status && status.config && status.config.present === false),
       configured: !!(status && status.config && status.config.present === true),
       editable: controls.editingEnabled,
-      hint: controls.editingEnabled ? "" : "Settings can only be changed while the automation is stopped.",
+      hint: controls.editingEnabled ? "" : settingsHint(view),
     };
   }
 
   // ---------------------------------------------------------------------------
   // Kendali tombol
   // ---------------------------------------------------------------------------
+
+  // Operasi yang BENAR-BENAR menulis config. Hanya ini yang boleh mengunci
+  // penyuntingan.
+  //
+  // ---------------------------------------------------------------------------
+  // KENAPA INI TIDAK BOLEH MEMAKAI `busy` GLOBAL
+  //
+  // Sampai sekarang: editingEnabled = !busy && (stopped || errored). `busy`
+  // dinyalakan oleh SETIAP operasi — termasuk Refresh, yang menjalankan discovery
+  // TikTok dan di aplikasi terpasang ikut MEMBUKA CHROME (terukur 6-12 detik).
+  //
+  // Akibatnya seluruh Settings terkunci oleh pekerjaan yang tidak ada
+  // hubungannya dengan Settings. Dan lebih buruk, ia MENGUNCI PERMANEN:
+  // renderSettings() yang menuliskan disabled=true dipanggil dari renderAll() DI
+  // DALAM jendela busy, sementara jalur yang membebaskannya tidak pernah
+  // dijalankan lagi — polling hanya memanggil renderControls/renderReadiness/
+  // renderActivity. Jadi sesudah satu kali Refresh, checkbox customer mati dan
+  // tidak pernah hidup lagi. Terlihat di aplikasi terpasang pada 2026-10-08.
+  //
+  // Arah kegagalan di sini SENGAJA permisif: op yang tidak dikenal TIDAK
+  // mengunci. Mengunci karena salah tebak berarti customer tidak bisa mengatur
+  // aplikasinya sama sekali — yaitu bug yang sedang diperbaiki. Sementara
+  // menyunting saat sesuatu berjalan paling buruk berarti satu simpanan yang
+  // tetap divalidasi server dan tetap atomik. Yang BERBAHAYA adalah menyalakan
+  // bot, dan itu tetap memakai `busy` global di bawah.
+  var CONFIG_WRITE_OPS = ["saveSettings", "saveMappings"];
+
+  function writingConfig(view) {
+    var op = view && view.busyOp;
+    return typeof op === "string" && CONFIG_WRITE_OPS.indexOf(op) !== -1;
+  }
 
   // Semua alasan START BOT tidak boleh ditekan, dalam urutan paling bisa
   // ditindaklanjuti lebih dulu.
@@ -654,7 +708,10 @@
     // yang tidak bisa diubah dan menjawab restartRequired untuk perubahan di
     // tengah jalan, jadi formulir yang bisa disunting saat RUNNING hanya
     // menjanjikan sesuatu yang tidak akan terjadi.
-    var editingEnabled = !busy && (stopped || errored);
+    // Penyuntingan hanya bergantung pada: automation memang berhenti, DAN
+    // tidak ada penyimpanan config yang sedang berjalan. Pekerjaan latar
+    // (discovery/refresh) tidak mengunci apa pun di sini.
+    var editingEnabled = (stopped || errored) && !writingConfig(view);
 
     // Start hidup HANYA kalau tidak ada satu pun penghalang. Semua syaratnya ada
     // di startBlockers(), termasuk kesiapan yang belum diketahui.
@@ -914,6 +971,9 @@
     validateSettingsForm: validateSettingsForm,
     applySettingsToConfig: applySettingsToConfig,
     settingsView: settingsView,
+    settingsHint: settingsHint,
+    CONFIG_WRITE_OPS: CONFIG_WRITE_OPS,
+    writingConfig: writingConfig,
     PORT_MIN: PORT_MIN,
     PORT_MAX: PORT_MAX,
     mappingIssues: mappingIssues,

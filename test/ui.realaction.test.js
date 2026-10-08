@@ -259,3 +259,93 @@ test("saklar dimatikan saat automation berjalan, sama seperti field lain", () =>
   const block = app.slice(app.indexOf("SETTINGS_TOGGLES.forEach(function (pair) {\n      var node = el[pair[1]];"));
   assert.match(block.slice(0, 400), /node\.disabled = !sv\.editable/);
 });
+
+// ---------------------------------------------------------------------------
+// REGRESI: keadaan PERSIS dari layar yang dilaporkan (2026-10-08)
+// ---------------------------------------------------------------------------
+
+test("REGRESI screenshot: STOPPED + LIVE aktif + produk + mapping siap, discovery jalan => KEDUA checkbox bisa dicentang", () => {
+  // Keadaan yang dilaporkan dari aplikasi TERPASANG: automation STOPPED, LIVE
+  // aktif, produk terdeteksi, pemetaan siap — dan seluruh Settings mati,
+  // termasuk "Auto pin product" dan "Send admin reply after pin".
+  //
+  // Dua cacat bertumpuk di situ:
+  //
+  //   1. `editingEnabled = !busy && (...)` dengan `busy` GLOBAL. Refresh
+  //      menjalankan discovery TikTok (membuka Chrome, 6-12 detik), dan selama
+  //      itu seluruh Settings terkunci tanpa alasan.
+  //
+  //   2. Terkuncinya LATCH. renderSettings() menulis disabled=true dari dalam
+  //      jendela busy (renderAll dipanggil DI DALAM withBusy), dan polling tidak
+  //      pernah memanggil renderSettings lagi — hanya renderControls,
+  //      renderReadiness, renderActivity. Jadi checkbox mati PERMANEN.
+  //
+  // Cacat (2) diperbaiki secara struktural: renderSettingsEnabled() dipanggil
+  // dari renderControls(), jadi ia ikut setiap polling. Diuji di bawah.
+  const refreshing = {
+    busy: true,
+    busyOp: "refresh",
+    status: {
+      automation: "STOPPED",
+      config: { present: true },
+      login: { active: false, state: "idle" },
+      run: { armed: false },
+      mode: { ok: false, reason: "autopin-disabled", userMessage: "Auto pin product is turned off.", pin: false, reply: false, needsPin: true },
+    },
+    obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1", "PAX-2"] },
+    tiktok: { ok: true, identity: "agen_mulia_abadi", identityOk: true, live: true, productCount: 10 },
+    validation: { ok: true, mappings: [{ ok: true }] },
+  };
+
+  const sv = U.settingsView(refreshing);
+  assert.equal(sv.editable, true, "KEDUA checkbox harus bisa dicentang saat discovery berjalan");
+  assert.equal(sv.hint, "", "dan tidak ada kalimat yang menyuruh menghentikan automation");
+
+  // Discovery SELESAI: tetap bisa disunting.
+  const done = Object.assign({}, refreshing, { busy: false, busyOp: null });
+  assert.equal(U.settingsView(done).editable, true);
+  assert.equal(U.settingsView(done).hint, "");
+
+  // Dan START tetap mati — tapi karena MODE-nya, bukan karena busy.
+  assert.equal(U.controlsFor(done).startEnabled, false);
+  assert.equal(U.controlsFor(done).startReason, "Auto pin product is turned off.");
+});
+
+test("REGRESI: keadaan terkunci Settings disegarkan setiap polling, jadi tidak bisa LATCH", () => {
+  // Inilah cacat (2). Yang MENULIS disabled=true harus juga yang
+  // MENULISKANNYA KEMBALI, pada irama yang sama.
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+
+  // renderControls dipanggil setiap polling; ia HARUS menyegarkan Settings.
+  const rc = app.slice(app.indexOf("function renderControls()"));
+  assert.match(rc.slice(0, 400), /renderSettingsEnabled\(\)/, "renderControls harus memanggil renderSettingsEnabled");
+
+  // Dan polling memang memanggil renderControls.
+  const poll = app.slice(app.indexOf("function startPolling()"));
+  assert.match(poll.slice(0, 500), /renderControls\(\)/);
+
+  // renderSettingsEnabled TIDAK boleh menulis nilai apa pun: `state.settings`
+  // hanya disegarkan dari server, jadi menulis nilai setiap 2 detik akan
+  // MENGHAPUS centang customer sebelum ia menekan Save.
+  const rse = app.slice(app.indexOf("function renderSettingsEnabled()"));
+  const body = rse.slice(0, rse.indexOf("\n  }"));
+  assert.ok(!/\.checked =/.test(body), "tidak boleh menulis .checked");
+  assert.ok(!/\.value =/.test(body), "tidak boleh menulis .value");
+  assert.match(body, /\.disabled = !sv\.editable/);
+});
+
+test("setiap withBusy menyebut NAMA operasinya", () => {
+  // Kalau satu pemanggil lupa, ia kembali memakai perilaku global dan bug ini
+  // bisa kembali lewat jalur itu. Posisinya juga penting: op adalah argumen
+  // KEEMPAT, jadi pemanggil tanpa target harus menyebut null secara eksplisit —
+  // kalau tidak, nama op mendarat di slot target dan busyOp tetap null.
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+  const closings = app.match(/^\s*\}, (?:null|"[a-z-]+"), "[a-zA-Z]+"\);$/gm) || [];
+  const callers = (app.match(/withBusy\(/g) || []).length - 1; // minus definisinya
+  assert.equal(closings.length, callers, "semua " + callers + " pemanggil harus menyebut op, dapat " + closings.length);
+
+  // Dan nama-namanya yang dipakai ui-logic memang ada.
+  for (const op of U.CONFIG_WRITE_OPS) {
+    assert.ok(app.includes('"' + op + '"'), "app.js harus memakai op " + op);
+  }
+});

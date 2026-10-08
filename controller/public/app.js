@@ -308,6 +308,9 @@
 
   function renderControls() {
     var c = U.controlsFor(state);
+    // Keadaan terkunci Settings disegarkan di sini juga, pada irama yang sama
+    // dengan tombol lain. Lihat renderSettingsEnabled().
+    renderSettingsEnabled();
     el["start-btn"].disabled = !c.startEnabled;
     el["stop-btn"].disabled = !c.stopEnabled;
     el["refresh-btn"].disabled = !c.refreshEnabled;
@@ -390,8 +393,48 @@
     return f;
   }
 
-  function renderSettings() {
+  // HANYA keadaan boleh/tidak-boleh disunting: disabled + hint. TIDAK menyentuh
+  // satu pun NILAI.
+  //
+  // Dipisahkan karena keduanya punya irama yang berbeda, dan menyatukannya
+  // adalah sebab bug 2026-10-08: renderSettings() menuliskan disabled=true dari
+  // dalam jendela busy (renderAll dipanggil DI DALAM withBusy), lalu tidak ada
+  // yang pernah menuliskannya kembali — polling hanya memanggil renderControls,
+  // renderReadiness, dan renderActivity. Jadi checkbox customer mati dan tidak
+  // pernah hidup lagi sampai halaman dimuat ulang.
+  //
+  // Sekarang fungsi ini dipanggil dari renderControls(), yang ikut setiap
+  // polling. Jadi keadaan terkunci TIDAK BISA lagi tertinggal.
+  //
+  // Dan ia sengaja TIDAK menulis nilai: `state.settings` hanya disegarkan dari
+  // server (loadConfig) atau dari formulir saat menyimpan, jadi menulis nilai
+  // setiap 2 detik akan MENGHAPUS centang customer sebelum ia menekan Save.
+  function renderSettingsEnabled() {
     var sv = U.settingsView(state);
+
+    SETTINGS_FIELDS.forEach(function (pair) {
+      var node = el[pair[1]];
+      if (node) node.disabled = !sv.editable;
+    });
+    SETTINGS_TOGGLES.forEach(function (pair) {
+      var node = el[pair[1]];
+      if (node) node.disabled = !sv.editable;
+    });
+
+    var pwInput = el["set-obs-password"];
+    if (pwInput) pwInput.disabled = !sv.editable;
+    el["obs-password-change"].disabled = !sv.editable;
+    el["obs-password-cancel"].disabled = !sv.editable;
+    // first-run: Save tetap hidup walau belum ada perubahan, supaya customer
+    // bisa menyimpan default sebagai config pertamanya.
+    el["save-settings-btn"].disabled = !sv.editable || (!state.settingsDirty && sv.configured);
+
+    setText(el["settings-hint"], sv.hint);
+  }
+
+  function renderSettings() {
+    // Hanya NILAI dan error per field. Keadaan terkunci ada di
+    // renderSettingsEnabled().
     var f = state.settings || U.settingsToForm(null);
 
     SETTINGS_FIELDS.forEach(function (pair) {
@@ -400,7 +443,6 @@
       // Nilai hanya ditulis ulang kalau customer tidak sedang mengetik di kotak itu;
       // polling status tidak boleh memindahkan kursor atau menghapus ketikan.
       if (document.activeElement !== node) node.value = f[pair[0]] === undefined ? "" : String(f[pair[0]]);
-      node.disabled = !sv.editable;
 
       var errNode = el["err-" + pair[0]];
       var msg = state.settingsErrors[pair[0]];
@@ -417,7 +459,6 @@
       // Checkbox tidak punya kursor yang bisa tergeser, jadi ia tidak butuh
       // penjagaan activeElement seperti field teks.
       node.checked = f[pair[0]] === true;
-      node.disabled = !sv.editable;
 
       var errNode = el["err-" + pair[0]];
       var msg = state.settingsErrors[pair[0]];
@@ -433,7 +474,6 @@
     var pwInput = el["set-obs-password"];
     if (pwInput) {
       pwInput.hidden = !state.changingPassword;
-      pwInput.disabled = !sv.editable;
       if (!state.changingPassword) pwInput.value = "";
     }
     setText(
@@ -445,13 +485,13 @@
           : "No password set."
     );
     el["obs-password-change"].hidden = state.changingPassword;
-    el["obs-password-change"].disabled = !sv.editable;
     el["obs-password-change"].textContent = f.obsPasswordSet ? "Change" : "Set password";
     el["obs-password-cancel"].hidden = !state.changingPassword;
-    el["obs-password-cancel"].disabled = !sv.editable;
 
-    el["save-settings-btn"].disabled = !sv.editable || (!state.settingsDirty && sv.configured);
-    setText(el["settings-hint"], sv.hint);
+    // Keadaan terkunci + hint diurus renderSettingsEnabled(), SATU tempat.
+    // Menyalinnya ke sini berarti dua tempat menulis atribut yang sama, dan
+    // salah satunya akan menyimpang.
+    renderSettingsEnabled();
   }
 
   function renderAll() {
@@ -569,8 +609,12 @@
   // Sekarang setiap operasi hanya boleh menyentuh labelnya sendiri, dan yang tidak
   // punya label (Refresh/Start/Stop) tidak menulis ke mana pun — kemajuannya sudah
   // terlihat dari tombol yang mati, pill automation, dan spanduk.
-  function withBusy(label, fn, target) {
+  function withBusy(label, fn, target, op) {
     state.busy = true;
+    // Nama operasinya, bukan hanya "ada sesuatu yang berjalan". Penyuntingan
+    // Settings hanya dikunci oleh operasi yang BENAR-BENAR menulis config;
+    // Refresh/discovery tidak. Lihat CONFIG_WRITE_OPS di ui-logic.js.
+    state.busyOp = op || null;
     if (target) setText(el[target], label);
     renderControls();
     return Promise.resolve()
@@ -578,11 +622,13 @@
       .then(
         function (v) {
           state.busy = false;
+          state.busyOp = null;
           renderControls();
           return v;
         },
         function (e) {
           state.busy = false;
+          state.busyOp = null;
           renderControls();
           throw e;
         }
@@ -621,7 +667,7 @@
         if (r.ok) return loadValidation().then(renderAll);
         renderAll();
       });
-    }, "save-state");
+    }, "save-state", "saveMappings");
   }
 
   function onRefresh() {
@@ -632,7 +678,7 @@
         .then(function () {
           renderAll();
         });
-    });
+    }, null, "refresh");
   }
 
   // START BOT.
@@ -699,7 +745,7 @@
           // sudah tampil dari saveConfig().
           return loadStatus().then(renderAll);
         });
-    });
+    }, null, "start");
   }
 
   function onStop() {
@@ -719,7 +765,7 @@
         .then(function () {
           renderAll();
         });
-    });
+    }, null, "stop");
   }
 
   // --- Settings -------------------------------------------------------------
@@ -779,7 +825,7 @@
             return { ok: true };
           });
       });
-    }, "settings-state");
+    }, "settings-state", "saveSettings");
   }
 
   function markSettingsDirty() {
@@ -806,7 +852,7 @@
         })
         .then(loadStatus)
         .then(renderAll);
-    });
+    }, null, "loginStart");
   }
 
   function onLoginCheck() {
@@ -825,7 +871,7 @@
         .then(loadDiscovery)
         .then(loadValidation)
         .then(renderAll);
-    });
+    }, null, "loginCheck");
   }
 
   function onLoginCancel() {
@@ -836,7 +882,7 @@
         })
         .then(loadStatus)
         .then(renderAll);
-    });
+    }, null, "loginCancel");
   }
 
   // --- polling --------------------------------------------------------------
