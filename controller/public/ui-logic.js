@@ -382,6 +382,14 @@
       expectedShop: st.expectedShop || "",
       obsHost: obs.host || "",
       obsPort: obs.port === undefined || obs.port === null ? "" : String(obs.port),
+      // Dua saklar yang menentukan apakah run melakukan AKSI NYATA.
+      //
+      // Sengaja dinamai dari sudut pandang customer, bukan dari nama field
+      // config. Yang ia putuskan adalah "pin produknya" dan "balas di chat";
+      // bahwa itu berarti autopinEnabled / autoCommentEnabled+transport adalah
+      // urusan applySettingsToConfig, bukan urusannya.
+      autoPinProduct: st.autopinEnabled === true,
+      sendAdminReply: st.autoCommentEnabled === true,
       obsPasswordSet: obs.passwordSet === true,
       // Password BARU yang sedang diketik. Kosong = jangan diubah.
       obsPassword: "",
@@ -429,6 +437,14 @@
     // Password OBS OPSIONAL: OBS bisa dijalankan tanpa autentikasi, dan memaksa
     // password di sini akan menolak konfigurasi OBS yang sah.
 
+    // Balasan admin hanya dikirim SESUDAH sebuah produk terkonfirmasi ter-pin —
+    // itu seluruh dasar AR3. Jadi menyalakannya tanpa pin menjanjikan sesuatu
+    // yang tidak pernah bisa terjadi, dan ditolak di sini supaya customer tahu
+    // SAAT MENYIMPAN, bukan nanti saat START BOT mati tanpa ia mengerti kenapa.
+    if (f.sendAdminReply === true && f.autoPinProduct !== true) {
+      errors.sendAdminReply = "Turn on Auto pin product first. The reply is only sent after a product is pinned.";
+    }
+
     var keys = Object.keys(errors);
     return { ok: keys.length === 0, errors: errors, fields: keys };
   }
@@ -446,6 +462,19 @@
 
     next.settings = next.settings || {};
     next.settings.expectedShop = String(f.expectedShop || "").trim();
+
+    // Dua saklar -> tiga field. Istilah "dry-run" dan "browser" TIDAK PERNAH
+    // sampai ke customer: ia memilih "balas di chat atau tidak", dan di sinilah
+    // pilihan itu diterjemahkan menjadi jalur kirim yang sungguhan.
+    //
+    // Saat balasan dimatikan, transport dikembalikan ke nilai yang AMAN, bukan
+    // dibiarkan apa adanya. Transport "browser" yang tertinggal dari pengaturan
+    // sebelumnya tidak berbahaya hari ini (autoCommentEnabled=false sudah
+    // menutup jalurnya), tapi ia membuat config membaca seolah jalur kirim
+    // nyata masih menyala — dan config yang membaca salah akan dipercaya salah.
+    next.settings.autopinEnabled = f.autoPinProduct === true;
+    next.settings.autoCommentEnabled = f.sendAdminReply === true;
+    next.settings.autoCommentTransport = f.sendAdminReply === true ? "browser" : "dry-run";
 
     next.obs = next.obs || {};
     next.obs.host = String(f.obsHost || "").trim();
@@ -553,6 +582,24 @@
     var val = v.validation;
     if (!val) out.push({ key: "mappings", message: "Checking your mappings…" });
     else if (val.ok !== true) out.push({ key: "mappings", message: messageOf(val, "Some of your scene mappings need fixing.") });
+
+    // --- mode aksi nyata. Verdict dan kalimatnya datang dari SERVER. ---
+    //
+    // TIDAK dihitung di sini dengan sengaja. Kalau halaman memutuskannya
+    // sendiri, suatu saat ia akan menyimpang dari apa yang server tolak — dan
+    // yang menyimpang akan menjadi tombol hijau untuk run yang tidak bisa memin
+    // apa pun. Itu persis yang terjadi pada 2026-10-08: semua indikator hijau,
+    // scene berganti, nol produk ter-pin. Lihat controller/automation-mode.js.
+    //
+    // Config yang sudah ada tapi TANPA verdict mode diperlakukan sebagai BELUM
+    // DIKETAHUI, dan itu tetap memblokir — sama seperti "Checking…" di atas.
+    if (status.config && status.config.present === true) {
+      var mode = status.mode;
+      if (!mode) out.push({ key: "mode", message: "Checking automation mode…" });
+      else if (mode.ok !== true) {
+        out.push({ key: "mode", message: mode.userMessage || "Real automation actions are not enabled." });
+      }
+    }
 
     return out;
   }

@@ -51,6 +51,11 @@ function fakeBrowser({ pageUrl = LOGIN_PAGE, identity = ["toko uji"] } = {}) {
 function configWithMapping() {
   const c = goodConfig();
   c.settings.autoCommentEnabled = true;
+  // Dan jalur kirimnya yang sungguhan. Tes ini menguji bahwa service mendapat
+  // izin kirim nyata; config yang menyalakan balasan tapi membiarkan jalur
+  // kirimnya aman adalah config yang TIDAK PERNAH bisa mengirim, jadi sejak
+  // P5.1.1 ia ditolak di jalur start. Lihat controller/automation-mode.js.
+  c.settings.autoCommentTransport = "browser";
   c.mappings = [
     { scene: "PAX-1", product: { title: "O'CORN Sea Salt" }, triggers: ["spill etalase 1"], reply: "Etalase 1 sudah aku pin ya kak" },
   ];

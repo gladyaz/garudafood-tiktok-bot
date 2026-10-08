@@ -32,6 +32,9 @@ const { memoThunk } = require("./lazy");
 const { createProfileOwnership, OWNER } = require("./profile-owner");
 // Jejak baris mentah anak. MURNI dan OPSIONAL — lihat controller/child-trace.js.
 const { createChildTracer, traceEnabled } = require("./child-trace");
+// Konsistensi mode automation. MURNI, dan dipakai BERSAMA oleh jalur start dan
+// status() supaya tombol UI dan penolakan server tidak bisa menyimpang.
+const { describeMode } = require("./automation-mode");
 const { createRunAuthority } = require("./run-authority");
 const { createLoginFlow } = require("./login");
 const {
@@ -486,6 +489,25 @@ function createController({
     }
     const config = loaded.config;
 
+    // --- mode automation ----------------------------------------------------
+    //
+    // FAIL-CLOSED, dan diperiksa SEBELUM preflight: kalau pemetaan meminta
+    // produk di-pin sementara AutoPIN dimatikan, run ini tidak akan pernah bisa
+    // melakukan apa yang customer harapkan. Dibiarkan jalan, ia akan terlihat
+    // sukses sepenuhnya — scene berganti, status RUNNING, semua hijau — dan nol
+    // produk ter-pin. Itu terjadi sungguhan pada 2026-10-08; lihat
+    // controller/automation-mode.js.
+    //
+    // Di titik ini NOL proses pernah dinyalakan, jadi menolak di sini tidak
+    // meninggalkan apa pun untuk dibersihkan.
+    const mode = describeMode(config);
+    if (!mode.ok) {
+      sm.to(STATES.STOPPED, { reason: mode.reason });
+      lastError = translate(mode.reason);
+      log("START_REFUSED", { code: mode.reason, blockers: mode.blockers.join(","), pin: mode.pin, reply: mode.reply });
+      return { ok: false, state: sm.state(), error: lastError };
+    }
+
     // --- preflight ----------------------------------------------------------
     lastPreflight = await preflight.run(config);
     if (!lastPreflight.ok) {
@@ -739,6 +761,21 @@ function createController({
         // Keterbatasan dibuat terlihat, bukan disembunyikan: field ini tersimpan
         // tapi belum sampai ke core.
         notAppliedToCore: unmappedFields(loaded.config),
+      };
+      // Mode automation yang DINYATAKAN config, beserta kalimatnya.
+      //
+      // Dikirim dari server dengan sengaja: tombol START di UI harus mati
+      // dengan alasan yang PERSIS sama dengan alasan server menolak. Kalau UI
+      // menghitungnya sendiri, keduanya akan menyimpang — dan yang menyimpang
+      // akan menjadi tombol hijau untuk run yang tidak bisa memin apa pun.
+      const m = describeMode(loaded.config);
+      out.mode = {
+        pin: m.pin,
+        reply: m.reply,
+        needsPin: m.needsPin,
+        ok: m.ok,
+        reason: m.reason,
+        userMessage: m.ok ? null : translate(m.reason).userMessage,
       };
     } else {
       out.config = { present: false, problem: loaded.code };

@@ -115,7 +115,9 @@ const FILLED = {
 test("formulir dibangun dari config, dan TANPA password", () => {
   const form = U.settingsToForm(redactConfig(goodConfig()));
   assert.deepEqual(Object.keys(form).sort(), [
-    "expectedShop", "obsHost", "obsPassword", "obsPasswordClear", "obsPasswordSet", "obsPort", "tiktokUsername",
+    // P5.1.1 menambahkan dua saklar aksi nyata.
+    "autoPinProduct", "expectedShop", "obsHost", "obsPassword", "obsPasswordClear",
+    "obsPasswordSet", "obsPort", "sendAdminReply", "tiktokUsername",
   ]);
   // Hanya penanda, bukan nilainya.
   assert.equal(form.obsPasswordSet, true);
@@ -216,9 +218,18 @@ test("formulir hanya menyentuh field yang diurusnya", () => {
   assert.equal(out.settings.expectedShop, "toko uji");
   assert.equal(out.obs.host, "127.0.0.1");
   assert.equal(out.obs.port, 4455);
-  // Setelan lain tidak tersentuh.
-  assert.equal(out.settings.autopinEnabled, base.settings.autopinEnabled);
-  assert.equal(out.settings.autoCommentTransport, base.settings.autoCommentTransport);
+  // Sejak P5.1.1 formulir MEMILIKI ketiga field aksi nyata, jadi ia memang
+  // menuliskannya. FILLED tidak menyalakan saklar apa pun, maka hasilnya mati —
+  // dan transport dikembalikan ke nilai aman, bukan dibiarkan apa adanya.
+  assert.equal(out.settings.autopinEnabled, false);
+  assert.equal(out.settings.autoCommentEnabled, false);
+  assert.equal(out.settings.autoCommentTransport, "dry-run");
+
+  // Yang BUKAN urusan formulir tetap tidak tersentuh.
+  assert.equal(out.settings.autopinPort, base.settings.autopinPort);
+  assert.equal(out.settings.autoCommentMaxPerMinute, base.settings.autoCommentMaxPerMinute);
+  assert.equal(out.settings.sceneReplayCooldownMs, base.settings.sceneReplayCooldownMs);
+  assert.equal(out.settings.profileDir, base.settings.profileDir);
   assert.deepEqual(out.mappings, base.mappings);
 });
 

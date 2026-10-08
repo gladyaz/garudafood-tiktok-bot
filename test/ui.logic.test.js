@@ -215,7 +215,14 @@ test("katalog kosong: nilai tersimpan tetap dapat opsi supaya tidak hilang", () 
 function readyView(over) {
   return Object.assign(
     {
-      status: { automation: "STOPPED", config: { present: true }, login: { active: false } },
+      // `mode` ikut di view "siap" karena sejak P5.1.1 startBlockers juga
+      // memeriksa mode aksi nyata, dan mode yang BELUM DIKETAHUI memblokir.
+      status: {
+        automation: "STOPPED",
+        config: { present: true },
+        login: { active: false },
+        mode: { ok: true, pin: true, reply: false, needsPin: true, reason: null, userMessage: null },
+      },
       obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1"] },
       tiktok: { ok: true, identity: "toko uji", identityOk: true, live: true, productCount: 3 },
       validation: { ok: true, mappings: [{ ok: true }] },
@@ -265,7 +272,7 @@ test("STARTING dan STOPPING: Start mati", () => {
 
 test("ERROR: boleh mencoba lagi dan boleh membereskan", () => {
   // Sesudah rollback, operator harus bisa mencoba lagi tanpa merestart Controller.
-  const c = U.controlsFor(readyView({ status: { automation: S.ERROR, config: { present: true }, login: { active: false } } }));
+  const c = U.controlsFor(readyView({ status: { automation: S.ERROR, config: { present: true }, login: { active: false }, mode: { ok: true, pin: true, reply: false, needsPin: true, reason: null, userMessage: null } } }));
   assert.equal(c.startEnabled, true);
   assert.equal(c.stopEnabled, true);
   assert.equal(c.editingEnabled, true);
@@ -744,6 +751,10 @@ test("REGRESI screenshot: OBS+TikTok tersambung, tapi LIVE off + 0 produk + 0 ma
       config: { present: true },
       login: { active: false, state: "idle", identity: "agen_mulia_abadi" },
       run: { armed: false },
+      // Mode aksi nyata SAH di layar itu; yang mematikan START adalah LIVE,
+      // produk, dan pemetaan. Disebutkan supaya tes ini tetap menguji ketiganya
+      // dan bukan ikut tersandung penghalang mode.
+      mode: { ok: true, pin: true, reply: false, needsPin: true, reason: null, userMessage: null },
     },
     obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1", "PAX-2"] },
     tiktok: { ok: true, identity: "agen_mulia_abadi", identityOk: true, live: false, productCount: 0 },

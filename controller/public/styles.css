@@ -579,3 +579,36 @@ main {
   gap: 8px;
   min-height: 31px;
 }
+
+/* Aksi nyata di Settings: dua saklar. Dipisahkan secara visual dari field teks
+   karena yang diputuskan di sini bukan "alamat OBS", melainkan apakah bot
+   menyentuh akun TikTok sungguhan. */
+.settings-actions {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #e3e5e9;
+}
+.settings-actions-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #41454c;
+}
+.field-check label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.field-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.field-check input[type="checkbox"]:disabled { cursor: not-allowed; }
+.field-check input[type="checkbox"]:disabled + span { color: #9aa0a6; }
+.field-check .field-note { margin-left: 25px; }
+.field-check .field-error { margin-left: 25px; }

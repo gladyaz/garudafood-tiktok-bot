@@ -24,6 +24,15 @@ const CATALOG = Object.freeze({
   "port-in-use": "A required port is already being used by another program.",
   "profile-dir-unusable": "The browser profile folder cannot be used.",
   "already-running": "The automation is already running.",
+
+  // --- mode automation (P5.1.1) ---
+  //
+  // Kalimatnya SENGAJA tanpa istilah teknis. Customer tidak pernah melihat kata
+  // "dry-run" maupun "browser": yang ia lihat di Settings adalah dua saklar,
+  // dan yang ia lihat di sini adalah saklar mana yang masih mati.
+  "autopin-disabled": "Auto pin product is turned off.",
+  "admin-reply-not-enabled": "Admin reply is not enabled.",
+  "admin-reply-without-pin": "Admin reply needs Auto pin product turned on, because the reply is only sent after a product is pinned.",
   "orphans-remain": "Older bot processes are still running and could not be stopped.",
   "tiktok-username-missing": "Your TikTok username has not been set yet.",
   "no-mappings": "No scene has a product mapped to it yet.",

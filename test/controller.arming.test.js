@@ -136,7 +136,13 @@ function harness(over = {}) {
     const c = goodConfig();
     // AutoComment MENYALA: inilah kasus customer yang memang ingin balasan
     // terkirim, dan kasus yang DoD P4 mensyaratkan.
+    //
+    // Jalur kirimnya ikut disetel ke yang sungguhan. Sejak P5.1.1, config yang
+    // menyalakan balasan tapi membiarkan jalur kirimnya aman adalah config yang
+    // TIDAK PERNAH bisa mengirim, dan jalur start menolaknya — lihat
+    // controller/automation-mode.js.
     c.settings.autoCommentEnabled = true;
+    c.settings.autoCommentTransport = "browser";
     c.mappings = [
       { scene: "PAX-1", product: { title: "O'CORN Sea Salt" }, triggers: ["etalase satu"], reply: "Etalase 1 sudah aku pin ya kak" },
     ];
@@ -216,6 +222,7 @@ test("preflight GAGAL: TIDAK ada arming, dan nol proses", async () => {
 test("pemetaan tidak valid: tidak ada arming", async () => {
   const cfg = goodConfig();
   cfg.settings.autoCommentEnabled = true;
+  cfg.settings.autoCommentTransport = "browser";
   cfg.mappings = [{ scene: "PAX-1", product: { title: "Produk Hantu" }, triggers: ["etalase satu"], reply: "x" }];
   const h = harness({ config: cfg });
 

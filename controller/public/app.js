@@ -59,6 +59,7 @@
       "set-tiktok-username", "set-expected-shop", "set-obs-host", "set-obs-port",
       "set-obs-password", "obs-password-label", "obs-password-change", "obs-password-cancel",
       "err-tiktokUsername", "err-expectedShop", "err-obsHost", "err-obsPort",
+      "set-auto-pin", "set-admin-reply", "err-autoPinProduct", "err-sendAdminReply",
     ].forEach(function (id) {
       el[id] = $(id);
     });
@@ -366,10 +367,22 @@
     ["obsPort", "set-obs-port"],
   ];
 
+  // Saklar aksi nyata. DIPISAH dari SETTINGS_FIELDS karena dibaca lewat
+  // `.checked`, bukan `.value` — sebuah checkbox punya value "on" walau tidak
+  // dicentang, jadi membacanya seperti field teks akan selalu berbunyi menyala.
+  var SETTINGS_TOGGLES = [
+    ["autoPinProduct", "set-auto-pin"],
+    ["sendAdminReply", "set-admin-reply"],
+  ];
+
   function readSettingsForm() {
     var f = Object.assign({}, state.settings || {});
     SETTINGS_FIELDS.forEach(function (pair) {
       f[pair[0]] = el[pair[1]] ? el[pair[1]].value : "";
+    });
+    // Saklar: ketiadaan node diperlakukan sebagai MATI, bukan sebagai menyala.
+    SETTINGS_TOGGLES.forEach(function (pair) {
+      f[pair[0]] = el[pair[1]] ? el[pair[1]].checked === true : false;
     });
     // Password hanya dibaca kalau customer memang sedang menggantinya.
     f.obsPassword = state.changingPassword && el["set-obs-password"] ? el["set-obs-password"].value : "";
@@ -387,6 +400,23 @@
       // Nilai hanya ditulis ulang kalau customer tidak sedang mengetik di kotak itu;
       // polling status tidak boleh memindahkan kursor atau menghapus ketikan.
       if (document.activeElement !== node) node.value = f[pair[0]] === undefined ? "" : String(f[pair[0]]);
+      node.disabled = !sv.editable;
+
+      var errNode = el["err-" + pair[0]];
+      var msg = state.settingsErrors[pair[0]];
+      if (errNode) {
+        errNode.hidden = !msg;
+        setText(errNode, msg || "");
+      }
+      node.setAttribute("aria-invalid", msg ? "true" : "false");
+    });
+
+    SETTINGS_TOGGLES.forEach(function (pair) {
+      var node = el[pair[1]];
+      if (!node) return;
+      // Checkbox tidak punya kursor yang bisa tergeser, jadi ia tidak butuh
+      // penjagaan activeElement seperti field teks.
+      node.checked = f[pair[0]] === true;
       node.disabled = !sv.editable;
 
       var errNode = el["err-" + pair[0]];
@@ -837,6 +867,17 @@
     SETTINGS_FIELDS.forEach(function (pair) {
       var node = el[pair[1]];
       if (node) node.addEventListener("input", markSettingsDirty);
+    });
+    SETTINGS_TOGGLES.forEach(function (pair) {
+      var node = el[pair[1]];
+      // "change", bukan "input": itulah peristiwa checkbox.
+      if (node) node.addEventListener("change", function () {
+        markSettingsDirty();
+        // Dirender ulang supaya error "nyalakan Auto pin dulu" muncul seketika,
+        // bukan baru saat Save ditekan.
+        state.settingsErrors = U.validateSettingsForm(readSettingsForm()).errors;
+        renderSettings();
+      });
     });
     el["set-obs-password"].addEventListener("input", markSettingsDirty);
     el["obs-password-change"].addEventListener("click", function () {

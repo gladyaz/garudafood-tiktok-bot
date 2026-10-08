@@ -105,6 +105,7 @@ const REQUIRED = Object.freeze([
   { rel: "resources/app/desktop/node-path.js", why: "resolusi node.exe terbundel" },
   { rel: "resources/app/controller/index.js", why: "entry point Controller; dijalankan sebagai node.exe" },
   { rel: "resources/app/controller/child-trace.js", why: "filter allowlist jejak baris anak; tanpa ini Controller gagal require saat boot" },
+  { rel: "resources/app/controller/automation-mode.js", why: "gerbang mode aksi nyata; tanpa ini Controller gagal require saat boot" },
   { rel: "resources/app/controller/public/index.html", why: "halaman dashboard" },
   { rel: "resources/app/controller/public/app.js", why: "frontend dashboard" },
   { rel: "resources/app/controller/public/ui-logic.js", why: "logika UI" },

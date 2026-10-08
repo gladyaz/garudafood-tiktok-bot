@@ -107,6 +107,37 @@
           </div>
         </div>
 
+        <!-- Aksi nyata.
+             Dua saklar, bukan tiga setelan teknis. Customer memutuskan APA yang
+             dilakukan bot; bahwa "balas di chat" berarti jalur kirim browser
+             adalah urusan ui-logic.js, bukan urusannya.
+
+             Sampai 2026-10-08 ketiga field ini TIDAK ADA di halaman sama sekali,
+             sehingga aplikasi terpasang hanya bisa mengganti scene: satu run LIVE
+             berjalan dengan AutoPIN mati, semua indikator hijau, nol produk
+             ter-pin. Lihat controller/automation-mode.js. -->
+        <div class="settings-actions">
+          <h3 class="settings-actions-title">What the bot is allowed to do</h3>
+
+          <div class="field field-check">
+            <label for="set-auto-pin">
+              <input id="set-auto-pin" type="checkbox" />
+              <span>Auto pin product</span>
+            </label>
+            <div class="field-note">Pins the mapped product in your LIVE when a viewer triggers its scene.</div>
+            <div id="err-autoPinProduct" class="field-error" hidden></div>
+          </div>
+
+          <div class="field field-check">
+            <label for="set-admin-reply">
+              <input id="set-admin-reply" type="checkbox" />
+              <span>Send admin reply after pin</span>
+            </label>
+            <div class="field-note">Posts one short reply in your LIVE chat, only after the product is confirmed pinned.</div>
+            <div id="err-sendAdminReply" class="field-error" hidden></div>
+          </div>
+        </div>
+
         <div class="card-actions">
           <button id="save-settings-btn" type="button" class="btn btn-primary">Save Settings</button>
           <span id="settings-state" class="hint" aria-live="polite"></span>
