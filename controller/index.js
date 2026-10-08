@@ -61,6 +61,18 @@ const SERVICE_PASSTHROUGH = Object.freeze([
   "--allow-comment-send-once",
 ]);
 
+// Nilai sesudah "=" untuk sebuah flag, atau null kalau flag-nya tidak ada / kosong.
+//
+// Flag kosong (`--config-file=`) diperlakukan sebagai TIDAK DISEBUTKAN, bukan
+// sebagai path kosong: path kosong akan menjadi path relatif terhadap cwd, yaitu
+// persis kelas kesalahan yang P5 ada untuk menghapus.
+function flagValue(argv, flag) {
+  const found = argv.find((a) => a.startsWith(flag));
+  if (!found) return null;
+  const value = found.slice(flag.length);
+  return value === "" ? null : value;
+}
+
 function parseArgs(argv) {
   const portArg = argv.find((a) => a.startsWith("--port="));
   const port = portArg ? Number.parseInt(portArg.slice("--port=".length), 10) : DEFAULT_PORT;
@@ -70,6 +82,30 @@ function parseArgs(argv) {
   );
 
   return {
+    // --- P5: path yang DIBERITAHUKAN oleh aplikasi desktop -----------------
+    //
+    // Semuanya null di jalur manual (`node controller/index.js`), dan di situ
+    // Controller memakai default-nya sendiri yang berbasis repo — perilaku
+    // sebelum P5, tidak berubah sedikit pun.
+    //
+    // Saat terpaket, kode tinggal di direktori instalasi yang hanya dibaca,
+    // sementara config, profil browser, artefak runtime, dan kunci bot HARUS
+    // ditulis di tempat lain. Controller tidak bisa menyimpulkan "tempat lain"
+    // itu dari cwd-nya, dan ia TIDAK BOLEH menebaknya: yang tahu adalah Electron,
+    // lewat app.getPath("userData"). Jadi ia diberi tahu.
+    //
+    // Satu-satunya pemilik keputusan ini adalah desktop/paths.js.
+    configFile: flagValue(argv, "--config-file="),
+    runtimeDir: flagValue(argv, "--runtime-dir="),
+    profileDir: flagValue(argv, "--profile-dir="),
+    debugDir: flagValue(argv, "--debug-dir="),
+    lockFile: flagValue(argv, "--lock-file="),
+    // Browser terbundel. Saat terpaket ini MENANG atas settings.chromePath:
+    // jalur pin hanya diuji terhadap satu build Chrome, dan membuka Chrome
+    // sembarang berarti menjalankan jalur itu di atas DOM yang belum pernah
+    // diuji. Lihat desktop/browser-path.js.
+    browserPath: flagValue(argv, "--browser-path="),
+
     port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT,
     serviceArgs,
     // Induk (aplikasi desktop) memakai stdin untuk meminta berhenti. Jalur manual
@@ -148,16 +184,48 @@ function createWindowsOrphanSweeper() {
   };
 }
 
+// Teks literal untuk pola -like PowerShell. *, ?, [, ] adalah wildcard di sana,
+// jadi path yang memuatnya harus di-escape dengan backtick — kalau tidak, satu
+// tanda kurung siku di nama folder customer mengubah pola menjadi character
+// class dan pencocokannya berhenti bekerja tanpa error apa pun.
+function psLikeLiteral(text) {
+  return String(text).replace(/[`*?[\]]/g, (c) => "`" + c);
+}
+
+// String ber-kutip-satu PowerShell. Kutip satu di dalamnya digandakan.
+// Dibutuhkan karena path customer bisa memuat apostrof (mis. nama "O'Brien").
+function psQuote(text) {
+  return "'" + String(text).replace(/'/g, "''") + "'";
+}
+
 // Chrome milik automation dikenali dari direktori profilnya, sama seperti
 // scripts/stop-all.ps1, supaya Chrome PRIBADI operator tidak pernah ikut
 // tertutup. Ini bukan kehati-hatian berlebihan: profilnya memang satu-satunya
 // pembeda, dan menutup Chrome pribadi operator saat LIVE jalan akan terlihat
 // seperti sistem yang merusak mesinnya sendiri.
+//
+// ---------------------------------------------------------------------------
+// P5: POLANYA HARUS IKUT PINDAH BERSAMA PROFILNYA
+//
+// Sampai P4, pola pencariannya adalah substring tetap "autopin-profile", dan itu
+// benar selama profilnya memang bernama .autopin-profile di akar repo.
+//
+// Aplikasi terpaket memindahkan profil ke %APPDATA%\AI LIVE HOST\browser-profile
+// — dan dengan pola tetap itu, `-like '*autopin-profile*'` TIDAK akan cocok
+// dengan apa pun. Akibatnya Chrome automation tertinggal hidup sesudah aplikasi
+// ditutup, masih memegang profil berisi sesi TikTok customer, sementara setiap
+// laporan pembersihan tetap berbunyi killed=0 — yang terbaca sebagai "tidak ada
+// yang perlu dibersihkan", bukan sebagai "saya tidak menemukan apa pun".
+//
+// Itu PERSIS bentuk insiden 2026-10-05: pola pencarian yang tidak cocok dengan
+// kenyataan, menerbitkan angka nol yang menenangkan. Jadi polanya sekarang
+// diturunkan dari path profil yang SUNGGUHAN dipakai, bukan ditulis dua kali.
 function createWindowsChromeKiller({ profileDirName = "autopin-profile" } = {}) {
-  return async function kill() {
+  const pattern = psQuote("*" + psLikeLiteral(profileDirName) + "*");
+  async function kill() {
     const script = [
       "$ErrorActionPreference='Stop'",
-      "$pat='*" + profileDirName + "*'",
+      "$pat=" + pattern,
       "$c=@(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { $_.CommandLine -like $pat })",
       "$k=0; foreach($p in $c){ try{ Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $k++ }catch{} }",
       "Write-Output ('killed=' + $k)",
@@ -165,7 +233,15 @@ function createWindowsChromeKiller({ profileDirName = "autopin-profile" } = {}) 
     const out = await runPowerShell(script);
     const m = /killed=(\d+)/.exec(out);
     return { killed: m ? Number(m[1]) : 0 };
-  };
+  }
+
+  // Pola yang AKAN dipakai, dibuka supaya bisa diperiksa tanpa menjalankan
+  // PowerShell. Tanpa ini, satu-satunya cara mengetahui bahwa pencarian Chrome
+  // masih cocok dengan letak profil yang sebenarnya adalah menjalankan aplikasi
+  // terpaket dan mengamati apakah Chrome tertinggal hidup — yaitu menemukannya
+  // di mesin customer. Lihat test/packaging.runtime.test.js.
+  kill.__pattern = pattern;
+  return kill;
 }
 
 // Adapter discovery TikTok sungguhan. Dibangun dengan fungsi yang SAMA yang
@@ -203,7 +279,7 @@ const BROWSER_MODULES = Object.freeze([
   "../autopin/service",
 ]);
 
-function buildBrowserDeps() {
+function buildBrowserDeps(paths) {
   // Instalasi yang rusak tetap terdeteksi SAAT BOOT, persis seperti sebelumnya,
   // supaya Controller melaporkan "discovery not configured" dan bukan meledak
   // nanti di tengah permintaan customer.
@@ -230,7 +306,13 @@ function buildBrowserDeps() {
       // Customer config -> bentuk config yang dipahami launchBrowser/openConsole.
       // Tanpa ini, profileDir undefined dan browser gagal dibuka. Ini sudah ringan
       // (config-manager), jadi tidak perlu ditunda.
-      toBrowserConfig: toAutopinConfig,
+      //
+      // `paths` diikat DI SINI, sekali, supaya discovery dan login memakai profil
+      // dan browser yang persis sama dengan yang dipakai service. Kalau salah satu
+      // jalur memakai profil yang berbeda, customer akan login di satu profil dan
+      // AutoPIN tetap melihat dirinya belum login — tanpa ada pesan kesalahan
+      // apa pun, karena kedua sisi "berhasil".
+      toBrowserConfig: (config) => toAutopinConfig(config, { paths }),
     }
   );
 }
@@ -269,9 +351,27 @@ function readPlayableScenes() {
 }
 
 async function main(argv) {
-  const { port, serviceArgs, parentPipe, nodePath } = parseArgs(argv);
+  const {
+    port,
+    serviceArgs,
+    parentPipe,
+    nodePath,
+    configFile,
+    runtimeDir,
+    profileDir,
+    debugDir,
+    lockFile,
+    browserPath,
+  } = parseArgs(argv);
   const onWindows = process.platform === "win32";
-  const browserDeps = buildBrowserDeps();
+
+  // Peta path yang akan diteruskan ke anak lewat environment, dan dipakai sendiri
+  // untuk discovery/login. Field yang null berarti "tidak disebutkan", dan
+  // config-manager akan membiarkan nilai config apa adanya — perilaku jalur
+  // manual, tidak berubah.
+  const paths = { profileDir, debugDir, lockFile, browserPath };
+
+  const browserDeps = buildBrowserDeps(paths);
   bootStage("deps-resolved");
 
   const controller = createController({
@@ -279,11 +379,27 @@ async function main(argv) {
     serviceArgs,
     // null = process.execPath (jalur manual). Diisi hanya oleh aplikasi desktop.
     ...(nodePath ? { nodePath } : {}),
+    // Keduanya null di jalur manual, dan createController memakai default
+    // berbasis repo-nya sendiri. Lihat parseArgs() untuk alasannya.
+    ...(configFile ? { configFile } : {}),
+    ...(runtimeDir ? { runtimeDir } : {}),
+    // Diteruskan ke anak lewat toEnv(). Lihat controller/config-manager.js.
+    paths,
     // Penyapu hanya dipasang di Windows: di platform lain ia tidak ada, dan
     // process-manager akan melaporkan dirinya tidak terkonfigurasi daripada
     // berpura-pura menyapu.
     orphanSweeper: onWindows ? createWindowsOrphanSweeper() : null,
-    killAutomationChrome: onWindows ? createWindowsChromeKiller() : null,
+    // Pola pencarian Chrome diturunkan dari profil yang BENAR-BENAR dipakai.
+    //
+    // Saat terpaket, profilnya ada di %APPDATA% dan nama "autopin-profile" tidak
+    // lagi muncul di command line Chrome; pola tetap akan cocok dengan nol
+    // proses dan melaporkannya sebagai bersih. Lihat createWindowsChromeKiller().
+    //
+    // Tanpa --profile-dir (jalur manual), token-nya tetap "autopin-profile"
+    // persis seperti sebelum P5.
+    killAutomationChrome: onWindows
+      ? createWindowsChromeKiller(profileDir ? { profileDirName: profileDir } : {})
+      : null,
     // P2
     obsDiscovery: createObsDiscovery(),
     tiktokDiscovery: buildTikTokDiscovery(browserDeps),

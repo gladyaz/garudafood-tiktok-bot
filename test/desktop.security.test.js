@@ -215,12 +215,36 @@ test("electron hanya devDependency, dan dependencies produksi tidak berubah", ()
   ]);
 });
 
-test("tidak ada React/Vite/auto-updater/installer builder", () => {
+test("tidak ada React/Vite/auto-updater", () => {
+  // P5 MENGHAPUS electron-builder dari daftar ini, dan hanya itu.
+  //
+  // Di P4 daftarnya memuat electron-builder karena fase itu memang belum
+  // memaketkan apa pun. P5 adalah fase yang membangun installer Windows, jadi
+  // menahannya di sini akan berarti menahan pekerjaan fase ini sendiri.
+  //
+  // Yang lain TETAP dilarang, dan masing-masing dengan alasannya:
+  //   react / vite        dashboard tetap halaman yang disajikan Controller.
+  //                       Tidak ada frontend kedua.
+  //   electron-updater    auto-update sengaja BUKAN bagian P5. Aplikasi yang
+  //                       bisa memperbarui dirinya sendiri adalah aplikasi yang
+  //                       bisa mengganti engine LIVE di tengah LIVE.
+  //   @electron-forge/cli satu alat paket saja. Dua alat paket berarti dua
+  //                       jawaban untuk "apa yang ikut ke installer".
   const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8"));
   const all = Object.keys(Object.assign({}, pkg.dependencies, pkg.devDependencies));
-  for (const banned of ["react", "vite", "electron-updater", "electron-builder", "@electron-forge/cli", "nsis"]) {
-    assert.ok(!all.includes(banned), banned + " belum boleh ada di P4");
+  for (const banned of ["react", "vite", "electron-updater", "@electron-forge/cli"]) {
+    assert.ok(!all.includes(banned), banned + " tidak boleh ada");
   }
+});
+
+test("electron-builder HANYA devDependency, sama seperti electron", () => {
+  // Alat paket tidak pernah ikut ke dalam paket. Kalau ia menjadi dependensi
+  // produksi, electron-builder sendiri (219 paket) akan dipaketkan ke dalam
+  // aplikasi customer, dan allowlist `files` yang mengandalkan daftar
+  // dependencies akan ikut membawanya.
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8"));
+  assert.ok(pkg.devDependencies && pkg.devDependencies["electron-builder"], "harus devDependency");
+  assert.equal("electron-builder" in (pkg.dependencies || {}), false, "tidak boleh dependency produksi");
 });
 
 test("npm run desktop menjalankan Electron dengan shell-nya", () => {
@@ -353,8 +377,23 @@ test("REGRESI: aplikasi TIDAK menyala kalau Node tidak ditemukan", () => {
   // "Node dicari SEBELUM Controller dinyalakan" sekarang diuji sebagai PERILAKU
   // di test/desktop.startup.test.js — jauh lebih kuat daripada mencocokkan urutan
   // teks di berkas. Yang tersisa diperiksa di sini hanya sambungannya.
-  assert.match(MAIN, /resolveNode:\s*\(\)\s*=>\s*resolveNodePath\(\)/);
+  // P5 memberi resolveNodePath() argumen (mode terpaket + path Node terbundel),
+  // jadi yang diperiksa adalah DELEGASINYA, bukan tanda kurung yang kosong.
+  // Maksud tes ini sejak awal adalah "main.js menyerahkan keputusannya", dan itu
+  // tetap persis yang diperiksa.
+  assert.match(MAIN, /resolveNode:\s*\(\)\s*=>\s*resolveNodePath\(/);
   assert.match(MAIN, /createStartupFlow/);
+
+  // Dan argumennya memang disebutkan. Tanpa keduanya, aplikasi terpaket akan
+  // jatuh ke pencarian PATH — yaitu berhasil di mesin pengembang dan gagal di
+  // mesin customer pertama yang tidak punya Node.
+  assert.match(MAIN, /packaged:\s*PACKAGED/, "mode terpaket harus diteruskan");
+  assert.match(MAIN, /bundledNode:\s*PATHS\.bundledNode/, "path Node terbundel harus diteruskan");
+
+  // Browser dijaga di tempat yang SAMA, dan dengan alasan yang sama: aplikasi
+  // tanpa browser terlihat sehat sepenuhnya sampai customer menekan LOGIN TIKTOK.
+  assert.match(MAIN, /resolveBrowser:/, "browser harus ikut digerbang saat startup");
+  assert.match(MAIN, /checkPaths:/, "peta path harus diperiksa sebelum Controller menyala");
   // Dan main.js TIDAK boleh lagi memutuskan sendiri apa yang terjadi kalau Node
   // tidak ada; kalau ia mulai memutuskan, keputusan itu lolos dari tes offline.
   assert.ok(!/if \(!node\.ok\)/.test(MAIN), "keputusan node harus di startup.js");

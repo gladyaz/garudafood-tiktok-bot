@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Runtime yang DIBUNDEL AI LIVE HOST, dipaku ke versi yang benar-benar diuji.",
+    "",
+    "Dua binary ikut ke dalam installer, dan keduanya TIDAK ada di Git: node.exe",
+    "(92,8 MB) dan Chrome for Testing (386 MB, 308 berkas). Yang ada di Git adalah",
+    "berkas ini - versi, ukuran, dan SHA-256 keduanya. Jadi yang perlu direview",
+    "saat runtime berubah adalah satu diff kecil di sini, bukan binary.",
+    "",
+    "scripts/package/prepare-runtime.js MEMBANDINGKAN apa yang distaging dengan",
+    "paku di bawah dan MENOLAK melanjutkan kalau tidak cocok. Arah kegagalannya",
+    "disengaja: build yang diam-diam memaketkan Chrome versi lain adalah build yang",
+    "kita kira sudah diuji padahal belum. Kalau memang sengaja naik versi,",
+    "perbarui berkas ini (dan LICENSE Node yang cocok) di commit yang sama."
+  ],
+  "node": {
+    "version": "v24.19.0",
+    "basename": "node.exe",
+    "size": 92825416,
+    "sha256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237",
+    "license": {
+      "path": "packaging/licenses/node/LICENSE",
+      "size": 157606,
+      "sha256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5",
+      "source": "https://raw.githubusercontent.com/nodejs/node/v24.19.0/LICENSE"
+    }
+  },
+  "browser": {
+    "version": "142.0.7444.175",
+    "executable": "chrome.exe",
+    "size": 3235328,
+    "sha256": "62ec6f2d015a5897d43daa520000b8d14239f043dfee65a8ead93b2c841f733e",
+    "minFileCount": 300,
+    "note": "Chrome for Testing yang diunduh Puppeteer 24.31.0 dan dipakai seluruh jalur AutoPIN."
+  }
+}

@@ -37,14 +37,62 @@
 // dengan bentuk yang persis sama: pemeriksaannya tetap hijau, dan yang
 // disembunyikannya tetap bot yang hidup. Jadi anak-anaknya harus node.exe, dan
 // untuk itu dibutuhkan path Node yang sungguhan.
+//
+// ---------------------------------------------------------------------------
+// P5: DUA MODE, DAN YANG TERPAKET TIDAK PUNYA JALAN KELUAR
+//
+// Customer tidak memasang Node. Jadi aplikasi terpaket membawa node.exe-nya
+// sendiri di resources/runtime/node/node.exe, dan di mode itu pencarian PATH
+// TIDAK dilakukan sama sekali.
+//
+// Itu bukan penyederhanaan, itu keputusan. Kalau mode terpaket diizinkan jatuh
+// kembali ke Node sistem, maka aplikasi yang paketnya rusak akan tetap menyala
+// di mesin yang kebetulan punya Node — yaitu di mesin PENGEMBANG, dan hanya di
+// situ. Kerusakannya lalu baru muncul di mesin customer pertama yang tidak punya
+// Node, sesudah installer-nya dikirim. Lebih buruk lagi, versi Node sistem itu
+// bisa berbeda dari yang pernah diuji, dan bot yang berjalan di atas runtime
+// yang belum pernah diuji adalah hal yang paling tidak ingin kita temukan saat
+// LIVE sudah jalan.
+//
+// Jadi: terpaket = terbundel atau TIDAK MENYALA.
 
 const fs = require("node:fs");
 const path = require("node:path");
 
-// Nama binary Electron, untuk mengenali kapan execPath BUKAN Node.
-function looksLikeElectron(execPath) {
+// Apakah execPath benar-benar binary Node.
+//
+// ---------------------------------------------------------------------------
+// KENAPA PERTANYAANNYA DIBALIK
+//
+// Versi pertama bertanya "apakah ini electron?", dengan membandingkan nama
+// berkas terhadap "electron.exe". Itu benar saat dijalankan dari checkout
+// pengembang, di mana binary Electron memang bernama electron.exe.
+//
+// Aplikasi yang DIPASANG tidak. electron-builder mengganti nama binary-nya
+// menjadi nama produk — di sini "AI LIVE HOST.exe". Jadi pertanyaan lama
+// menjawab "bukan electron" untuk sebuah proses yang justru Electron, dan
+// jawabannya adalah "pakai execPath apa adanya sebagai Node".
+//
+// Akibatnya bot dan service akan dinyalakan sebagai "AI LIVE HOST.exe", dan
+// SELURUH perlindungan proses yatim mencari Name='node.exe'. Itu mengulang
+// insiden 2026-10-05 dengan bentuk yang persis sama: pemeriksaannya tetap
+// hijau, dan yang disembunyikannya tetap bot yang hidup di akun sungguhan.
+//
+// Jadi sekarang yang ditanyakan adalah "apakah ini Node?", dan apa pun yang
+// bukan diperlakukan sebagai bukan. Daftar nama yang DIKENALI selalu lebih aman
+// daripada daftar nama yang DICURIGAI: nama baru yang tak terduga jatuh ke sisi
+// hati-hati, bukan ke sisi yang menyalakan bot tak terlihat.
+function looksLikeNode(execPath) {
   const base = path.basename(String(execPath || "")).toLowerCase();
-  return base === "electron.exe" || base === "electron";
+  return base === "node.exe" || base === "node";
+}
+
+// Dipertahankan: "bukan Node" adalah pertanyaan yang dipakai jalur di bawah, dan
+// nama ini sudah dipakai tes yang mengikat kontraknya. Artinya kini lebih luas
+// daripada namanya — ia benar untuk electron.exe DAN untuk Electron yang sudah
+// diganti nama menjadi nama produk.
+function looksLikeElectron(execPath) {
+  return !looksLikeNode(execPath);
 }
 
 function candidateNames() {
@@ -70,23 +118,67 @@ function searchPath(env) {
   return null;
 }
 
+function isFile(file, fsImpl) {
+  try {
+    return fsImpl.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
 // Mengembalikan { ok, nodePath } atau { ok:false, reason }.
 //
 // FAIL-CLOSED: kalau Node sungguhan tidak ditemukan, ini TIDAK jatuh kembali ke
 // electron.exe. Jatuh kembali akan menghasilkan sistem yang menyala tapi tidak
 // bisa menghentikan bot-nya sendiri — keadaan yang lebih buruk daripada tidak
 // menyala, karena ia hanya terlihat saat sudah ada yang berjalan di akun sungguhan.
-function resolveNodePath({ execPath = process.execPath, env = process.env } = {}) {
+//
+//   packaged     true untuk aplikasi yang DIPASANG. Di mode ini HANYA bundledNode
+//                yang dipakai; PATH dan AILIVE_NODE_PATH tidak dilihat.
+//   bundledNode  path node.exe di dalam resources. Wajib saat packaged.
+function resolveNodePath({
+  execPath = process.execPath,
+  env = process.env,
+  packaged = false,
+  bundledNode = null,
+  fs: fsImpl = fs,
+} = {}) {
+  // --- aplikasi terpaket ----------------------------------------------------
+  //
+  // Diperiksa PALING DULU, dan tidak pernah jatuh ke cabang mana pun di bawahnya.
+  // Urutan ini yang menjadikan "tidak ada jalan keluar" sebagai sifat struktur,
+  // bukan sesuatu yang bergantung pada tidak adanya bug di bawah.
+  if (packaged) {
+    if (typeof bundledNode !== "string" || bundledNode === "") {
+      // Terpaket tapi pemanggilnya tidak menyebutkan Node terbundel. Itu cacat
+      // pemrograman, bukan keadaan mesin customer — dan ia TIDAK boleh berakhir
+      // sebagai pencarian PATH yang diam-diam berhasil di mesin pengembang.
+      return { ok: false, reason: "bundled-node-not-configured" };
+    }
+    if (isFile(bundledNode, fsImpl)) return { ok: true, nodePath: bundledNode, from: "bundled" };
+    return { ok: false, reason: "bundled-node-missing" };
+  }
+
+  // --- development ----------------------------------------------------------
+  // Perilakunya TIDAK berubah sedikit pun dari P4.
+
   // Dijalankan dengan node biasa (mis. tes, atau `node controller/index.js`):
   // execPath sudah benar.
   if (!looksLikeElectron(execPath)) return { ok: true, nodePath: execPath, from: "execPath" };
 
-  // Jalan keluar eksplisit untuk lingkungan yang menaruh Node di tempat tak biasa,
-  // dan nanti untuk aplikasi terpaket yang membundel Node-nya sendiri.
+  // Jalan keluar eksplisit untuk lingkungan yang menaruh Node di tempat tak biasa.
+  //
+  // Ketiga cabangnya dipertahankan PERSIS seperti P4, termasuk yang jatuh ke
+  // pencarian PATH saat override menunjuk sesuatu yang ada tapi bukan berkas.
+  // Fase packaging tidak boleh ikut mengubah arti jalur development: perubahan
+  // yang tidak diminta dan tidak tertutup tes adalah cara paling halus untuk
+  // merusak sesuatu yang tidak sedang dikerjakan.
   const override = env && env.AILIVE_NODE_PATH;
   if (override) {
     try {
-      if (fs.statSync(override).isFile()) return { ok: true, nodePath: override, from: "AILIVE_NODE_PATH" };
+      if (fsImpl.statSync(override).isFile()) {
+        return { ok: true, nodePath: override, from: "AILIVE_NODE_PATH" };
+      }
     } catch {
       return { ok: false, reason: "node-path-invalid" };
     }
@@ -98,4 +190,4 @@ function resolveNodePath({ execPath = process.execPath, env = process.env } = {}
   return { ok: false, reason: "node-not-found" };
 }
 
-module.exports = { resolveNodePath, looksLikeElectron, searchPath };
+module.exports = { resolveNodePath, looksLikeNode, looksLikeElectron, searchPath };

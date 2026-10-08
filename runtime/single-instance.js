@@ -23,6 +23,24 @@ const pathDefault = require("path");
 
 const LOCK_FILENAME = ".bot.lock";
 
+// Variabel environment yang memindahkan LETAK kunci — bukan artinya.
+//
+// Dibutuhkan sejak P5. Di aplikasi terpaket, cwd bot adalah direktori instalasi
+// (resources/app), yang hanya dibaca: menulis kunci ke sana akan gagal, dan
+// acquire() memperlakukan kegagalan menulis sebagai mode "unlocked" — artinya
+// perlindungan bot kedua DIAM-DIAM mati. Itu persis perlindungan yang dibuat
+// sesudah insiden 2026-10-05, jadi ia tidak boleh hilang karena letak berkas.
+//
+// Dibaca DI SINI, bukan di index.js, dengan sengaja: kalau index.js yang
+// membacanya, maka letak kunci diputuskan di dua tempat — di sini untuk default
+// dan di sana untuk mode terpaket — dan dua tempat yang memutuskan hal yang sama
+// akan menyimpang. Controller mengisinya lewat toEnv(); lihat
+// controller/config-manager.js.
+//
+// Namanya diEKSPOR supaya pengisi dan pembacanya memakai string yang SAMA, pola
+// yang sama dengan RUNTIME_CONFIG_ENV di runtime/runtime-config.js.
+const LOCK_FILE_ENV = "AILIVE_LOCK_FILE";
+
 // process.kill(pid, 0) tidak mengirim sinyal, hanya menanyakan keberadaan proses.
 // Jalan juga di Windows. EPERM = proses ADA tapi milik user lain.
 function pidAlive(pid) {
@@ -43,8 +61,18 @@ function createInstanceLock({
   isAlive = pidAlive,
   now = () => Date.now(),
   logger = console,
+  env = process.env,
 } = {}) {
-  const target = file || pathDefault.join(process.cwd(), LOCK_FILENAME);
+  // Urutannya: argumen eksplisit, lalu environment, lalu cwd.
+  //
+  // Argumen tetap menang supaya tes dan pemanggil yang menyebutkan berkasnya
+  // tidak pernah bisa diganggu oleh environment. cwd tetap menjadi default
+  // terakhir supaya `node index.js` dari terminal repo berperilaku persis
+  // seperti sebelum P5.
+  const fromEnv = env && typeof env[LOCK_FILE_ENV] === "string" && env[LOCK_FILE_ENV] !== ""
+    ? env[LOCK_FILE_ENV]
+    : null;
+  const target = file || fromEnv || pathDefault.join(process.cwd(), LOCK_FILENAME);
   let held = false;
 
   const log = (line) => {
@@ -120,4 +148,4 @@ function createInstanceLock({
   return { acquire, release, __read: read, __state: () => ({ held, target, pid }) };
 }
 
-module.exports = { createInstanceLock, pidAlive, LOCK_FILENAME };
+module.exports = { createInstanceLock, pidAlive, LOCK_FILENAME, LOCK_FILE_ENV };

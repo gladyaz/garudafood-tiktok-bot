@@ -502,7 +502,7 @@
     // `profile-in-use`.
     //
     // Terlihat di UI sungguhan pada 2026-10-08: status menang (identitas terbaca,
-    // "Connected as agen_mulia_abadi") sementara products kalah, sehingga panel
+    // "Connected as <akun>") sementara products kalah, sehingga panel
     // kesiapan melaporkan "Products: None detected" padahal katalognya tidak
     // pernah benar-benar dibaca. Angka yang salah itu sekarang ikut menentukan
     // apakah START BOT boleh ditekan, jadi ia harus benar.

@@ -24,3 +24,19 @@ data/config.json.tmp
 
 # Controller: artefak config runtime (satu per run, dihapus saat Stop)
 data/.runtime/
+
+# ---------------------------------------------------------------------------
+# P5 packaging (Windows pilot)
+
+# Artefak build electron-builder: installer dan aplikasi terpaket. Keduanya
+# ratusan MB dan dibentuk ulang dari sumber, jadi tidak pernah ikut ke Git.
+dist/
+
+# Runtime yang DISTAGING dari mesin build, bukan ditulis tangan:
+#   build/vendor/node/      node.exe v24.19.0 (92.8 MB)
+#   build/vendor/browser/   Chrome for Testing (386 MB, 308 berkas)
+#   build/generated/        manifest runtime hasil prepare
+# Versi + SHA-256 keduanya dicatat di manifest, jadi yang perlu direview ada di
+# manifest - bukan di binarinya.
+build/vendor/
+build/generated/

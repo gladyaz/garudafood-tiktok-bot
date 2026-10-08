@@ -23,7 +23,7 @@ const path = require("node:path");
 const fsDefault = require("node:fs");
 const { createStateMachine, STATES } = require("./state-machine");
 const { createProcessManager } = require("./process-manager");
-const { createConfigManager, toEnv, unmappedFields, validateConfig } = require("./config-manager");
+const { createConfigManager, toEnv, toAutopinConfig, unmappedFields, validateConfig } = require("./config-manager");
 const { createPreflight, firstFailure } = require("./preflight");
 const { createActivityFeed } = require("./activity");
 const { translate } = require("./errors");
@@ -111,6 +111,13 @@ function createController({
   playableScenes = null,
   // Direktori artefak config runtime. Satu berkas per run Controller.
   runtimeDir = null,
+  // P5: path yang diberitahukan aplikasi desktop (profil browser, direktori
+  // debug, kunci bot, browser terbundel). Diteruskan apa adanya ke toEnv(),
+  // yang memutuskan mana yang menang atas nilai config — lihat
+  // controller/config-manager.js.
+  //
+  // Kosong di jalur manual, dan di situ seluruh perilakunya seperti sebelum P5.
+  paths = null,
   // P4: fungsi browser untuk alur login. Di-inject; tanpa ini login melaporkan
   // dirinya tidak terkonfigurasi dan TIDAK membuka apa pun.
   loginDeps = null,
@@ -230,6 +237,14 @@ function createController({
         // Thunk yang SAMA, bukan nilainya: satu pembacaan, satu cache, dipakai
         // preflight dan validasi pemetaan bersama.
         playableScenes: scenesOf,
+        // Profil yang diperiksa preflight WAJIB profil yang nanti dibuka.
+        //
+        // Dipakai fungsi resolusi yang sama dengan jalur pin dan jalur login,
+        // bukan salinannya: sejak P5 cwd Controller (direktori instalasi) dan
+        // letak profil (%APPDATA%) berbeda, jadi menghitungnya dari cwd akan
+        // memeriksa direktori yang tidak pernah dipakai — dan, lebih buruk,
+        // MEMBUATNYA di dalam direktori instalasi.
+        resolveProfileDir: (cfg) => toAutopinConfig(cfg, { paths }).profileDir,
         listOrphans: orphanSweeper
           ? async () => {
               // Penyapu yang sama dipakai untuk MENGHITUNG saja di preflight.
@@ -500,6 +515,10 @@ function createController({
 
     const env = toEnv(config, {
       base: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+      // Profil, direktori debug, kunci bot, dan browser terbundel. Anak-anak
+      // TIDAK mewarisi environment Controller (lihat process-manager.js), jadi
+      // inilah satu-satunya jalan nilai-nilai itu sampai ke bot dan service.
+      paths,
     });
     // SATU variabel environment yang P2 tambahkan: path ke artefak. Isinya JSON,
     // bukan daftar yang disandikan ke dalam string environment.

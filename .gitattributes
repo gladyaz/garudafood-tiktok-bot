@@ -1,0 +1,30 @@
+# Berkas yang BYTE-nya diverifikasi, jadi Git tidak boleh menyentuhnya.
+#
+# ---------------------------------------------------------------------------
+# KENAPA INI PERLU ADA
+#
+# Repo ini dikerjakan di Windows dengan core.autocrlf=true, jadi Git MENGUBAH
+# LF menjadi CRLF saat checkout. Untuk kode, itu tidak berakibat apa pun.
+#
+# Untuk lisensi Node ia berakibat fatal, dan dengan cara yang hanya muncul di
+# mesin ORANG LAIN:
+#
+#   scripts/package/prepare-runtime.js memverifikasi SHA-256 berkas lisensi
+#   terhadap paku di packaging/runtime-pins.json sebelum membundel node.exe.
+#   Kewajiban redistribusi tidak boleh dipenuhi oleh berkas yang isinya tidak
+#   kita kenal, jadi pemeriksaannya memang keras.
+#
+# Dengan konversi CRLF, berkas yang sama menjadi 160.552 byte dengan sha256
+# d9c4eeda... bukan 157.606 byte dengan 148eacf7... Hasilnya:
+#
+#   - di mesin ini build LULUS (berkasnya ditulis dengan LF)
+#   - di clone BARU mana pun build GAGAL: node-license-sha256-mismatch
+#
+# Diperiksa langsung pada 2026-10-08 sebelum sempat terjadi. `-text` membuat Git
+# memperlakukan berkasnya apa adanya, tanpa konversi akhir baris, di semua
+# platform.
+packaging/licenses/** -text
+
+# Paku runtime ikut dijaga: isinya dibaca sebagai JSON, tapi menyimpannya
+# konsisten membuat diff antar-platform tetap bisa dibaca.
+packaging/runtime-pins.json -text

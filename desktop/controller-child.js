@@ -24,6 +24,22 @@ const CONTROLLER_SCRIPT = path.join("controller", "index.js");
 // Membuat pegangan ke satu proses Controller. Bentuknya sengaja cocok dengan apa
 // yang dibutuhkan desktop/lifecycle.js, supaya lifecycle bisa diuji dengan
 // pegangan palsu tanpa pernah menyalakan proses.
+// Path yang diteruskan ke Controller sebagai argumen, dan nama flag-nya.
+//
+// Daftar TERTUTUP dan satu arah: desktop memberi tahu, Controller menerima.
+// Tidak ada satu pun dari ini yang dihitung ulang di sisi Controller — kalau
+// dihitung ulang, letak data customer akan ditentukan di dua tempat, dan dua
+// tempat yang menghitung hal yang sama akan menyimpang. Satu-satunya pemilik
+// keputusannya adalah desktop/paths.js.
+const PATH_FLAGS = Object.freeze([
+  ["configFile", "--config-file="],
+  ["runtimeDir", "--runtime-dir="],
+  ["profileDir", "--profile-dir="],
+  ["debugDir", "--debug-dir="],
+  ["lockFile", "--lock-file="],
+  ["browserPath", "--browser-path="],
+]);
+
 function spawnControllerChild({
   cwd = process.cwd(),
   nodePath = process.execPath,
@@ -32,6 +48,10 @@ function spawnControllerChild({
   env = process.env,
   // Path Node untuk anak-anak Controller (bot dan service AutoPIN).
   nodePathForChildren = null,
+  // Peta path dari desktop/paths.js. Kosong = Controller memakai default-nya
+  // sendiri, yang merupakan perilaku jalur manual `node controller/index.js`
+  // dan TIDAK berubah karena P5.
+  paths = null,
   onLine = () => {},
   log = () => {},
 } = {}) {
@@ -43,6 +63,16 @@ function spawnControllerChild({
   // dengan bentuk yang persis sama. Lihat desktop/node-path.js.
   const childArgs = [file, "--port=" + String(port), "--parent-pipe"];
   if (nodePathForChildren) childArgs.push("--node-path=" + nodePathForChildren);
+
+  // Flag path diteruskan HANYA kalau ada isinya. Nilai kosong tidak pernah
+  // menjadi flag kosong: `--config-file=` tanpa nilai akan diartikan Controller
+  // sebagai path kosong, dan itu lebih buruk daripada tidak menyebutkannya.
+  if (paths) {
+    for (const [key, flag] of PATH_FLAGS) {
+      const value = paths[key];
+      if (typeof value === "string" && value !== "") childArgs.push(flag + value);
+    }
+  }
 
   const child = spawn(
     nodePath,
@@ -221,4 +251,4 @@ function createReadinessProbe({ port = 4782, timeoutMs = 1500 } = {}) {
   };
 }
 
-module.exports = { spawnControllerChild, createReadinessProbe, CONTROLLER_SCRIPT };
+module.exports = { spawnControllerChild, createReadinessProbe, CONTROLLER_SCRIPT, PATH_FLAGS };

@@ -25,15 +25,35 @@
 // sini — kalau login dilakukan di BrowserWindow, sesinya tersimpan di tempat yang
 // salah dan AutoPIN tetap tidak login.
 
-const path = require("node:path");
 const { app, BrowserWindow, dialog, shell } = require("electron");
 
 const { createDesktopLifecycle } = require("./lifecycle");
 const { createStartupFlow, createExitAnnouncer } = require("./startup");
 const { spawnControllerChild, createReadinessProbe } = require("./controller-child");
 const { resolveNodePath } = require("./node-path");
+const { resolveBrowserPath } = require("./browser-path");
+const { resolveAppPaths, assertWritableOutsideCode, describePaths, PRODUCT_NAME } = require("./paths");
+const { createSupportLog } = require("./support-log");
 
-const ROOT = path.resolve(__dirname, "..");
+// Nama aplikasi disetel SEBELUM apa pun membaca userData.
+//
+// Ini bukan kosmetik. app.getPath("userData") dibentuk dari nama aplikasi, jadi
+// nama inilah yang menentukan apakah data customer tinggal di
+// %APPDATA%\AI LIVE HOST atau di tempat lain. Dan nilainya TIDAK bisa diandalkan
+// datang dari package.json: saat dijalankan sebagai `electron desktop/main.js`,
+// Electron melaporkan namanya sendiri ("Electron") dan mengabaikan productName —
+// diperiksa langsung di mesin ini pada 2026-10-08. Jadi disebutkan eksplisit,
+// dari satu sumber bersama desktop/paths.js.
+app.setName(PRODUCT_NAME);
+
+// Peta path untuk mode yang sedang berjalan. Satu kali, di satu tempat.
+const PATHS = resolveAppPaths({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  userData: app.getPath("userData"),
+});
+const PACKAGED = PATHS.mode === "packaged";
+
 const PORT = 4782;
 const BASE = "http://127.0.0.1:" + PORT;
 const ALLOWED_ORIGIN = BASE;
@@ -42,11 +62,22 @@ let win = null;
 let lifecycle = null;
 let quitting = false;
 
+// Log dukungan HANYA untuk aplikasi terpaket.
+//
+// Customer tidak punya terminal: stdout aplikasi yang dibuka dari shortcut tidak
+// pergi ke mana pun, jadi tanpa berkas ini satu-satunya laporan yang bisa ia
+// berikan adalah "tidak bisa dibuka". Saat dev, terminalnya ADA dan menulis
+// berkas kedua hanya akan membuat dua sumber kebenaran.
+const supportLog = PACKAGED ? createSupportLog({ dir: PATHS.logsDir }) : null;
+
 function log(tag, fields = {}) {
   const parts = Object.entries(fields)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
     .map(([k, v]) => k + "=" + String(v));
-  console.log(["[DESKTOP_" + tag + "]"].concat(parts).join(" "));
+  const line = ["[DESKTOP_" + tag + "]"].concat(parts).join(" ");
+  console.log(line);
+  // Penyuntingan rahasia dan rotasi diurus support-log.js.
+  if (supportLog) supportLog.write(line);
 }
 
 // --- jembatan HTTP tipis ke Controller ---------------------------------------
@@ -65,16 +96,38 @@ async function api(pathname, method = "GET") {
   }
 }
 
-function buildLifecycle(nodeForChildren) {
+function buildLifecycle(nodeForChildren, browserForChildren) {
   const probe = createReadinessProbe({ port: PORT });
   return createDesktopLifecycle({
     spawnController: () =>
       spawnControllerChild({
-        cwd: ROOT,
+        // cwd anak DISEBUTKAN, bukan diwarisi.
+        //
+        // Aplikasi yang dibuka dari shortcut Desktop mewarisi cwd dari Explorer,
+        // yang bisa berupa Desktop, Start Menu, atau apa pun. Controller memakai
+        // cwd untuk menemukan skrip anaknya, jadi cwd yang diwarisi berarti
+        // "index.js tidak ditemukan" di mesin yang shortcut-nya dibuat di tempat
+        // berbeda — kegagalan yang tidak akan pernah muncul saat dijalankan dari
+        // terminal repo.
+        cwd: PATHS.codeRoot,
         port: PORT,
         // Bot dan service WAJIB node.exe, bukan electron.exe: seluruh
         // perlindungan proses yatim mencari Name='node.exe'. Lihat node-path.js.
         nodePathForChildren: nodeForChildren,
+        // Satu-satunya pemilik keputusan path adalah desktop/paths.js. Controller
+        // tidak menghitung ulang apa pun dari cwd-nya: ia diberi tahu.
+        //
+        // Kalau Controller ikut menghitung, maka letak data customer ditentukan
+        // di dua tempat — dan dua tempat yang menghitung hal yang sama akan
+        // menyimpang. Pelajaran yang sama dengan salinan normalizeTitleKey di P2.
+        paths: {
+          configFile: PATHS.configFile,
+          runtimeDir: PATHS.runtimeDir,
+          profileDir: PATHS.profileDir,
+          debugDir: PATHS.debugDir,
+          lockFile: PATHS.lockFile,
+          browserPath: browserForChildren,
+        },
         // Argumen yang mengizinkan aksi nyata TIDAK diteruskan dari sini.
         // Otoritasnya per-run dan diberikan Controller sendiri saat START BOT
         // lolos preflight (controller/run-authority.js).
@@ -82,6 +135,9 @@ function buildLifecycle(nodeForChildren) {
         onLine: ({ channel, line }) => {
           if (channel === "stderr") console.error(line);
           else console.log(line);
+          // Baris Controller ikut ke log dukungan: justru baris inilah yang
+          // menjawab "kenapa tidak mau start" saat tidak ada terminal.
+          if (supportLog) supportLog.write(line);
         },
         log,
       }),
@@ -245,12 +301,22 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    log("MODE", describePaths(PATHS));
+
+    // Browser diresolusi SEKALI, dan jawabannya dipakai dua kali: sebagai
+    // gerbang startup (ada atau aplikasi tidak menyala) dan sebagai nilai yang
+    // diteruskan ke Controller. Meresolusinya dua kali membuka kemungkinan
+    // gerbangnya memeriksa satu hal dan yang dipakai hal lain.
+    const browser = resolveBrowserPath({ packaged: PACKAGED, bundledBrowser: PATHS.bundledBrowser });
+
     // Seluruh keputusan startup ada di desktop/startup.js, yang murni dan diuji
     // offline. Yang tertinggal di sini hanya sambungan ke Electron.
     const startup = createStartupFlow({
-      resolveNode: () => resolveNodePath(),
+      checkPaths: () => assertWritableOutsideCode(PATHS),
+      resolveNode: () => resolveNodePath({ packaged: PACKAGED, bundledNode: PATHS.bundledNode }),
+      resolveBrowser: () => browser,
       buildLifecycle: (nodePath) => {
-        lifecycle = buildLifecycle(nodePath);
+        lifecycle = buildLifecycle(nodePath, browser.browserPath);
         return lifecycle;
       },
       createWindow,

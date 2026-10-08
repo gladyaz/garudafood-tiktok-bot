@@ -21,6 +21,10 @@ const fsDefault = require("node:fs");
 // autopin/config.js MURNI (satu-satunya require di dalamnya adalah node:path),
 // jadi memuatnya di proses Controller tidak menyeret Puppeteer ke mana pun.
 const { loadConfig: autopinConfig } = require("../autopin/config");
+// Hanya untuk nama variabelnya; modulnya ringan (fs + path). Namanya diIMPOR,
+// bukan ditulis ulang, supaya pengisi dan pembacanya tidak bisa menyimpang —
+// pola yang sama dengan RUNTIME_CONFIG_ENV di controller/index.js.
+const { LOCK_FILE_ENV } = require("../runtime/single-instance");
 
 const CONFIG_VERSION = 1;
 
@@ -316,8 +320,35 @@ function createConfigManager({ file, fs = fsDefault } = {}) {
 //   - mappings[].reply    -> teks masih DEFAULT_TEMPLATE di autocomment/formatter.js
 // Keduanya butuh perubahan core, dan core sedang frozen. Dilaporkan lewat
 // unmappedFields() supaya tidak ada yang mengira keduanya sudah berlaku.
-function toEnv(config, { base = {} } = {}) {
+// Path yang DIBERITAHUKAN aplikasi desktop menang atas nilai di config.
+//
+// ---------------------------------------------------------------------------
+// KENAPA MENANG, DAN BUKAN SEKADAR MENJADI DEFAULT
+//
+// Tiga nilai di config adalah path relatif: profileDir, debugDir, dan (lewat
+// ketiadaannya) chromePath. Nilai relatif diresolusi autopin/config.js terhadap
+// AKAR MODUL ITU SENDIRI — yang di aplikasi terpaket adalah resources/app, yaitu
+// direktori instalasi.
+//
+// Jadi kalau config yang menang:
+//   - profil browser (dengan SESI TIKTOK customer) ditulis ke direktori
+//     instalasi, lalu terhapus saat uninstall
+//   - chromePath kosong berarti Puppeteer mencari browser di cache yang tidak
+//     ada di mesin customer
+//
+// Keduanya tidak muncul sebagai error. Yang pertama muncul sebagai "aplikasinya
+// lupa login saya setiap update", yang kedua sebagai LOGIN TIKTOK yang tidak
+// melakukan apa pun.
+//
+// Di jalur manual (`node controller/index.js`) tidak ada yang memberitahukan
+// apa pun, `paths` kosong, dan config tetap menang — perilaku sebelum P5.
+function pick(fromPaths, fromConfig) {
+  return typeof fromPaths === "string" && fromPaths !== "" ? fromPaths : fromConfig;
+}
+
+function toEnv(config, { base = {}, paths = null } = {}) {
   const s = config.settings;
+  const p = paths || {};
   const env = Object.assign({}, base, {
     TIKTOK_USERNAME: String(config.tiktok.username || ""),
     OBS_HOST: String(config.obs.host),
@@ -329,11 +360,11 @@ function toEnv(config, { base = {} } = {}) {
     AUTOPIN_PORT: String(s.autopinPort),
     AUTOPIN_TIMEOUT_MS: String(s.autopinTimeoutMs),
     AUTOPIN_CONSOLE_URL: String(s.consoleUrl),
-    AUTOPIN_PROFILE_DIR: String(s.profileDir),
-    AUTOPIN_DEBUG_DIR: String(s.debugDir),
+    AUTOPIN_PROFILE_DIR: String(pick(p.profileDir, s.profileDir)),
+    AUTOPIN_DEBUG_DIR: String(pick(p.debugDir, s.debugDir)),
     AUTOPIN_EXPECTED_SHOP: String(s.expectedShop || ""),
     AUTOPIN_FORBIDDEN_SHOPS: s.forbiddenShops.join(","),
-    AUTOPIN_CHROME_PATH: String(s.chromePath || ""),
+    AUTOPIN_CHROME_PATH: String(pick(p.browserPath, s.chromePath || "")),
 
     AUTOCOMMENT_ENABLED: s.autoCommentEnabled ? "true" : "false",
     AUTOCOMMENT_TRANSPORT: String(s.autoCommentTransport),
@@ -355,6 +386,18 @@ function toEnv(config, { base = {} } = {}) {
   // membaca AUTOPIN_PRODUCT_* dari .env lewat autopin/scene-map.js, persis
   // seperti sebelumnya.
 
+  // Letak kunci satu-instance bot, HANYA kalau desktop memberitahukannya.
+  //
+  // Tanpa ini, bot terpaket akan menulis .bot.lock ke cwd-nya — direktori
+  // instalasi — dan kegagalan menulis di sana diperlakukan createInstanceLock
+  // sebagai mode "unlocked": perlindungan bot kedua mati DIAM-DIAM. Itu persis
+  // perlindungan yang dibuat sesudah insiden LIVE 2026-10-05, dan ia tidak boleh
+  // hilang karena sebuah direktori yang tidak bisa ditulis.
+  //
+  // Variabelnya TIDAK pernah disetel di jalur manual, jadi `node index.js` tetap
+  // memakai .bot.lock di cwd seperti sebelumnya.
+  if (typeof p.lockFile === "string" && p.lockFile !== "") env[LOCK_FILE_ENV] = p.lockFile;
+
   return env;
 }
 
@@ -375,8 +418,8 @@ function toEnv(config, { base = {} } = {}) {
 //
 // Dengan dikomposisikan, satu-satunya sumber bentuk tetap autopin/config.js. Kalau
 // ia menambah field, jalur ini ikut mendapatkannya tanpa ada yang perlu ingat.
-function toAutopinConfig(config, { base = {} } = {}) {
-  return autopinConfig(toEnv(config, { base }));
+function toAutopinConfig(config, { base = {}, paths = null } = {}) {
+  return autopinConfig(toEnv(config, { base, paths }));
 }
 
 // Field yang tersimpan di config tapi belum sampai ke core.

@@ -142,6 +142,17 @@ function createPreflight({
   // beserta obs-websocket-js dan tiktok-live-connector sebelum port terikat.
   playableScenes = null,
   cwd = process.cwd(),
+  // (config) -> path absolut profil browser yang AKAN DIPAKAI.
+  //
+  // Di-inject oleh controller.js dengan fungsi resolusi yang SAMA yang dipakai
+  // jalur pin dan jalur login (toAutopinConfig). Itu bukan kerapian: preflight
+  // yang memeriksa direktori LAIN daripada yang nanti dibuka service adalah
+  // preflight yang bisa melaporkan "siap" untuk profil yang tidak pernah
+  // dipakai — dan sejak P5 keduanya memang berbeda, karena aplikasi terpaket
+  // menaruh profil di %APPDATA% sementara cwd-nya adalah direktori instalasi.
+  //
+  // Tanpa injeksi: resolusi lama terhadap cwd, yang benar untuk jalur manual.
+  resolveProfileDir = null,
   path = pathDefault,
 } = {}) {
   // Dibaca sekali, saat pertama dibutuhkan. Lihat controller/lazy.js.
@@ -257,7 +268,12 @@ function createPreflight({
 
     // --- profile ------------------------------------------------------------
     try {
-      const dir = path.isAbsolute(s.profileDir) ? s.profileDir : path.resolve(cwd, s.profileDir);
+      const dir =
+        typeof resolveProfileDir === "function"
+          ? resolveProfileDir(config)
+          : path.isAbsolute(s.profileDir)
+            ? s.profileDir
+            : path.resolve(cwd, s.profileDir);
       const r = await checkProfileDir({ dir });
       checks.profile = r && r.ok ? { ok: true } : { ok: false, reason: (r && r.reason) || "profile-dir-unusable" };
     } catch {

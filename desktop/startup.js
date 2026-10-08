@@ -108,8 +108,34 @@ function createExitAnnouncer({
 }
 
 function createStartupFlow({
+  // () -> { ok, violations? }
+  //
+  // Memeriksa bahwa tidak ada data customer yang akan ditulis ke dalam direktori
+  // instalasi. OPSIONAL dengan alasan yang sama seperti resolveBrowser: hanya
+  // aplikasi terpaket yang punya direktori instalasi untuk dilanggar.
+  //
+  // Dijalankan PALING DULU, sebelum Node dan browser. Urutannya bukan selera:
+  // kalau peta path-nya salah, maka path Node terbundel dan path browser
+  // terbundel yang dihitung dari peta itu juga salah, dan laporan "node tidak
+  // ditemukan" akan menunjuk ke gejala, bukan ke sebab.
+  checkPaths = null,
   // () -> { ok, nodePath, from, reason }
   resolveNode = null,
+  // () -> { ok, browserPath, from, reason }
+  //
+  // OPSIONAL, dan itu keputusan — bukan kelonggaran yang tertinggal.
+  //
+  // Saat dev, browser datang dari cache Puppeteer dan tidak ada yang perlu
+  // diperiksa lebih dulu; itu perilaku sebelum P5 dan ia tidak ikut berubah.
+  // Yang punya sesuatu untuk diperiksa hanyalah aplikasi terpaket, dan di sana
+  // desktop/main.js SELALU menyediakannya.
+  //
+  // Dibuat opsional karena alternatifnya lebih buruk: menjadikannya wajib akan
+  // membuat setiap pemanggil lama melaporkan "startup-not-configured", yaitu
+  // kegagalan yang menyesatkan untuk sesuatu yang memang tidak relevan di
+  // jalurnya. Yang menjaga agar ia tidak diam-diam hilang dari jalur terpaket
+  // adalah tes, bukan tanda tangan fungsi ini.
+  resolveBrowser = null,
   // (nodePath) -> lifecycle
   buildLifecycle = null,
   // () -> void. Dipanggil HANYA sesudah Controller siap.
@@ -156,6 +182,30 @@ function createStartupFlow({
     t0 = now();
     log("START", { ms: 0 });
 
+    // Peta path diperiksa sebelum segala sesuatu yang dihitung DARI peta itu.
+    //
+    // Yang dijaga: data customer — config, profil browser yang memuat sesinya,
+    // log — tidak boleh berada di dalam direktori instalasi. Kalau pernah
+    // terjadi, uninstall akan menghapus sesinya bersama binary-nya dan setiap
+    // reinstall memaksanya login lagi. Tidak ada satu pun dari itu yang muncul
+    // sebagai error; semuanya muncul sebagai "aplikasinya lupa".
+    if (typeof checkPaths === "function") {
+      let guard;
+      try {
+        guard = checkPaths();
+      } catch {
+        guard = { ok: false };
+      }
+      if (!guard || guard.ok !== true) {
+        const where = guard && Array.isArray(guard.violations)
+          ? guard.violations.map((v) => v.name + "→" + v.inside).join(",")
+          : "unknown";
+        // Nama field dan nama akar saja. Bukan path-nya.
+        log("PATHS_UNSAFE", { violations: where });
+        return fail("paths-unsafe");
+      }
+    }
+
     // Node sungguhan dicari LEBIH DULU. Kalau tidak ada, aplikasi TIDAK menyala:
     // Controller yang berjalan tanpa bisa menyalakan bot-nya adalah aplikasi yang
     // terlihat sehat sampai customer menekan START BOT.
@@ -170,6 +220,28 @@ function createStartupFlow({
       return fail("node-not-found");
     }
     log("NODE_RESOLVED", { from: node.from, ms: elapsed() });
+
+    // Browser diperiksa dengan alasan yang PERSIS sama dengan Node, dan karena
+    // itu di tempat yang sama: sebelum Controller menyala.
+    //
+    // Aplikasi yang menyala tanpa browser akan terlihat sehat sepenuhnya —
+    // dashboard muncul, Settings bisa disimpan, mapping bisa dibuat — dan baru
+    // gagal saat customer menekan LOGIN TIKTOK atau START BOT. Yaitu pada saat
+    // LIVE-nya sudah dijadwalkan.
+    if (typeof resolveBrowser === "function") {
+      let browser;
+      try {
+        browser = resolveBrowser();
+      } catch {
+        browser = { ok: false, reason: "browser-resolve-failed" };
+      }
+      if (!browser || browser.ok !== true) {
+        log("BROWSER_NOT_FOUND", { reason: (browser && browser.reason) || "unknown" });
+        return fail("browser-not-found");
+      }
+      // from=bundled (terpaket) atau puppeteer-cache (dev). TIDAK memuat path.
+      log("BROWSER_RESOLVED", { from: browser.from, ms: elapsed() });
+    }
 
     try {
       lifecycle = buildLifecycle(node.nodePath);
