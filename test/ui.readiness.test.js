@@ -352,3 +352,27 @@ test("kejadian balasan chat memakai kalimat yang sama di kedua lapis", () => {
   const server = require("../controller/activity.js");
   assert.equal(server.MESSAGES.AUTOCOMMENT_SUCCESS, items[0].text);
 });
+
+// --- kontrak app.js <-> ui-logic.js ----------------------------------------
+
+test("KONTRAK: setiap U.<fungsi> yang dipakai app.js memang diekspor", () => {
+  // Satu-satunya cara perubahan kalimat seperti ini bisa merusak halaman adalah
+  // app.js memanggil sesuatu yang tidak ada: `U.mappingHint is not a function`
+  // tidak akan terlihat di tes mana pun yang hanya memanggil ui-logic langsung,
+  // dan repo ini tidak punya jsdom untuk memuat halamannya.
+  const app = readPublic("app.js");
+  const used = new Set();
+  const re = /\bU\.([A-Za-z_$][A-Za-z0-9_$]*)/g;
+  let m;
+  while ((m = re.exec(app)) !== null) used.add(m[1]);
+
+  assert.ok(used.size > 10, "harusnya banyak pemakaian U.*, dapat " + used.size);
+  const missing = [...used].filter((name) => U[name] === undefined);
+  assert.deepEqual(missing, [], "dipakai app.js tapi tidak diekspor ui-logic.js");
+
+  // Dan yang baru ditambahkan memang ikut terpakai, bukan kode mati.
+  for (const name of ["readinessHint", "mappingHint"]) {
+    assert.ok(used.has(name), "app.js harus memakai U." + name);
+    assert.equal(typeof U[name], "function");
+  }
+});
