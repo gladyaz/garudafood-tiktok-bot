@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en" data-state="stopped">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI LIVE HOST — dashboard concept</title>
+
+    <!-- KONSEP, BUKAN APLIKASI.
+         Berkas ini tidak terhubung ke API mana pun dan tidak pernah ikut
+         terpaket: allowlist `files` di package.json bersifat inklusif, dan
+         design/ tidak ada di dalamnya.
+
+         Nama akun yang tampil di sini SENGAJA bukan akun uji yang sebenarnya.
+         Akun uji pernah bocor ke index.html sebagai placeholder dan tertangkap
+         audit paket; sebuah berkas konsep adalah tempat paling mudah bagi nilai
+         seperti itu untuk menyelinap kembali. -->
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        /* Navy, dipakai sebagai PANEL utuh dan sebagai warna teks. Ini navy
+           yang terbaca navy, bukan hitam yang ditint supaya terlihat mahal. */
+        --ink: #16233a;
+        --ink-2: #1e2e49;
+        --ink-line: #30425f;
+        --on-ink: #ffffff;
+        --on-ink-2: #a9b6cc;
+
+        --paper: #ffffff;
+        --mist: #f3f5f8;
+        --line: #dde3ec;
+        --line-soft: #e9edf3;
+
+        --text: #16233a;
+        --text-2: #55637a;
+        --text-3: #5f6b80;
+
+        /* Warna HANYA berarti keadaan. Tidak ada aksen merek yang ikut
+           bersaing di sini: itu persis bagaimana "berhenti" bisa terlihat
+           seperti "berjalan". */
+        --live: #0b7a4b;
+        --live-soft: #e7f4ec;
+        --warn: #8a5a00;
+        --warn-soft: #fcf3e3;
+        --halt: #b3261e;
+        --halt-soft: #fdeceb;
+        --ok: #1f5c8f;
+        --ok-soft: #ecf2f8;
+
+        --r: 6px;
+        --gap: 20px;
+        --shell: 1240px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--mist);
+        color: var(--text);
+        font-family: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Angka tidak boleh bergoyang. Di layar ini hampir semua angka berubah
+         sendiri: hitungan detik, durasi, jumlah etalase. */
+      .num,
+      .slot-n,
+      .ms,
+      .when,
+      .timer {
+        font-variant-numeric: tabular-nums;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--ok);
+        outline-offset: 2px;
+        border-radius: 3px;
+      }
+
+      /* ===================================================== app bar ===== */
+
+      .bar {
+        background: var(--paper);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .bar-in {
+        max-width: var(--shell);
+        margin: 0 auto;
+        padding: 12px 24px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      /* Tanda lima segmen: bentuknya diambil dari produknya sendiri — lima
+         etalase — dan segmen yang menyala adalah etalase yang sedang tayang.
+         Jadi logonya juga indikator, bukan hiasan. */
+      .mark {
+        display: block;
+      }
+      .mark rect {
+        fill: #c3ccda;
+      }
+      [data-state="running"] .mark rect:first-child {
+        fill: var(--live);
+      }
+
+      .conns {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 13px;
+        color: var(--text-2);
+      }
+
+      .conn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        white-space: nowrap;
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ok);
+        flex: none;
+      }
+      .dot.live {
+        background: var(--live);
+      }
+
+      .bar-btn {
+        font: inherit;
+        font-size: 13px;
+        color: var(--text-2);
+        background: none;
+        border: 0;
+        padding: 4px 2px;
+        cursor: pointer;
+      }
+      .bar-btn:hover {
+        color: var(--text);
+      }
+
+      /* Peralatan tinjauan, bukan kendali produk. Diberi label supaya tidak
+         ada yang salah mengira ini tombol sungguhan. */
+      .preview {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 18px;
+        border-left: 1px solid var(--line);
+        font-size: 12px;
+        color: var(--text-3);
+      }
+      .preview-btns {
+        display: flex;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        overflow: hidden;
+      }
+      .preview-btns button {
+        font: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 4px 10px;
+        border: 0;
+        background: var(--paper);
+        color: var(--text-2);
+        cursor: pointer;
+      }
+      .preview-btns button[aria-pressed="true"] {
+        background: var(--ink);
+        color: var(--on-ink);
+      }
+
+      /* ======================================================== stage ===== */
+
+      /* Satu-satunya elemen berani di halaman ini. Penuh, gelap, tanpa sudut
+         membulat, tanpa bayangan, tanpa gradien. Kartu-kartu lain di bawahnya
+         sengaja datar dan tenang. */
+      .stage {
+        background: var(--ink);
+        color: var(--on-ink);
+      }
+
+      .stage-in {
+        max-width: var(--shell);
+        margin: 0 auto;
+        padding: 36px 24px 28px;
+      }
+
+      .stage-top {
+        display: flex;
+        align-items: flex-start;
+        gap: 32px;
+        flex-wrap: wrap;
+      }
+
+      .state {
+        flex: 1 1 420px;
+        min-width: 0;
+      }
+
+      /* Pertanyaan pertama operator selalu "nyala atau tidak". Jawabannya satu
+         kalimat biasa, bukan angka besar dengan label kecil. */
+      .state h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 42px);
+        font-weight: 600;
+        letter-spacing: -0.022em;
+        line-height: 1.1;
+      }
+
+      .state p {
+        margin: 10px 0 0;
+        max-width: 56ch;
+        color: var(--on-ink-2);
+        font-size: 15px;
+      }
+
+      .timer {
+        display: none;
+        margin: 14px 0 0;
+        font-size: 13px;
+        color: var(--on-ink-2);
+      }
+      [data-state="running"] .timer {
+        display: block;
+      }
+
+      .act {
+        flex: none;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: stretch;
+      }
+
+      .btn-main {
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        padding: 14px 34px;
+        border-radius: var(--r);
+        border: 0;
+        cursor: pointer;
+        background: var(--live);
+        color: #fff;
+      }
+      .btn-main:hover {
+        background: #096540;
+      }
+      [data-state="running"] .btn-main {
+        background: var(--halt);
+      }
+      [data-state="running"] .btn-main:hover {
+        background: #96201a;
+      }
+
+      .act-note {
+        font-size: 12px;
+        color: var(--on-ink-2);
+        text-align: center;
+        max-width: 22ch;
+      }
+
+      /* -------------------------------------------------- etalase strip -- */
+
+      .strip {
+        list-style: none;
+        margin: 30px 0 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 10px;
+      }
+
+      .slot {
+        position: relative;
+        overflow: hidden;
+        background: var(--ink-2);
+        border: 1px solid var(--ink-line);
+        border-radius: var(--r);
+        padding: 12px 13px 13px;
+        min-width: 0;
+      }
+
+      .slot-n {
+        font-size: 21px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.02em;
+      }
+
+      .slot-trigger {
+        display: block;
+        margin-top: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--on-ink);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .slot-product {
+        display: block;
+        margin-top: 3px;
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--on-ink-2);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .slot-live {
+        display: none;
+        margin-top: 9px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .rail {
+        display: none;
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 3px;
+        background: rgba(255, 255, 255, 0.18);
+      }
+      .rail span {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: #fff;
+      }
+
+      /* Hanya etalase yang BENAR-BENAR tayang yang berubah, dan ia berubah
+         menjadi hijau — satu-satunya arti hijau di seluruh halaman ini. */
+      [data-state="running"] .slot.on {
+        background: var(--live);
+        border-color: var(--live);
+      }
+      [data-state="running"] .slot.on .slot-product {
+        color: rgba(255, 255, 255, 0.92);
+      }
+      [data-state="running"] .slot.on .slot-live {
+        display: block;
+      }
+      [data-state="running"] .slot.on .rail {
+        display: block;
+      }
+      [data-state="running"] .slot.on .rail span {
+        animation: fill 31s linear forwards;
+      }
+
+      /* Mulai dari 32%, bukan 0: tulisannya berkata "31s left" pada scene
+         46 detik, jadi bilah yang mulai dari nol akan berbohong — termasuk
+         pada versi statisnya saat gerak dimatikan. */
+      @keyframes fill {
+        from {
+          width: 32%;
+        }
+        to {
+          width: 100%;
+        }
+      }
+
+      /* ========================================================= main ===== */
+
+      main {
+        max-width: var(--shell);
+        margin: 0 auto;
+        padding: var(--gap) 24px 48px;
+        display: grid;
+        gap: var(--gap);
+      }
+
+      .card {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+      }
+
+      /* Kepala kartu: huruf besar-kecil biasa dengan ukuran dan bobot yang
+         sudah membedakannya. Versi lama memakai huruf kapital semua dengan
+         tracking lebar — tanda paling umum dari halaman yang dibuat dari
+         template, dan lebih sulit dibaca sekilas. */
+      .card-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 15px 18px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .card-head h2 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.012em;
+      }
+
+      .card-head .aside {
+        font-size: 13px;
+        color: var(--text-3);
+      }
+
+      /* -------------------------------------------------------- checks --- */
+
+      /* Hanya berguna SEBELUM mulai, jadi ia hilang begitu bot berjalan. */
+      .checks {
+        display: block;
+      }
+      [data-state="running"] .checks {
+        display: none;
+      }
+
+      .checks-body {
+        padding: 6px 18px 16px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 2px 28px;
+      }
+
+      .check {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--line-soft);
+        font-size: 14px;
+      }
+      .check dt {
+        color: var(--text-2);
+      }
+      .check dd {
+        margin: 0;
+        font-weight: 500;
+        color: var(--ok);
+        white-space: nowrap;
+      }
+      /* ------------------------------------------------------- columns --- */
+
+      .cols {
+        display: grid;
+        gap: var(--gap);
+      }
+
+      @media (min-width: 1000px) {
+        .cols {
+          grid-template-columns: 1.05fr 0.95fr;
+          align-items: start;
+        }
+      }
+
+      /* ------------------------------------------------------- etalase --- */
+
+      .rows {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 34px 1fr;
+        gap: 0 14px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .row:last-child {
+        border-bottom: 0;
+      }
+
+      .row-n {
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--text-3);
+        line-height: 1.3;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .row-trigger {
+        font-weight: 500;
+      }
+      .row-product {
+        margin-top: 2px;
+        font-size: 14px;
+        color: var(--text-2);
+      }
+
+      .row-reply {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--text-3);
+        padding-left: 11px;
+        border-left: 2px solid var(--line);
+      }
+
+      .row-foot {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      .card-foot {
+        padding: 14px 18px;
+        border-top: 1px solid var(--line-soft);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .btn {
+        font: inherit;
+        font-size: 14px;
+        font-weight: 500;
+        padding: 8px 15px;
+        border-radius: var(--r);
+        border: 1px solid var(--line);
+        background: var(--paper);
+        color: var(--text);
+        cursor: pointer;
+      }
+      .btn:hover {
+        background: var(--mist);
+      }
+      .btn-ink {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: var(--on-ink);
+      }
+      .btn-ink:hover {
+        background: var(--ink-2);
+      }
+      .btn[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .foot-note {
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      /* ------------------------------------------------------ activity --- */
+
+      .feed {
+        list-style: none;
+        margin: 0;
+        padding: 4px 0 0;
+      }
+
+      .event {
+        padding: 12px 18px 14px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .event:last-child {
+        border-bottom: 0;
+      }
+
+      .event-head {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+      }
+
+      .when {
+        font-size: 13px;
+        color: var(--text-3);
+        flex: none;
+      }
+
+      .what {
+        font-weight: 500;
+      }
+
+      /* Rantainya memang berurutan — diminta, scene, pin, balasan, selesai —
+         jadi ia digambar sebagai urutan. Garis penghubung yang menunjukkannya,
+         bukan nomor 01/02/03 yang ditempel di depan tiap baris. */
+      .chain {
+        list-style: none;
+        margin: 8px 0 0;
+        padding: 0 0 0 7px;
+        border-left: 2px solid var(--line);
+      }
+
+      .step {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 4px 0 4px 13px;
+        font-size: 14px;
+        color: var(--text-2);
+        position: relative;
+      }
+      .step::before {
+        content: "";
+        position: absolute;
+        left: -6px;
+        top: 11px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--line);
+      }
+      .step.done::before {
+        background: var(--live);
+      }
+      .step.pending {
+        color: var(--text-3);
+      }
+      .step.pending::before {
+        background: var(--paper);
+        box-shadow: inset 0 0 0 2px var(--line);
+      }
+
+      .step .ms {
+        margin-left: auto;
+        font-size: 13px;
+        color: var(--text-3);
+        flex: none;
+      }
+
+      .empty {
+        padding: 16px 18px 20px;
+        color: var(--text-3);
+        font-size: 14px;
+      }
+
+      .only-running {
+        display: none;
+      }
+      [data-state="running"] .only-running {
+        display: block;
+      }
+      [data-state="running"] .only-stopped {
+        display: none;
+      }
+
+      /* ======================================================== footer ===== */
+
+      .foot {
+        max-width: var(--shell);
+        margin: 0 auto;
+        padding: 0 24px 40px;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+
+      /* ========================================================= notes ===== */
+
+      .notes {
+        max-width: var(--shell);
+        margin: 0 auto;
+        padding: 0 24px 60px;
+      }
+      .notes-in {
+        border-top: 1px solid var(--line);
+        padding-top: 22px;
+      }
+      .notes h2 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .notes p.lede {
+        margin: 0 0 16px;
+        font-size: 13px;
+        color: var(--text-3);
+        max-width: 70ch;
+      }
+      .notes dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px 32px;
+      }
+      .notes dt {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 2px;
+      }
+      .notes dd {
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-2);
+        max-width: 54ch;
+      }
+
+      /* ===================================================== responsive ===== */
+
+      @media (max-width: 900px) {
+        .strip {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .slot-product {
+          -webkit-line-clamp: 3;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .bar-in {
+          flex-wrap: wrap;
+          gap: 12px;
+          padding: 12px 16px;
+        }
+        .conns {
+          margin-left: 0;
+          width: 100%;
+          gap: 14px;
+          flex-wrap: wrap;
+        }
+        .preview {
+          padding-left: 0;
+          border-left: 0;
+        }
+        .stage-in {
+          padding: 26px 16px 22px;
+        }
+        .strip {
+          grid-template-columns: 1fr;
+        }
+        .act {
+          width: 100%;
+        }
+        .btn-main {
+          width: 100%;
+        }
+        .act-note {
+          max-width: none;
+        }
+        main,
+        .foot,
+        .notes {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        [data-state="running"] .slot.on .rail span {
+          animation: none;
+          width: 32%;
+        }
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <header class="bar">
+      <div class="bar-in">
+        <div class="brand">
+          <svg class="mark" width="22" height="18" viewBox="0 0 22 18" aria-hidden="true">
+            <rect x="0" y="0" width="3" height="18" rx="1" />
+            <rect x="4.75" y="3" width="3" height="15" rx="1" />
+            <rect x="9.5" y="6" width="3" height="12" rx="1" />
+            <rect x="14.25" y="3" width="3" height="15" rx="1" />
+            <rect x="19" y="0" width="3" height="18" rx="1" />
+          </svg>
+          AI LIVE HOST
+        </div>
+
+        <div class="conns">
+          <span class="conn"><span class="dot"></span>OBS connected</span>
+          <span class="conn"><span class="dot"></span>Signed in as tokosnackku</span>
+          <span class="conn"><span class="dot live"></span>LIVE on air</span>
+          <button class="bar-btn" type="button">Settings</button>
+        </div>
+
+        <div class="preview">
+          <span>Preview</span>
+          <span class="preview-btns">
+            <button type="button" id="p-stopped" aria-pressed="true">Stopped</button>
+            <button type="button" id="p-running" aria-pressed="false">Running</button>
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <section class="stage" aria-labelledby="state-h">
+      <div class="stage-in">
+        <div class="stage-top">
+          <div class="state">
+            <h1 id="state-h">
+              <span class="only-stopped">The bot is not running</span>
+              <span class="only-running">Etalase 1 is on air</span>
+            </h1>
+            <p class="only-stopped">
+              Five etalase are mapped and every check is clear. Nothing will be pinned and nothing
+              will be posted to your chat until you press start.
+            </p>
+            <p class="only-running">
+              A viewer asked for etalase 1. The scene is playing, the product is pinned, and the
+              reply has been posted in your chat.
+            </p>
+            <p class="timer">Running for 16 minutes. Two viewer requests so far.</p>
+          </div>
+
+          <div class="act">
+            <button class="btn-main" type="button" id="toggle">
+              <span class="only-stopped">START BOT</span>
+              <span class="only-running">STOP BOT</span>
+            </button>
+            <span class="act-note only-stopped">Your LIVE is already on air</span>
+            <span class="act-note only-running">Stopping takes a second</span>
+          </div>
+        </div>
+
+        <ol class="strip">
+          <li class="slot on">
+            <span class="slot-n">1</span>
+            <span class="slot-trigger">“spill etalase 1”</span>
+            <span class="slot-product">Garuda Kacang Atom 16gr, 1 renceng isi 10</span>
+            <span class="slot-live">On air, 31s left</span>
+            <span class="rail"><span></span></span>
+          </li>
+          <li class="slot">
+            <span class="slot-n">2</span>
+            <span class="slot-trigger">“no 2”</span>
+            <span class="slot-product">Gery Saluut Malkist Family Pack 100gr</span>
+          </li>
+          <li class="slot">
+            <span class="slot-n">3</span>
+            <span class="slot-trigger">“et 3”</span>
+            <span class="slot-product">Gery Saluut Malkist renceng, 10 × 18gr</span>
+          </li>
+          <li class="slot">
+            <span class="slot-n">4</span>
+            <span class="slot-trigger">“et 4”</span>
+            <span class="slot-product">Dilan Cookies Choco Chip 12gr, isi 23</span>
+          </li>
+          <li class="slot">
+            <span class="slot-n">5</span>
+            <span class="slot-trigger">“spill etalase 5”</span>
+            <span class="slot-product">Dilan Waffle, 1 box kue coklat 16gr</span>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <main>
+      <section class="card checks" aria-labelledby="checks-h">
+        <div class="card-head">
+          <h2 id="checks-h">Before you start</h2>
+          <span class="aside">Checked just now. Nothing is running yet.</span>
+        </div>
+        <dl class="checks-body">
+          <div class="check"><dt>Settings</dt><dd>Saved</dd></div>
+          <div class="check"><dt>Other bots running</dt><dd>None</dd></div>
+          <div class="check"><dt>Ports this app needs</dt><dd>Available</dd></div>
+          <div class="check"><dt>OBS</dt><dd>Connected</dd></div>
+          <div class="check"><dt>OBS scenes</dt><dd>Found</dd></div>
+          <div class="check"><dt>Browser profile</dt><dd>Available</dd></div>
+          <div class="check"><dt>Your TikTok LIVE</dt><dd>On air</dd></div>
+          <div class="check"><dt>Products in your LIVE</dt><dd>5 available</dd></div>
+        </dl>
+      </section>
+
+      <div class="cols">
+        <section class="card" aria-labelledby="etalase-h">
+          <div class="card-head">
+            <h2 id="etalase-h">Etalase</h2>
+            <span class="aside">What a viewer types, and what gets pinned</span>
+          </div>
+
+          <ol class="rows">
+            <li class="row">
+              <span class="row-n">1</span>
+              <div>
+                <div class="row-trigger">“spill etalase 1”</div>
+                <div class="row-product">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</div>
+                <div class="row-reply">Etalase 1 sudah aku pin ya kak</div>
+                <div class="row-foot">Plays scene PAX-1, about 46 seconds</div>
+              </div>
+            </li>
+            <li class="row">
+              <span class="row-n">2</span>
+              <div>
+                <div class="row-trigger">“no 2”</div>
+                <div class="row-product">Gery Saluut Malkist Family Pack 100gr</div>
+                <div class="row-reply">Etalase 2 sudah aku pin ya kak</div>
+                <div class="row-foot">Plays scene PAX-2, about 46 seconds</div>
+              </div>
+            </li>
+            <li class="row">
+              <span class="row-n">3</span>
+              <div>
+                <div class="row-trigger">“et 3”</div>
+                <div class="row-product">Gery Saluut Malkist renceng, 10 bungkus × 18gr</div>
+                <div class="row-reply">Etalase 3 sudah aku pin ya kak</div>
+                <div class="row-foot">Plays scene PAX-3, about 52 seconds</div>
+              </div>
+            </li>
+            <li class="row">
+              <span class="row-n">4</span>
+              <div>
+                <div class="row-trigger">“et 4”</div>
+                <div class="row-product">Dilan Cookies Choco Chip 12gr, pack isi 23</div>
+                <div class="row-reply">Etalase 4 sudah aku pin ya kak</div>
+                <div class="row-foot">Plays scene PAX-4, about 69 seconds</div>
+              </div>
+            </li>
+            <li class="row">
+              <span class="row-n">5</span>
+              <div>
+                <div class="row-trigger">“spill etalase 5”</div>
+                <div class="row-product">Dilan Waffle, 1 box kue coklat 16gr</div>
+                <div class="row-reply">Etalase 5 sudah aku pin ya kak</div>
+                <div class="row-foot">Plays scene PAX-5, about 46 seconds</div>
+              </div>
+            </li>
+          </ol>
+
+          <div class="card-foot">
+            <button class="btn btn-ink" type="button">Add etalase</button>
+            <button class="btn" type="button" disabled>Save changes</button>
+            <span class="foot-note only-stopped">Nothing to save</span>
+            <span class="foot-note only-running">Editable after you press STOP BOT</span>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="activity-h">
+          <div class="card-head">
+            <h2 id="activity-h">Activity</h2>
+            <span class="aside only-stopped">Last session, today at 16:08</span>
+            <span class="aside only-running">Live</span>
+          </div>
+
+          <ul class="feed">
+            <li class="event only-running">
+              <div class="event-head">
+                <span class="when">16:24:11</span>
+                <span class="what">A viewer asked for etalase 1</span>
+              </div>
+              <ol class="chain">
+                <li class="step done">Scene PAX-1 started<span class="ms">0.05s</span></li>
+                <li class="step done">Product pinned<span class="ms">2.2s</span></li>
+                <li class="step done">Reply posted in your LIVE chat<span class="ms">1.6s</span></li>
+                <li class="step pending">Scene finishes in 31s</li>
+              </ol>
+            </li>
+
+            <li class="event">
+              <div class="event-head">
+                <span class="when">16:09:59</span>
+                <span class="what">A viewer asked for etalase 1</span>
+              </div>
+              <ol class="chain">
+                <li class="step done">Scene PAX-1 started<span class="ms">0.05s</span></li>
+                <li class="step done">Product pinned<span class="ms">2.2s</span></li>
+                <li class="step done">Reply posted in your LIVE chat<span class="ms">1.6s</span></li>
+                <li class="step done">Scene finished<span class="ms">36.4s</span></li>
+              </ol>
+            </li>
+
+            <li class="event">
+              <div class="event-head">
+                <span class="when">16:08:14</span>
+                <span class="what">Connected to your TikTok LIVE</span>
+              </div>
+            </li>
+
+            <li class="event">
+              <div class="event-head">
+                <span class="when">16:08:13</span>
+                <span class="what">Started</span>
+              </div>
+            </li>
+          </ul>
+        </section>
+      </div>
+    </main>
+
+    <p class="foot">Local only. This dashboard is served from your own computer.</p>
+
+    <section class="notes" aria-labelledby="notes-h">
+      <div class="notes-in">
+        <h2 id="notes-h">About this concept</h2>
+        <p class="lede">
+          A design proposal, not the working dashboard. Nothing here is wired to the app, and this
+          file is outside the installer’s file list so it can never ship. Content is real: the
+          etalase, triggers, replies and the timings in Activity are from the validated run on
+          9 October. The account name is deliberately not the real test account.
+        </p>
+        <dl>
+          <dt>Green means one thing</dt>
+          <dd>
+            Running, or on air. Nothing else is green — not “connected”, not “available”, not
+            “saved”. That is why there is no brand accent colour competing with it.
+          </dd>
+
+          <dt>The state is a sentence</dt>
+          <dd>
+            “The bot is not running”, at the top, next to the only control that changes it. Today
+            that answer is split across a pill, a checklist row and a third card.
+          </dd>
+
+          <dt>Ordered by when it matters</dt>
+          <dd>
+            Status and etalase first because that is what you watch mid-broadcast; the pre-start
+            checks disappear once the bot is running.
+          </dd>
+
+          <dt>The numbers are yours</dt>
+          <dd>
+            Etalase 1–5 is the shop’s own numbering, so it is used as structure. The chain in
+            Activity is a real sequence, drawn with a connector rather than decorative numbering.
+          </dd>
+
+          <dt>If you adopt it</dt>
+          <dd>
+            Every element id and class hook the page script relies on stays as it is. The one real
+            cost is the typeface: the app loads nothing from the network by design, so IBM Plex Sans
+            means self-hosting one subset file of roughly 30 KB. On Segoe UI Variable the design
+            still holds.
+          </dd>
+
+          <dt>Still open</dt>
+          <dd>
+            A dark theme. You work beside OBS, which is dark, but the app has only ever been light —
+            worth deciding rather than assuming.
+          </dd>
+        </dl>
+      </div>
+    </section>
+
+    <script>
+      // Hanya untuk meninjau konsep: menukar satu atribut data-state di elemen
+      // akar, lalu CSS
+      // yang mengerjakan sisanya. Tidak ada logika produk di sini.
+      (function () {
+        "use strict";
+        var root = document.documentElement;
+        var stopped = document.getElementById("p-stopped");
+        var running = document.getElementById("p-running");
+        var main = document.getElementById("toggle");
+
+        function set(state) {
+          root.setAttribute("data-state", state);
+          var isRunning = state === "running";
+          running.setAttribute("aria-pressed", String(isRunning));
+          stopped.setAttribute("aria-pressed", String(!isRunning));
+        }
+
+        stopped.addEventListener("click", function () {
+          set("stopped");
+        });
+        running.addEventListener("click", function () {
+          set("running");
+        });
+        main.addEventListener("click", function () {
+          set(root.getAttribute("data-state") === "running" ? "stopped" : "running");
+        });
+      })();
+    </script>
+  </body>
+</html>
