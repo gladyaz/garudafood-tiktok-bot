@@ -1,19 +1,23 @@
 <!DOCTYPE html>
-<html lang="en" data-state="stopped">
+<html lang="id" data-state="ready" data-lang="id">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI LIVE HOST — dashboard concept</title>
 
     <!-- KONSEP, BUKAN APLIKASI.
-         Berkas ini tidak terhubung ke API mana pun dan tidak pernah ikut
-         terpaket: allowlist `files` di package.json bersifat inklusif, dan
-         design/ tidak ada di dalamnya.
+         Tidak terhubung ke API mana pun, dan tidak mungkin ikut terpaket:
+         allowlist `files` di package.json bersifat inklusif dan design/ tidak
+         ada di dalamnya.
 
-         Nama akun yang tampil di sini SENGAJA bukan akun uji yang sebenarnya.
-         Akun uji pernah bocor ke index.html sebagai placeholder dan tertangkap
-         audit paket; sebuah berkas konsep adalah tempat paling mudah bagi nilai
-         seperti itu untuk menyelinap kembali. -->
+         Nama akun yang tampil SENGAJA bukan akun uji yang sebenarnya. Akun uji
+         pernah bocor ke index.html sebagai placeholder dan tertangkap audit
+         paket; berkas konsep adalah tempat paling mudah bagi nilai seperti itu
+         untuk menyelinap kembali.
+
+         Dua sumbu bisa ditinjau dari bilah atas:
+           bahasa   ID / EN / 中文     <- FITUR produk, di sebelah Pengaturan
+           keadaan  Siap / Perlu diperiksa / Berjalan  <- hanya alat tinjauan -->
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -24,13 +28,12 @@
 
     <style>
       :root {
-        /* Navy, dipakai sebagai PANEL utuh dan sebagai warna teks. Ini navy
-           yang terbaca navy, bukan hitam yang ditint supaya terlihat mahal. */
         --ink: #16233a;
         --ink-2: #1e2e49;
         --ink-line: #30425f;
         --on-ink: #ffffff;
         --on-ink-2: #a9b6cc;
+        --on-ink-3: #8595b0;
 
         --paper: #ffffff;
         --mist: #f3f5f8;
@@ -41,20 +44,18 @@
         --text-2: #55637a;
         --text-3: #5f6b80;
 
-        /* Warna HANYA berarti keadaan. Tidak ada aksen merek yang ikut
-           bersaing di sini: itu persis bagaimana "berhenti" bisa terlihat
-           seperti "berjalan". */
+        /* Warna HANYA berarti keadaan. Tidak ada aksen merek yang bersaing
+           dengannya: satu warna untuk dua arti adalah asal mula bug "berhenti
+           terlihat seperti berjalan". */
         --live: #0b7a4b;
-        --live-soft: #e7f4ec;
         --warn: #8a5a00;
-        --warn-soft: #fcf3e3;
+        --warn-soft: #fdf4e4;
+        --warn-line: #e8d3a6;
         --halt: #b3261e;
-        --halt-soft: #fdeceb;
         --ok: #1f5c8f;
-        --ok-soft: #ecf2f8;
 
         --r: 6px;
-        --gap: 20px;
+        --gap: 14px;
         --shell: 1240px;
       }
 
@@ -71,19 +72,27 @@
       body {
         background: var(--mist);
         color: var(--text);
-        font-family: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        /* Plex tidak punya glyph CJK, jadi tumpukan ini menyerahkan hanzi ke
+           muka yang MEMANG sudah ada di Windows. Tidak ada unduhan tambahan
+           untuk bahasa Mandarin — sejalan dengan aplikasi yang sengaja tidak
+           memuat apa pun dari jaringan. */
+        font-family: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI",
+          "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
         font-size: 15px;
         line-height: 1.55;
         -webkit-font-smoothing: antialiased;
       }
 
-      /* Angka tidak boleh bergoyang. Di layar ini hampir semua angka berubah
-         sendiri: hitungan detik, durasi, jumlah etalase. */
-      .num,
+      /* Hanzi butuh ruang baris sedikit lebih lega daripada Latin. */
+      [data-lang="zh"] body {
+        line-height: 1.7;
+      }
+
       .slot-n,
+      .row-n,
       .ms,
       .when,
-      .timer {
+      .meta {
         font-variant-numeric: tabular-nums;
       }
 
@@ -92,8 +101,11 @@
         outline-offset: 2px;
         border-radius: 3px;
       }
+      .stage :focus-visible {
+        outline-color: #9ec5e8;
+      }
 
-      /* ===================================================== app bar ===== */
+      /* ====================================================== app bar ===== */
 
       .bar {
         background: var(--paper);
@@ -103,28 +115,25 @@
       .bar-in {
         max-width: var(--shell);
         margin: 0 auto;
-        padding: 12px 24px;
+        padding: 9px 24px;
         display: flex;
         align-items: center;
-        gap: 24px;
+        gap: 20px;
       }
 
       .brand {
         display: flex;
         align-items: center;
-        gap: 10px;
-        font-size: 15px;
+        gap: 9px;
+        font-size: 14px;
         font-weight: 600;
         letter-spacing: -0.01em;
         white-space: nowrap;
       }
 
-      /* Tanda lima segmen: bentuknya diambil dari produknya sendiri — lima
-         etalase — dan segmen yang menyala adalah etalase yang sedang tayang.
-         Jadi logonya juga indikator, bukan hiasan. */
-      .mark {
-        display: block;
-      }
+      /* Tanda lima segmen: bentuknya dari produknya sendiri — lima etalase —
+         dan segmen yang menyala adalah etalase yang sedang tayang. Logonya
+         sekaligus indikator. */
       .mark rect {
         fill: #c3ccda;
       }
@@ -136,15 +145,21 @@
         margin-left: auto;
         display: flex;
         align-items: center;
-        gap: 18px;
+        gap: 16px;
         font-size: 13px;
         color: var(--text-2);
+        min-width: 0;
       }
 
       .conn {
         display: inline-flex;
         align-items: center;
         gap: 7px;
+        min-width: 0;
+      }
+      .conn .txt {
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
       }
 
@@ -158,6 +173,40 @@
       .dot.live {
         background: var(--live);
       }
+      .dot.warn {
+        background: var(--warn);
+      }
+
+      /* Pemilih bahasa: FITUR produk, duduk tepat di sebelah Pengaturan. */
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        overflow: hidden;
+        flex: none;
+      }
+      .seg button {
+        font: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 4px 9px;
+        border: 0;
+        border-left: 1px solid var(--line);
+        background: var(--paper);
+        color: var(--text-2);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .seg button:first-child {
+        border-left: 0;
+      }
+      .seg button[aria-pressed="true"] {
+        background: var(--ink);
+        color: var(--on-ink);
+      }
+      .seg button:not([aria-pressed="true"]):hover {
+        background: var(--mist);
+      }
 
       .bar-btn {
         font: inherit;
@@ -167,48 +216,28 @@
         border: 0;
         padding: 4px 2px;
         cursor: pointer;
+        white-space: nowrap;
       }
       .bar-btn:hover {
         color: var(--text);
       }
 
-      /* Peralatan tinjauan, bukan kendali produk. Diberi label supaya tidak
-         ada yang salah mengira ini tombol sungguhan. */
+      /* Alat tinjauan, bukan kendali produk. Dipisah garis dan diberi label. */
       .preview {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding-left: 18px;
+        padding-left: 16px;
         border-left: 1px solid var(--line);
-        font-size: 12px;
+        font-size: 11px;
         color: var(--text-3);
-      }
-      .preview-btns {
-        display: flex;
-        border: 1px solid var(--line);
-        border-radius: var(--r);
-        overflow: hidden;
-      }
-      .preview-btns button {
-        font: inherit;
-        font-size: 12px;
-        font-weight: 500;
-        padding: 4px 10px;
-        border: 0;
-        background: var(--paper);
-        color: var(--text-2);
-        cursor: pointer;
-      }
-      .preview-btns button[aria-pressed="true"] {
-        background: var(--ink);
-        color: var(--on-ink);
+        flex: none;
       }
 
       /* ======================================================== stage ===== */
 
-      /* Satu-satunya elemen berani di halaman ini. Penuh, gelap, tanpa sudut
-         membulat, tanpa bayangan, tanpa gradien. Kartu-kartu lain di bawahnya
-         sengaja datar dan tenang. */
+      /* Satu-satunya elemen berani. Penuh, gelap, tanpa sudut membulat, tanpa
+         bayangan, tanpa gradien. Semua kartu di bawahnya datar dan tenang. */
       .stage {
         background: var(--ink);
         color: var(--on-ink);
@@ -217,18 +246,18 @@
       .stage-in {
         max-width: var(--shell);
         margin: 0 auto;
-        padding: 36px 24px 28px;
+        padding: 34px 24px 26px;
       }
 
       .stage-top {
         display: flex;
         align-items: flex-start;
-        gap: 32px;
+        gap: 28px;
         flex-wrap: wrap;
       }
 
       .state {
-        flex: 1 1 420px;
+        flex: 1 1 380px;
         min-width: 0;
       }
 
@@ -236,34 +265,33 @@
          kalimat biasa, bukan angka besar dengan label kecil. */
       .state h1 {
         margin: 0;
-        font-size: clamp(28px, 4vw, 42px);
+        font-size: clamp(27px, 3.6vw, 40px);
         font-weight: 600;
-        letter-spacing: -0.022em;
-        line-height: 1.1;
+        letter-spacing: -0.02em;
+        line-height: 1.12;
+      }
+      [data-state="blocked"] .state h1 {
+        color: #f7dcae;
       }
 
       .state p {
-        margin: 10px 0 0;
-        max-width: 56ch;
+        margin: 7px 0 0;
+        max-width: 58ch;
         color: var(--on-ink-2);
-        font-size: 15px;
+        font-size: 14px;
       }
 
-      .timer {
-        display: none;
-        margin: 14px 0 0;
-        font-size: 13px;
-        color: var(--on-ink-2);
-      }
-      [data-state="running"] .timer {
-        display: block;
+      .meta {
+        margin: 9px 0 0;
+        font-size: 12px;
+        color: var(--on-ink-3);
       }
 
       .act {
         flex: none;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 7px;
         align-items: stretch;
       }
 
@@ -272,39 +300,55 @@
         font-size: 15px;
         font-weight: 600;
         letter-spacing: 0.01em;
-        padding: 14px 34px;
+        padding: 12px 30px;
         border-radius: var(--r);
         border: 0;
         cursor: pointer;
         background: var(--live);
         color: #fff;
+        white-space: nowrap;
       }
-      .btn-main:hover {
+      .btn-main:hover:not(:disabled) {
         background: #096540;
       }
       [data-state="running"] .btn-main {
         background: var(--halt);
       }
-      [data-state="running"] .btn-main:hover {
+      [data-state="running"] .btn-main:hover:not(:disabled) {
         background: #96201a;
+      }
+      .btn-main:disabled {
+        background: #44536d;
+        color: #b6c2d4;
+        cursor: not-allowed;
       }
 
       .act-note {
         font-size: 12px;
-        color: var(--on-ink-2);
+        color: var(--on-ink-3);
         text-align: center;
-        max-width: 22ch;
+        max-width: 24ch;
       }
 
-      /* -------------------------------------------------- etalase strip -- */
+      /* -------------------------------------------- strip: PEMANTAUAN ----- */
+
+      /* Bilah atas MEMANTAU, daftar bawah MENGATUR. Pemisahan itu dijaga dengan
+         tidak mengulang satu pun informasi: tidak ada judul produk dan tidak ada
+         frasa trigger di sini — keduanya milik daftar di bawah dan muncul tepat
+         sekali di halaman. Yang ada di sini hanya hal yang BERUBAH saat siaran. */
+      .strip-head {
+        margin: 22px 0 8px;
+        font-size: 12px;
+        color: var(--on-ink-3);
+      }
 
       .strip {
         list-style: none;
-        margin: 30px 0 0;
+        margin: 0;
         padding: 0;
         display: grid;
         grid-template-columns: repeat(5, 1fr);
-        gap: 10px;
+        gap: 8px;
       }
 
       .slot {
@@ -313,49 +357,45 @@
         background: var(--ink-2);
         border: 1px solid var(--ink-line);
         border-radius: var(--r);
-        padding: 12px 13px 13px;
+        padding: 11px 11px 12px;
         min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
       }
 
       .slot-n {
-        font-size: 21px;
+        font-size: 19px;
         font-weight: 600;
         line-height: 1;
         letter-spacing: -0.02em;
+        flex: none;
       }
 
-      .slot-trigger {
+      .slot-txt {
+        min-width: 0;
+      }
+
+      .slot-state {
         display: block;
-        margin-top: 8px;
-        font-size: 13px;
+        font-size: 12.5px;
         font-weight: 500;
-        color: var(--on-ink);
+        color: var(--on-ink-2);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .slot-product {
+      .slot-sub {
         display: block;
-        margin-top: 3px;
-        font-size: 12px;
-        line-height: 1.35;
-        color: var(--on-ink-2);
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
+        font-size: 11.5px;
+        color: var(--on-ink-3);
         overflow: hidden;
-      }
-
-      .slot-live {
-        display: none;
-        margin-top: 9px;
-        font-size: 12px;
-        font-weight: 600;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .rail {
-        display: none;
         position: absolute;
         left: 0;
         right: 0;
@@ -363,35 +403,32 @@
         height: 3px;
         background: rgba(255, 255, 255, 0.18);
       }
-      .rail span {
+      .rail i {
         display: block;
         height: 100%;
-        width: 0;
+        width: 32%;
         background: #fff;
       }
 
-      /* Hanya etalase yang BENAR-BENAR tayang yang berubah, dan ia berubah
-         menjadi hijau — satu-satunya arti hijau di seluruh halaman ini. */
-      [data-state="running"] .slot.on {
+      /* Hanya etalase yang BENAR-BENAR tayang yang berubah, dan ia menjadi
+         hijau — satu-satunya arti hijau di halaman ini. */
+      .slot.on {
         background: var(--live);
         border-color: var(--live);
       }
-      [data-state="running"] .slot.on .slot-product {
+      .slot.on .slot-state {
+        color: #fff;
+      }
+      .slot.on .slot-sub {
         color: rgba(255, 255, 255, 0.92);
       }
-      [data-state="running"] .slot.on .slot-live {
-        display: block;
-      }
-      [data-state="running"] .slot.on .rail {
-        display: block;
-      }
-      [data-state="running"] .slot.on .rail span {
+      .slot.on .rail i {
         animation: fill 31s linear forwards;
       }
 
-      /* Mulai dari 32%, bukan 0: tulisannya berkata "31s left" pada scene
-         46 detik, jadi bilah yang mulai dari nol akan berbohong — termasuk
-         pada versi statisnya saat gerak dimatikan. */
+      /* Mulai 32%: tulisannya berkata "sisa 31s" pada scene 46 detik, jadi
+         bilah yang mulai dari nol akan berbohong — termasuk versi statisnya
+         saat gerak dimatikan. */
       @keyframes fill {
         from {
           width: 32%;
@@ -401,12 +438,16 @@
         }
       }
 
+      [data-state="blocked"] .strip {
+        opacity: 0.55;
+      }
+
       /* ========================================================= main ===== */
 
       main {
         max-width: var(--shell);
         margin: 0 auto;
-        padding: var(--gap) 24px 48px;
+        padding: var(--gap) 24px 40px;
         display: grid;
         gap: var(--gap);
       }
@@ -417,81 +458,143 @@
         border-radius: var(--r);
       }
 
-      /* Kepala kartu: huruf besar-kecil biasa dengan ukuran dan bobot yang
-         sudah membedakannya. Versi lama memakai huruf kapital semua dengan
-         tracking lebar — tanda paling umum dari halaman yang dibuat dari
-         template, dan lebih sulit dibaca sekilas. */
+      /* Huruf besar-kecil biasa. Ukuran dan bobot sudah cukup membedakan;
+         kapital-semua bertracking lebar lebih sulit dibaca sekilas dan merupakan
+         tanda paling umum dari halaman yang dibuat dari template. */
       .card-head {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 16px;
-        padding: 15px 18px;
+        gap: 14px;
+        padding: 11px 16px;
         border-bottom: 1px solid var(--line-soft);
       }
-
       .card-head h2 {
         margin: 0;
-        font-size: 17px;
+        font-size: 16px;
         font-weight: 600;
         letter-spacing: -0.012em;
+        white-space: nowrap;
       }
-
       .card-head .aside {
-        font-size: 13px;
+        font-size: 12.5px;
         color: var(--text-3);
+        text-align: right;
+        min-width: 0;
       }
 
-      /* -------------------------------------------------------- checks --- */
+      /* ------------------------------------------------------- checks ----- */
 
-      /* Hanya berguna SEBELUM mulai, jadi ia hilang begitu bot berjalan. */
-      .checks {
-        display: block;
-      }
       [data-state="running"] .checks {
         display: none;
       }
 
+      .checks-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        flex-wrap: wrap;
+      }
+      .checks-sum {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 14px;
+        font-weight: 500;
+        min-width: 0;
+      }
+      .checks-sum .dot {
+        width: 8px;
+        height: 8px;
+      }
+      .checks-bar .spacer {
+        margin-left: auto;
+      }
+
+      /* Terbuka hanya saat diminta, atau saat memang ada yang menghalangi. */
       .checks-body {
-        padding: 6px 18px 16px;
+        display: none;
+        padding: 2px 16px 12px;
+        grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+        gap: 0 28px;
+      }
+      .checks[data-open="yes"] .checks-body {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 2px 28px;
       }
 
       .check {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        gap: 12px;
-        padding: 7px 0;
+        gap: 14px;
+        padding: 6px 0;
         border-bottom: 1px solid var(--line-soft);
-        font-size: 14px;
+        font-size: 13.5px;
       }
       .check dt {
         color: var(--text-2);
+        min-width: 0;
       }
       .check dd {
         margin: 0;
         font-weight: 500;
         color: var(--ok);
+        text-align: right;
         white-space: nowrap;
       }
-      /* ------------------------------------------------------- columns --- */
+      .check.bad dd {
+        color: var(--warn);
+      }
+      /* Akibat, bukan sebab. Kalau LIVE belum tayang maka katalognya memang
+         belum bisa dibaca — menampilkannya amber juga akan menghitung satu
+         sebab sebagai dua masalah, dan operator mencari dua hal padahal ada
+         satu. */
+      .check.dep dd {
+        color: var(--text-3);
+        font-weight: 400;
+      }
+
+      /* Satu-satunya tempat "perlu diperiksa" muncul, dan ia selalu membawa
+         cara membereskannya. */
+      .blocker {
+        display: none;
+        margin: 0 16px 12px;
+        padding: 11px 13px;
+        background: var(--warn-soft);
+        border: 1px solid var(--warn-line);
+        border-radius: var(--r);
+      }
+      [data-state="blocked"] .blocker {
+        display: block;
+      }
+      .blocker b {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--warn);
+      }
+      .blocker span {
+        display: block;
+        margin-top: 2px;
+        font-size: 13px;
+        color: #6d4906;
+      }
+
+      /* ------------------------------------------------------ columns ----- */
 
       .cols {
         display: grid;
         gap: var(--gap);
       }
-
-      @media (min-width: 1000px) {
+      @media (min-width: 1020px) {
         .cols {
-          grid-template-columns: 1.05fr 0.95fr;
+          grid-template-columns: 1.02fr 0.98fr;
           align-items: start;
         }
       }
 
-      /* ------------------------------------------------------- etalase --- */
+      /* ------------------------------------------ etalase: PENGATURAN ----- */
 
       .rows {
         list-style: none;
@@ -499,68 +602,139 @@
         padding: 0;
       }
 
+      /* Ringkas secara bawaan: satu baris per etalase, cukup untuk mengenali
+         mana yang mana. Detail dan penyuntingan muncul saat diminta. */
       .row {
         display: grid;
-        grid-template-columns: 34px 1fr;
-        gap: 0 14px;
-        padding: 14px 18px;
+        grid-template-columns: 22px minmax(0, 1fr) auto;
+        align-items: baseline;
+        gap: 0 12px;
+        padding: 9px 16px;
         border-bottom: 1px solid var(--line-soft);
       }
-      .row:last-child {
+      .row:last-of-type {
         border-bottom: 0;
       }
 
       .row-n {
-        font-size: 17px;
+        font-size: 14px;
         font-weight: 600;
         color: var(--text-3);
-        line-height: 1.3;
-        font-variant-numeric: tabular-nums;
+      }
+
+      .row-main {
+        min-width: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
       }
 
       .row-trigger {
         font-weight: 500;
-      }
-      .row-product {
-        margin-top: 2px;
         font-size: 14px;
-        color: var(--text-2);
+        white-space: nowrap;
+        flex: none;
       }
 
-      .row-reply {
-        margin-top: 6px;
+      .row-product {
         font-size: 13px;
         color: var(--text-3);
-        padding-left: 11px;
-        border-left: 2px solid var(--line);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
-      .row-foot {
-        margin-top: 8px;
+      .btn-link {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ok);
+        background: none;
+        border: 0;
+        padding: 2px 0;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .btn-link:hover:not(:disabled) {
+        text-decoration: underline;
+      }
+      .btn-link:disabled {
+        color: var(--text-3);
+        cursor: not-allowed;
+      }
+
+      .row-edit {
+        display: none;
+        grid-column: 2 / -1;
+        padding: 4px 0 8px;
+      }
+      .row[data-open="yes"] .row-edit {
+        display: block;
+      }
+      .row[data-open="yes"] {
+        background: #fafbfd;
+      }
+
+      .fields {
+        display: grid;
+        gap: 8px;
+        margin: 6px 0 0;
+      }
+      .f {
+        display: grid;
+        grid-template-columns: minmax(92px, 136px) minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+      }
+      .f label {
+        font-size: 12.5px;
+        color: var(--text-2);
+      }
+      .f input,
+      .f select {
+        font: inherit;
+        font-size: 13.5px;
+        padding: 6px 9px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--paper);
+        color: var(--text);
+        min-width: 0;
+        width: 100%;
+      }
+      .f-note {
+        margin: 9px 0 0;
         font-size: 12px;
         color: var(--text-3);
       }
+      .row-acts {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
 
       .card-foot {
-        padding: 14px 18px;
+        padding: 10px 16px;
         border-top: 1px solid var(--line-soft);
         display: flex;
-        gap: 10px;
+        gap: 9px;
         align-items: center;
+        flex-wrap: wrap;
       }
 
       .btn {
         font: inherit;
-        font-size: 14px;
+        font-size: 13.5px;
         font-weight: 500;
-        padding: 8px 15px;
+        padding: 7px 13px;
         border-radius: var(--r);
         border: 1px solid var(--line);
         background: var(--paper);
         color: var(--text);
         cursor: pointer;
+        white-space: nowrap;
       }
-      .btn:hover {
+      .btn:hover:not(:disabled) {
         background: var(--mist);
       }
       .btn-ink {
@@ -568,10 +742,10 @@
         border-color: var(--ink);
         color: var(--on-ink);
       }
-      .btn-ink:hover {
+      .btn-ink:hover:not(:disabled) {
         background: var(--ink-2);
       }
-      .btn[disabled] {
+      .btn:disabled {
         opacity: 0.45;
         cursor: not-allowed;
       }
@@ -581,16 +755,21 @@
         color: var(--text-3);
       }
 
-      /* ------------------------------------------------------ activity --- */
+      /* ----------------------------------------------------- activity ----- */
 
+      /* Riwayat TERBATAS, dan batasnya disebutkan. Umpan yang tumbuh tanpa batas
+         membuat halaman makin panjang setiap menit siaran, sementara yang paling
+         perlu dilihat justru yang paling atas. */
       .feed {
         list-style: none;
         margin: 0;
-        padding: 4px 0 0;
+        padding: 2px 0 0;
+        max-height: 376px;
+        overflow-y: auto;
       }
 
       .event {
-        padding: 12px 18px 14px;
+        padding: 9px 16px 10px;
         border-bottom: 1px solid var(--line-soft);
       }
       .event:last-child {
@@ -599,50 +778,48 @@
 
       .event-head {
         display: flex;
-        gap: 12px;
+        gap: 11px;
         align-items: baseline;
       }
-
       .when {
-        font-size: 13px;
+        font-size: 12.5px;
         color: var(--text-3);
         flex: none;
       }
-
       .what {
         font-weight: 500;
+        font-size: 14px;
+        min-width: 0;
       }
 
       /* Rantainya memang berurutan — diminta, scene, pin, balasan, selesai —
-         jadi ia digambar sebagai urutan. Garis penghubung yang menunjukkannya,
-         bukan nomor 01/02/03 yang ditempel di depan tiap baris. */
+         jadi digambar sebagai urutan, dengan garis penghubung dan bukan nomor
+         01/02/03 yang ditempel di depan tiap baris.
+         Hanya kejadian TERBARU yang terbuka; yang lebih tua diringkas satu baris,
+         karena yang sudah selesai dan berhasil tidak perlu empat baris. */
       .chain {
         list-style: none;
-        margin: 8px 0 0;
-        padding: 0 0 0 7px;
+        margin: 6px 0 0;
+        padding: 0 0 0 6px;
         border-left: 2px solid var(--line);
       }
-
       .step {
         display: flex;
         align-items: baseline;
         gap: 10px;
-        padding: 4px 0 4px 13px;
-        font-size: 14px;
+        padding: 3px 0 3px 12px;
+        font-size: 13.5px;
         color: var(--text-2);
         position: relative;
       }
       .step::before {
         content: "";
         position: absolute;
-        left: -6px;
-        top: 11px;
+        left: -5px;
+        top: 9px;
         width: 7px;
         height: 7px;
         border-radius: 50%;
-        background: var(--line);
-      }
-      .step.done::before {
         background: var(--live);
       }
       .step.pending {
@@ -652,28 +829,42 @@
         background: var(--paper);
         box-shadow: inset 0 0 0 2px var(--line);
       }
-
       .step .ms {
         margin-left: auto;
-        font-size: 13px;
+        font-size: 12.5px;
         color: var(--text-3);
         flex: none;
       }
 
-      .empty {
-        padding: 16px 18px 20px;
+      .summary {
+        margin: 3px 0 0;
+        font-size: 13px;
         color: var(--text-3);
-        font-size: 14px;
+        padding-left: 18px;
       }
 
-      .only-running {
-        display: none;
+      .empty {
+        padding: 18px 16px 22px;
       }
-      [data-state="running"] .only-running {
+      .empty b {
         display: block;
+        font-size: 14px;
+        font-weight: 600;
       }
-      [data-state="running"] .only-stopped {
-        display: none;
+      .empty span {
+        display: block;
+        margin-top: 3px;
+        font-size: 13.5px;
+        color: var(--text-3);
+        max-width: 48ch;
+      }
+
+      .feed-foot {
+        margin: 0;
+        padding: 9px 16px;
+        border-top: 1px solid var(--line-soft);
+        font-size: 12px;
+        color: var(--text-3);
       }
 
       /* ======================================================== footer ===== */
@@ -681,7 +872,7 @@
       .foot {
         max-width: var(--shell);
         margin: 0 auto;
-        padding: 0 24px 40px;
+        padding: 0 24px 34px;
         color: var(--text-3);
         font-size: 12px;
       }
@@ -691,28 +882,28 @@
       .notes {
         max-width: var(--shell);
         margin: 0 auto;
-        padding: 0 24px 60px;
+        padding: 0 24px 56px;
       }
       .notes-in {
         border-top: 1px solid var(--line);
-        padding-top: 22px;
+        padding-top: 20px;
       }
       .notes h2 {
         margin: 0 0 4px;
         font-size: 15px;
         font-weight: 600;
       }
-      .notes p.lede {
-        margin: 0 0 16px;
+      .notes .lede {
+        margin: 0 0 15px;
         font-size: 13px;
         color: var(--text-3);
-        max-width: 70ch;
+        max-width: 72ch;
       }
       .notes dl {
         margin: 0;
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        gap: 16px 32px;
+        grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
+        gap: 15px 30px;
       }
       .notes dt {
         font-size: 13px;
@@ -728,25 +919,28 @@
 
       /* ===================================================== responsive ===== */
 
+      @media (max-width: 1019px) {
+        .feed {
+          max-height: none;
+        }
+      }
+
       @media (max-width: 900px) {
         .strip {
           grid-template-columns: repeat(2, 1fr);
         }
-        .slot-product {
-          -webkit-line-clamp: 3;
-        }
       }
 
-      @media (max-width: 620px) {
+      @media (max-width: 640px) {
         .bar-in {
           flex-wrap: wrap;
-          gap: 12px;
-          padding: 12px 16px;
+          gap: 10px;
+          padding: 10px 16px;
         }
         .conns {
           margin-left: 0;
           width: 100%;
-          gap: 14px;
+          gap: 12px;
           flex-wrap: wrap;
         }
         .preview {
@@ -754,19 +948,31 @@
           border-left: 0;
         }
         .stage-in {
-          padding: 26px 16px 22px;
+          padding: 20px 16px 18px;
         }
         .strip {
           grid-template-columns: 1fr;
         }
-        .act {
-          width: 100%;
-        }
+        .act,
         .btn-main {
           width: 100%;
         }
         .act-note {
           max-width: none;
+        }
+        .row {
+          grid-template-columns: 20px minmax(0, 1fr);
+        }
+        .row-acts-cell {
+          grid-column: 2;
+        }
+        .row-main {
+          flex-wrap: wrap;
+          gap: 2px 10px;
+        }
+        .f {
+          grid-template-columns: 1fr;
+          gap: 3px;
         }
         main,
         .foot,
@@ -777,12 +983,8 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        [data-state="running"] .slot.on .rail span {
+        .slot.on .rail i {
           animation: none;
-          width: 32%;
-        }
-        * {
-          transition: none !important;
         }
       }
     </style>
@@ -792,28 +994,38 @@
     <header class="bar">
       <div class="bar-in">
         <div class="brand">
-          <svg class="mark" width="22" height="18" viewBox="0 0 22 18" aria-hidden="true">
-            <rect x="0" y="0" width="3" height="18" rx="1" />
-            <rect x="4.75" y="3" width="3" height="15" rx="1" />
-            <rect x="9.5" y="6" width="3" height="12" rx="1" />
-            <rect x="14.25" y="3" width="3" height="15" rx="1" />
-            <rect x="19" y="0" width="3" height="18" rx="1" />
+          <svg class="mark" width="21" height="17" viewBox="0 0 21 17" aria-hidden="true">
+            <rect x="0" y="0" width="2.8" height="17" rx="1" />
+            <rect x="4.55" y="2.8" width="2.8" height="14.2" rx="1" />
+            <rect x="9.1" y="5.6" width="2.8" height="11.4" rx="1" />
+            <rect x="13.65" y="2.8" width="2.8" height="14.2" rx="1" />
+            <rect x="18.2" y="0" width="2.8" height="17" rx="1" />
           </svg>
           AI LIVE HOST
         </div>
 
         <div class="conns">
-          <span class="conn"><span class="dot"></span>OBS connected</span>
-          <span class="conn"><span class="dot"></span>Signed in as tokosnackku</span>
-          <span class="conn"><span class="dot live"></span>LIVE on air</span>
-          <button class="bar-btn" type="button">Settings</button>
+          <span class="conn"><span class="dot"></span><span class="txt" id="c-obs"></span></span>
+          <span class="conn"><span class="dot"></span><span class="txt" id="c-acct"></span></span>
+          <span class="conn"
+            ><span class="dot live" id="d-live"></span><span class="txt" id="c-live"></span
+          ></span>
+
+          <span class="seg" role="group" aria-label="Language" id="lang-group">
+            <button type="button" data-lang-btn="id" aria-pressed="true">ID</button>
+            <button type="button" data-lang-btn="en" aria-pressed="false">EN</button>
+            <button type="button" data-lang-btn="zh" aria-pressed="false">中文</button>
+          </span>
+
+          <button class="bar-btn" type="button" id="c-settings"></button>
         </div>
 
         <div class="preview">
-          <span>Preview</span>
-          <span class="preview-btns">
-            <button type="button" id="p-stopped" aria-pressed="true">Stopped</button>
-            <button type="button" id="p-running" aria-pressed="false">Running</button>
+          <span id="c-preview"></span>
+          <span class="seg" role="group" id="state-group">
+            <button type="button" data-state-btn="ready" aria-pressed="true" id="s-ready"></button>
+            <button type="button" data-state-btn="blocked" aria-pressed="false" id="s-blocked"></button>
+            <button type="button" data-state-btn="running" aria-pressed="false" id="s-running"></button>
           </span>
         </div>
       </div>
@@ -823,238 +1035,293 @@
       <div class="stage-in">
         <div class="stage-top">
           <div class="state">
-            <h1 id="state-h">
-              <span class="only-stopped">The bot is not running</span>
-              <span class="only-running">Etalase 1 is on air</span>
-            </h1>
-            <p class="only-stopped">
-              Five etalase are mapped and every check is clear. Nothing will be pinned and nothing
-              will be posted to your chat until you press start.
-            </p>
-            <p class="only-running">
-              A viewer asked for etalase 1. The scene is playing, the product is pinned, and the
-              reply has been posted in your chat.
-            </p>
-            <p class="timer">Running for 16 minutes. Two viewer requests so far.</p>
+            <h1 id="state-h"></h1>
+            <p id="state-body"></p>
+            <p class="meta" id="state-meta"></p>
           </div>
 
           <div class="act">
-            <button class="btn-main" type="button" id="toggle">
-              <span class="only-stopped">START BOT</span>
-              <span class="only-running">STOP BOT</span>
-            </button>
-            <span class="act-note only-stopped">Your LIVE is already on air</span>
-            <span class="act-note only-running">Stopping takes a second</span>
+            <button class="btn-main" type="button" id="main-btn"></button>
+            <span class="act-note" id="act-note"></span>
           </div>
         </div>
 
-        <ol class="strip">
-          <li class="slot on">
-            <span class="slot-n">1</span>
-            <span class="slot-trigger">“spill etalase 1”</span>
-            <span class="slot-product">Garuda Kacang Atom 16gr, 1 renceng isi 10</span>
-            <span class="slot-live">On air, 31s left</span>
-            <span class="rail"><span></span></span>
-          </li>
-          <li class="slot">
-            <span class="slot-n">2</span>
-            <span class="slot-trigger">“no 2”</span>
-            <span class="slot-product">Gery Saluut Malkist Family Pack 100gr</span>
-          </li>
-          <li class="slot">
-            <span class="slot-n">3</span>
-            <span class="slot-trigger">“et 3”</span>
-            <span class="slot-product">Gery Saluut Malkist renceng, 10 × 18gr</span>
-          </li>
-          <li class="slot">
-            <span class="slot-n">4</span>
-            <span class="slot-trigger">“et 4”</span>
-            <span class="slot-product">Dilan Cookies Choco Chip 12gr, isi 23</span>
-          </li>
-          <li class="slot">
-            <span class="slot-n">5</span>
-            <span class="slot-trigger">“spill etalase 5”</span>
-            <span class="slot-product">Dilan Waffle, 1 box kue coklat 16gr</span>
-          </li>
-        </ol>
+        <p class="strip-head" id="strip-head"></p>
+        <ol class="strip" id="strip"></ol>
       </div>
     </section>
 
     <main>
-      <section class="card checks" aria-labelledby="checks-h">
-        <div class="card-head">
-          <h2 id="checks-h">Before you start</h2>
-          <span class="aside">Checked just now. Nothing is running yet.</span>
+      <section class="card checks" id="checks" data-open="no" aria-labelledby="checks-h">
+        <h2 id="checks-h" hidden></h2>
+        <div class="checks-bar">
+          <span class="checks-sum">
+            <span class="dot" id="checks-dot"></span>
+            <span id="checks-sum-txt"></span>
+          </span>
+          <span class="spacer"></span>
+          <button class="btn-link" type="button" id="checks-toggle"></button>
+          <button class="btn-link" type="button" id="checks-recheck"></button>
         </div>
-        <dl class="checks-body">
-          <div class="check"><dt>Settings</dt><dd>Saved</dd></div>
-          <div class="check"><dt>Other bots running</dt><dd>None</dd></div>
-          <div class="check"><dt>Ports this app needs</dt><dd>Available</dd></div>
-          <div class="check"><dt>OBS</dt><dd>Connected</dd></div>
-          <div class="check"><dt>OBS scenes</dt><dd>Found</dd></div>
-          <div class="check"><dt>Browser profile</dt><dd>Available</dd></div>
-          <div class="check"><dt>Your TikTok LIVE</dt><dd>On air</dd></div>
-          <div class="check"><dt>Products in your LIVE</dt><dd>5 available</dd></div>
-        </dl>
+
+        <div class="blocker">
+          <b id="blocker-what"></b>
+          <span id="blocker-fix"></span>
+        </div>
+
+        <dl class="checks-body" id="checks-body"></dl>
       </section>
 
       <div class="cols">
         <section class="card" aria-labelledby="etalase-h">
           <div class="card-head">
-            <h2 id="etalase-h">Etalase</h2>
-            <span class="aside">What a viewer types, and what gets pinned</span>
+            <h2 id="etalase-h"></h2>
+            <span class="aside" id="etalase-aside"></span>
           </div>
 
-          <ol class="rows">
-            <li class="row">
+          <!-- Isi baris adalah KONTEN CUSTOMER: judul produk, frasa trigger,
+               balasan admin, dan nama scene. Tidak satu pun punya kunci kamus,
+               jadi tidak satu pun bisa ikut berganti bahasa. -->
+          <ol class="rows" id="rows">
+            <li class="row" data-open="no" data-scene="PAX-1" data-sec="46">
               <span class="row-n">1</span>
-              <div>
-                <div class="row-trigger">“spill etalase 1”</div>
-                <div class="row-product">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</div>
-                <div class="row-reply">Etalase 1 sudah aku pin ya kak</div>
-                <div class="row-foot">Plays scene PAX-1, about 46 seconds</div>
+              <span class="row-main">
+                <span class="row-trigger">“spill etalase 1”</span>
+                <span class="row-product">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</span>
+              </span>
+              <span class="row-acts-cell"
+                ><button class="btn-link row-edit-btn" type="button"></button
+              ></span>
+              <div class="row-edit">
+                <div class="fields">
+                  <div class="f"><label></label><input type="text" value="spill etalase 1" /></div>
+                  <div class="f">
+                    <label></label>
+                    <select>
+                      <option>Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</option>
+                    </select>
+                  </div>
+                  <div class="f">
+                    <label></label><input type="text" value="Etalase 1 sudah aku pin ya kak" />
+                  </div>
+                </div>
+                <p class="f-note"></p>
+                <div class="row-acts">
+                  <button class="btn btn-ink" type="button"></button>
+                  <button class="btn" type="button"></button>
+                </div>
               </div>
             </li>
-            <li class="row">
+
+            <li class="row" data-open="no" data-scene="PAX-2" data-sec="46">
               <span class="row-n">2</span>
-              <div>
-                <div class="row-trigger">“no 2”</div>
-                <div class="row-product">Gery Saluut Malkist Family Pack 100gr</div>
-                <div class="row-reply">Etalase 2 sudah aku pin ya kak</div>
-                <div class="row-foot">Plays scene PAX-2, about 46 seconds</div>
+              <span class="row-main">
+                <span class="row-trigger">“no 2”</span>
+                <span class="row-product">Gery Saluut Malkist Family Pack 100gr</span>
+              </span>
+              <span class="row-acts-cell"
+                ><button class="btn-link row-edit-btn" type="button"></button
+              ></span>
+              <div class="row-edit">
+                <div class="fields">
+                  <div class="f"><label></label><input type="text" value="no 2" /></div>
+                  <div class="f">
+                    <label></label>
+                    <select>
+                      <option>Gery Saluut Malkist Family Pack 100gr</option>
+                    </select>
+                  </div>
+                  <div class="f">
+                    <label></label><input type="text" value="Etalase 2 sudah aku pin ya kak" />
+                  </div>
+                </div>
+                <p class="f-note"></p>
+                <div class="row-acts">
+                  <button class="btn btn-ink" type="button"></button>
+                  <button class="btn" type="button"></button>
+                </div>
               </div>
             </li>
-            <li class="row">
+
+            <li class="row" data-open="no" data-scene="PAX-3" data-sec="52">
               <span class="row-n">3</span>
-              <div>
-                <div class="row-trigger">“et 3”</div>
-                <div class="row-product">Gery Saluut Malkist renceng, 10 bungkus × 18gr</div>
-                <div class="row-reply">Etalase 3 sudah aku pin ya kak</div>
-                <div class="row-foot">Plays scene PAX-3, about 52 seconds</div>
+              <span class="row-main">
+                <span class="row-trigger">“et 3”</span>
+                <span class="row-product">Gery Saluut Malkist renceng, 10 bungkus × 18gr</span>
+              </span>
+              <span class="row-acts-cell"
+                ><button class="btn-link row-edit-btn" type="button"></button
+              ></span>
+              <div class="row-edit">
+                <div class="fields">
+                  <div class="f"><label></label><input type="text" value="et 3" /></div>
+                  <div class="f">
+                    <label></label>
+                    <select>
+                      <option>Gery Saluut Malkist renceng, 10 bungkus × 18gr</option>
+                    </select>
+                  </div>
+                  <div class="f">
+                    <label></label><input type="text" value="Etalase 3 sudah aku pin ya kak" />
+                  </div>
+                </div>
+                <p class="f-note"></p>
+                <div class="row-acts">
+                  <button class="btn btn-ink" type="button"></button>
+                  <button class="btn" type="button"></button>
+                </div>
               </div>
             </li>
-            <li class="row">
+
+            <li class="row" data-open="no" data-scene="PAX-4" data-sec="69">
               <span class="row-n">4</span>
-              <div>
-                <div class="row-trigger">“et 4”</div>
-                <div class="row-product">Dilan Cookies Choco Chip 12gr, pack isi 23</div>
-                <div class="row-reply">Etalase 4 sudah aku pin ya kak</div>
-                <div class="row-foot">Plays scene PAX-4, about 69 seconds</div>
+              <span class="row-main">
+                <span class="row-trigger">“et 4”</span>
+                <span class="row-product">Dilan Cookies Choco Chip 12gr, pack isi 23</span>
+              </span>
+              <span class="row-acts-cell"
+                ><button class="btn-link row-edit-btn" type="button"></button
+              ></span>
+              <div class="row-edit">
+                <div class="fields">
+                  <div class="f"><label></label><input type="text" value="et 4" /></div>
+                  <div class="f">
+                    <label></label>
+                    <select>
+                      <option>Dilan Cookies Choco Chip 12gr, pack isi 23</option>
+                    </select>
+                  </div>
+                  <div class="f">
+                    <label></label><input type="text" value="Etalase 4 sudah aku pin ya kak" />
+                  </div>
+                </div>
+                <p class="f-note"></p>
+                <div class="row-acts">
+                  <button class="btn btn-ink" type="button"></button>
+                  <button class="btn" type="button"></button>
+                </div>
               </div>
             </li>
-            <li class="row">
+
+            <li class="row" data-open="no" data-scene="PAX-5" data-sec="46">
               <span class="row-n">5</span>
-              <div>
-                <div class="row-trigger">“spill etalase 5”</div>
-                <div class="row-product">Dilan Waffle, 1 box kue coklat 16gr</div>
-                <div class="row-reply">Etalase 5 sudah aku pin ya kak</div>
-                <div class="row-foot">Plays scene PAX-5, about 46 seconds</div>
+              <span class="row-main">
+                <span class="row-trigger">“spill etalase 5”</span>
+                <span class="row-product">Dilan Waffle, 1 box kue coklat 16gr</span>
+              </span>
+              <span class="row-acts-cell"
+                ><button class="btn-link row-edit-btn" type="button"></button
+              ></span>
+              <div class="row-edit">
+                <div class="fields">
+                  <div class="f"><label></label><input type="text" value="spill etalase 5" /></div>
+                  <div class="f">
+                    <label></label>
+                    <select>
+                      <option>Dilan Waffle, 1 box kue coklat 16gr</option>
+                    </select>
+                  </div>
+                  <div class="f">
+                    <label></label><input type="text" value="Etalase 5 sudah aku pin ya kak" />
+                  </div>
+                </div>
+                <p class="f-note"></p>
+                <div class="row-acts">
+                  <button class="btn btn-ink" type="button"></button>
+                  <button class="btn" type="button"></button>
+                </div>
               </div>
             </li>
           </ol>
 
           <div class="card-foot">
-            <button class="btn btn-ink" type="button">Add etalase</button>
-            <button class="btn" type="button" disabled>Save changes</button>
-            <span class="foot-note only-stopped">Nothing to save</span>
-            <span class="foot-note only-running">Editable after you press STOP BOT</span>
+            <button class="btn btn-ink" type="button" id="add-btn"></button>
+            <span class="foot-note" id="rows-foot"></span>
           </div>
         </section>
 
         <section class="card" aria-labelledby="activity-h">
           <div class="card-head">
-            <h2 id="activity-h">Activity</h2>
-            <span class="aside only-stopped">Last session, today at 16:08</span>
-            <span class="aside only-running">Live</span>
+            <h2 id="activity-h"></h2>
+            <span class="aside" id="activity-aside"></span>
           </div>
-
-          <ul class="feed">
-            <li class="event only-running">
-              <div class="event-head">
-                <span class="when">16:24:11</span>
-                <span class="what">A viewer asked for etalase 1</span>
-              </div>
-              <ol class="chain">
-                <li class="step done">Scene PAX-1 started<span class="ms">0.05s</span></li>
-                <li class="step done">Product pinned<span class="ms">2.2s</span></li>
-                <li class="step done">Reply posted in your LIVE chat<span class="ms">1.6s</span></li>
-                <li class="step pending">Scene finishes in 31s</li>
-              </ol>
-            </li>
-
-            <li class="event">
-              <div class="event-head">
-                <span class="when">16:09:59</span>
-                <span class="what">A viewer asked for etalase 1</span>
-              </div>
-              <ol class="chain">
-                <li class="step done">Scene PAX-1 started<span class="ms">0.05s</span></li>
-                <li class="step done">Product pinned<span class="ms">2.2s</span></li>
-                <li class="step done">Reply posted in your LIVE chat<span class="ms">1.6s</span></li>
-                <li class="step done">Scene finished<span class="ms">36.4s</span></li>
-              </ol>
-            </li>
-
-            <li class="event">
-              <div class="event-head">
-                <span class="when">16:08:14</span>
-                <span class="what">Connected to your TikTok LIVE</span>
-              </div>
-            </li>
-
-            <li class="event">
-              <div class="event-head">
-                <span class="when">16:08:13</span>
-                <span class="what">Started</span>
-              </div>
-            </li>
-          </ul>
+          <ul class="feed" id="feed"></ul>
+          <p class="feed-foot" id="feed-foot"></p>
         </section>
       </div>
     </main>
 
-    <p class="foot">Local only. This dashboard is served from your own computer.</p>
+    <p class="foot" id="foot"></p>
 
     <section class="notes" aria-labelledby="notes-h">
       <div class="notes-in">
         <h2 id="notes-h">About this concept</h2>
         <p class="lede">
-          A design proposal, not the working dashboard. Nothing here is wired to the app, and this
-          file is outside the installer’s file list so it can never ship. Content is real: the
-          etalase, triggers, replies and the timings in Activity are from the validated run on
-          9 October. The account name is deliberately not the real test account.
+          A design proposal, not the working dashboard. Nothing is wired to the app, and this file is
+          outside the installer’s file list so it can never ship. Content is real: the etalase,
+          triggers, replies and the timings come from the validated run on 9 October. The account
+          name is deliberately not the real test account. This panel stays in English — it is a note
+          to you, not product copy.
         </p>
         <dl>
-          <dt>Green means one thing</dt>
+          <dt>Top strip monitors, bottom list configures</dt>
           <dd>
-            Running, or on air. Nothing else is green — not “connected”, not “available”, not
-            “saved”. That is why there is no brand accent colour competing with it.
+            The strip carries only what changes during a broadcast: which etalase is on air, how long
+            is left, when each last played. No product titles, no trigger phrases — those live in the
+            list below and now appear exactly once on the page. Removing that duplication is also
+            what paid for most of the height reduction.
           </dd>
 
-          <dt>The state is a sentence</dt>
+          <dt>Ready, blocked, running</dt>
           <dd>
-            “The bot is not running”, at the top, next to the only control that changes it. Today
-            that answer is split across a pill, a checklist row and a third card.
+            “Ready to start” when every check clears. “Needs attention” appears only when something
+            genuinely blocks a start, and it always arrives with the fix. Switch to the middle
+            preview state to confirm it is reserved, not decorative.
           </dd>
 
-          <dt>Ordered by when it matters</dt>
+          <dt>Checks collapse when they pass</dt>
           <dd>
-            Status and etalase first because that is what you watch mid-broadcast; the pre-start
-            checks disappear once the bot is running.
+            Eight green rows are eight rows of nothing to do. Clear becomes one line; blocked opens
+            itself on the row that is in the way and dims the strip behind it.
           </dd>
 
-          <dt>The numbers are yours</dt>
+          <dt>Rows are compact until you edit</dt>
           <dd>
-            Etalase 1–5 is the shop’s own numbering, so it is used as structure. The chain in
-            Activity is a real sequence, drawn with a connector rather than decorative numbering.
+            One line each — number, trigger, product. Edit opens that row in place, and only one at a
+            time: two open forms side by side is how people lose track of which one they are
+            changing. While the bot runs, editing is closed rather than merely discouraged.
+          </dd>
+
+          <dt>Recent, not endless</dt>
+          <dd>
+            Newest chain expanded, older ones one summary line, a bounded scroll region, and a stated
+            cap of 50 — the same number as MAX_ACTIVITY_ITEMS in the real ui-logic.js. Anything older
+            is in the support log.
+          </dd>
+
+          <dt>Language is a product feature</dt>
+          <dd>
+            Indonesian by default. Copy is rendered from a dictionary, so translated text and
+            customer content are separated by construction: product titles, trigger phrases, admin
+            replies and scene names like PAX-1 have no key and cannot be translated. Decimals follow
+            the language too — 36,4s in Indonesian, 36.4s elsewhere. Chinese uses the seller’s own
+            vocabulary: 橱窗 for the showcase, 置顶 for pinning.
+          </dd>
+
+          <dt>Fitting three languages</dt>
+          <dd>
+            Indonesian runs roughly 20% longer than English, Chinese roughly 30% shorter. Nothing is
+            sized to a string: the button grows with its label, the headline uses a clamped scale,
+            long check labels wrap while their values stay on one line, and every flex child holding
+            text has min-width 0 so it truncates instead of pushing the row apart.
           </dd>
 
           <dt>If you adopt it</dt>
           <dd>
-            Every element id and class hook the page script relies on stays as it is. The one real
-            cost is the typeface: the app loads nothing from the network by design, so IBM Plex Sans
-            means self-hosting one subset file of roughly 30 KB. On Segoe UI Variable the design
-            still holds.
+            Every element id and class hook that app.js relies on can stay. Two real costs: IBM Plex
+            Sans means self-hosting one ~30KB subset, and the dictionary has to live in ui-logic.js so
+            it stays testable — not in app.js, where the current code already learned not to keep
+            sentences.
           </dd>
 
           <dt>Still open</dt>
@@ -1067,32 +1334,759 @@
     </section>
 
     <script>
-      // Hanya untuk meninjau konsep: menukar satu atribut data-state di elemen
-      // akar, lalu CSS
-      // yang mengerjakan sisanya. Tidak ada logika produk di sini.
       (function () {
         "use strict";
-        var root = document.documentElement;
-        var stopped = document.getElementById("p-stopped");
-        var running = document.getElementById("p-running");
-        var main = document.getElementById("toggle");
 
-        function set(state) {
-          root.setAttribute("data-state", state);
-          var isRunning = state === "running";
-          running.setAttribute("aria-pressed", String(isRunning));
-          stopped.setAttribute("aria-pressed", String(!isRunning));
+        /* =====================================================================
+           KAMUS
+           Setiap kalimat yang dibaca customer ada di sini. Yang TIDAK ada di
+           sini: judul produk, frasa trigger, balasan admin, dan nama scene
+           (PAX-1). Pemisahan itu bukan disiplin penulis — konten customer tidak
+           punya kunci, jadi secara struktur ia tidak bisa ikut diterjemahkan.
+           ===================================================================== */
+
+        var DICT = {
+          id: {
+            htmlLang: "id",
+            dec: ",",
+            "bar.obs": "OBS tersambung",
+            "bar.acct": "Masuk sebagai {name}",
+            "bar.live.on": "LIVE sedang tayang",
+            "bar.live.off": "LIVE belum tayang",
+            "bar.settings": "Pengaturan",
+            "bar.preview": "Pratinjau",
+            "st.ready": "Siap",
+            "st.blocked": "Perlu diperiksa",
+            "st.running": "Berjalan",
+
+            "state.ready.title": "Siap dimulai",
+            "state.ready.body":
+              "Lima etalase siap. Tidak ada produk yang di-pin dan tidak ada pesan terkirim sampai Anda menekan mulai.",
+            "state.blocked.title": "Ada yang perlu dibereskan",
+            "state.blocked.body":
+              "Satu syarat belum terpenuhi, jadi bot belum bisa dijalankan. Bereskan yang di bawah, lalu periksa ulang.",
+            "state.running.title": "Etalase {n} sedang tayang",
+            "state.running.body":
+              "Penonton minta etalase {n}. Scene diputar, produk sudah di-pin, balasan sudah masuk ke chat Anda.",
+            "state.running.meta": "Berjalan {min} menit. {req} permintaan penonton sejauh ini.",
+
+            "btn.start": "MULAI BOT",
+            "btn.stop": "HENTIKAN BOT",
+            "act.ready": "LIVE Anda sudah tayang",
+            "act.blocked": "Belum bisa dimulai",
+            "act.running": "Berhenti perlu satu detik",
+
+            "strip.ready": "Pemantauan langsung. Belum ada yang tayang.",
+            "strip.blocked": "Pemantauan langsung. Bot belum jalan.",
+            "strip.running": "Pemantauan langsung. Etalase {n} sedang tayang.",
+            "slot.onair": "Tayang",
+            "slot.left": "sisa {n}s",
+            "slot.standby": "Siaga",
+            "slot.played": "Terakhir {t}",
+            "slot.off": "Tidak aktif",
+            "slot.nothing": "—",
+
+            "checks.title": "Sebelum mulai",
+            "checks.allClear": "{n} pemeriksaan lolos",
+            "checks.oneBad": "{n} pemeriksaan lolos, 1 perlu dibereskan",
+            "checks.show": "Lihat rincian",
+            "checks.hide": "Sembunyikan",
+            "checks.recheck": "Periksa ulang",
+            "checks.config": "Pengaturan",
+            "checks.config.v": "Tersimpan",
+            "checks.processes": "Bot lain yang jalan",
+            "checks.processes.v": "Tidak ada",
+            "checks.ports": "Port yang dipakai aplikasi",
+            "checks.ports.v": "Tersedia",
+            "checks.obs": "OBS",
+            "checks.obs.v": "Tersambung",
+            "checks.scenes": "Scene OBS",
+            "checks.scenes.v": "Ditemukan",
+            "checks.profile": "Profil browser",
+            "checks.profile.v": "Tersedia",
+            "checks.live": "LIVE TikTok Anda",
+            "checks.live.v": "Sedang tayang",
+            "checks.live.bad": "Belum tayang",
+            "checks.products": "Produk di LIVE Anda",
+            "checks.products.v": "{n} tersedia",
+            "checks.products.bad": "Belum terbaca",
+            "blocker.what": "LIVE TikTok Anda belum tayang",
+            "blocker.fix":
+              "Mulai siaran di TikTok, masukkan produk ke etalase LIVE, lalu tekan Periksa ulang.",
+
+            "etalase.title": "Etalase",
+            "etalase.aside": "Apa yang diketik penonton, dan produk mana yang di-pin",
+            "etalase.edit": "Ubah",
+            "etalase.close": "Tutup",
+            "etalase.saveRow": "Simpan etalase ini",
+            "etalase.cancel": "Batal",
+            "etalase.add": "Tambah etalase",
+            "etalase.f.trigger": "Kata penonton",
+            "etalase.f.product": "Produk",
+            "etalase.f.reply": "Balasan di chat",
+            "etalase.f.note": "Memutar scene {scene}, sekitar {sec} detik.",
+            "rows.foot.ready": "Semua perubahan tersimpan",
+            "rows.foot.blocked": "Semua perubahan tersimpan",
+            "rows.foot.running": "Bisa diubah setelah Anda menekan HENTIKAN BOT",
+
+            "activity.title": "Aktivitas",
+            "activity.aside.recent": "Sesi terakhir, hari ini {t}",
+            "activity.aside.live": "Langsung",
+            "activity.aside.none": "Belum ada",
+            "activity.req": "Penonton minta etalase {n}",
+            "activity.sceneStart": "Scene {scene} mulai",
+            "activity.pinned": "Produk di-pin",
+            "activity.replied": "Balasan dikirim ke chat LIVE",
+            "activity.finished": "Scene selesai",
+            "activity.finishIn": "Scene selesai dalam {n}s",
+            "activity.connected": "Tersambung ke LIVE TikTok Anda",
+            "activity.started": "Bot dimulai",
+            "activity.summary": "Di-pin dan dibalas, scene selesai dalam {n}s",
+            "activity.empty.title": "Belum ada aktivitas",
+            "activity.empty.body":
+              "Setelah bot jalan, minta penonton menyebut salah satu etalase. Setiap permintaan muncul di sini beserta hasilnya.",
+            "activity.cap": "Menyimpan {n} kejadian terbaru. Yang lebih lama ada di log dukungan.",
+
+            foot: "Hanya lokal. Dashboard ini disajikan dari komputer Anda sendiri."
+          },
+
+          en: {
+            htmlLang: "en",
+            dec: ".",
+            "bar.obs": "OBS connected",
+            "bar.acct": "Signed in as {name}",
+            "bar.live.on": "LIVE on air",
+            "bar.live.off": "LIVE not on air",
+            "bar.settings": "Settings",
+            "bar.preview": "Preview",
+            "st.ready": "Ready",
+            "st.blocked": "Attention",
+            "st.running": "Running",
+
+            "state.ready.title": "Ready to start",
+            "state.ready.body":
+              "Five etalase are ready. Nothing is pinned and nothing is posted to your chat until you press start.",
+            "state.blocked.title": "Needs attention",
+            "state.blocked.body":
+              "One requirement is not met yet, so the bot cannot start. Fix the item below, then check again.",
+            "state.running.title": "Etalase {n} is on air",
+            "state.running.body":
+              "A viewer asked for etalase {n}. The scene is playing, the product is pinned, the reply is sent.",
+            "state.running.meta": "Running for {min} minutes. {req} viewer requests so far.",
+
+            "btn.start": "START BOT",
+            "btn.stop": "STOP BOT",
+            "act.ready": "Your LIVE is already on air",
+            "act.blocked": "Not ready to start",
+            "act.running": "Stopping takes a second",
+
+            "strip.ready": "Live monitoring. Nothing is playing yet.",
+            "strip.blocked": "Live monitoring. The bot is not running.",
+            "strip.running": "Live monitoring. Etalase {n} is on air.",
+            "slot.onair": "On air",
+            "slot.left": "{n}s left",
+            "slot.standby": "Standby",
+            "slot.played": "Last {t}",
+            "slot.off": "Off",
+            "slot.nothing": "—",
+
+            "checks.title": "Before you start",
+            "checks.allClear": "{n} checks clear",
+            "checks.oneBad": "{n} checks clear, 1 needs attention",
+            "checks.show": "Show details",
+            "checks.hide": "Hide",
+            "checks.recheck": "Check again",
+            "checks.config": "Settings",
+            "checks.config.v": "Saved",
+            "checks.processes": "Other bots running",
+            "checks.processes.v": "None",
+            "checks.ports": "Ports this app needs",
+            "checks.ports.v": "Available",
+            "checks.obs": "OBS",
+            "checks.obs.v": "Connected",
+            "checks.scenes": "OBS scenes",
+            "checks.scenes.v": "Found",
+            "checks.profile": "Browser profile",
+            "checks.profile.v": "Available",
+            "checks.live": "Your TikTok LIVE",
+            "checks.live.v": "On air",
+            "checks.live.bad": "Not on air",
+            "checks.products": "Products in your LIVE",
+            "checks.products.v": "{n} available",
+            "checks.products.bad": "Cannot read yet",
+            "blocker.what": "Your TikTok LIVE is not on air",
+            "blocker.fix":
+              "Go live on TikTok, add your products to the LIVE showcase, then press Check again.",
+
+            "etalase.title": "Etalase",
+            "etalase.aside": "What a viewer types, and which product gets pinned",
+            "etalase.edit": "Edit",
+            "etalase.close": "Close",
+            "etalase.saveRow": "Save this etalase",
+            "etalase.cancel": "Cancel",
+            "etalase.add": "Add etalase",
+            "etalase.f.trigger": "Viewer types",
+            "etalase.f.product": "Product",
+            "etalase.f.reply": "Chat reply",
+            "etalase.f.note": "Plays scene {scene}, about {sec} seconds.",
+            "rows.foot.ready": "All changes saved",
+            "rows.foot.blocked": "All changes saved",
+            "rows.foot.running": "Editable after you press STOP BOT",
+
+            "activity.title": "Activity",
+            "activity.aside.recent": "Last session, today at {t}",
+            "activity.aside.live": "Live",
+            "activity.aside.none": "Nothing yet",
+            "activity.req": "A viewer asked for etalase {n}",
+            "activity.sceneStart": "Scene {scene} started",
+            "activity.pinned": "Product pinned",
+            "activity.replied": "Reply posted in your LIVE chat",
+            "activity.finished": "Scene finished",
+            "activity.finishIn": "Scene finishes in {n}s",
+            "activity.connected": "Connected to your TikTok LIVE",
+            "activity.started": "Bot started",
+            "activity.summary": "Pinned and replied, scene finished in {n}s",
+            "activity.empty.title": "No activity yet",
+            "activity.empty.body":
+              "Once the bot is running, ask a viewer to name one of your etalase. Every request shows up here with what happened to it.",
+            "activity.cap": "Keeps the {n} most recent events. Anything older is in the support log.",
+
+            foot: "Local only. This dashboard is served from your own computer."
+          },
+
+          zh: {
+            htmlLang: "zh-Hans",
+            dec: ".",
+            /* Istilah platform, bukan terjemahan kamus:
+                 橱窗 = etalase produk di LIVE (istilah penjual live)
+                 置顶 = pin ke atas
+               Keduanya kata yang dipakai penjual sungguhan, bukan hasil
+               penerjemahan harfiah dari "showcase" dan "pin". */
+            "bar.obs": "OBS 已连接",
+            "bar.acct": "已登录：{name}",
+            "bar.live.on": "直播进行中",
+            "bar.live.off": "尚未开始直播",
+            "bar.settings": "设置",
+            "bar.preview": "预览",
+            "st.ready": "就绪",
+            "st.blocked": "待处理",
+            "st.running": "运行中",
+
+            "state.ready.title": "可以开始了",
+            "state.ready.body": "五个橱窗已就绪。在你点击启动前，不会置顶商品，也不会发送消息。",
+            "state.blocked.title": "有一项需要处理",
+            "state.blocked.body": "还有一个条件未满足，机器人无法启动。处理下面这一项，然后重新检查。",
+            "state.running.title": "橱窗 {n} 正在播放",
+            "state.running.body": "有观众请求橱窗 {n}。场景正在播放，商品已置顶，回复已发出。",
+            "state.running.meta": "已运行 {min} 分钟，共处理 {req} 条观众请求。",
+
+            "btn.start": "启动机器人",
+            "btn.stop": "停止机器人",
+            "act.ready": "你的直播已在进行",
+            "act.blocked": "暂时无法启动",
+            "act.running": "停止需要一秒",
+
+            "strip.ready": "实时监控。暂无播放。",
+            "strip.blocked": "实时监控。机器人未运行。",
+            "strip.running": "实时监控。橱窗 {n} 正在播放。",
+            "slot.onair": "播放中",
+            "slot.left": "还有 {n} 秒",
+            "slot.standby": "待机",
+            "slot.played": "上次 {t}",
+            "slot.off": "未启用",
+            "slot.nothing": "—",
+
+            "checks.title": "开始前检查",
+            "checks.allClear": "{n} 项检查全部通过",
+            "checks.oneBad": "{n} 项通过，1 项待处理",
+            "checks.show": "查看详情",
+            "checks.hide": "收起",
+            "checks.recheck": "重新检查",
+            "checks.config": "设置",
+            "checks.config.v": "已保存",
+            "checks.processes": "其他运行中的机器人",
+            "checks.processes.v": "没有",
+            "checks.ports": "应用需要的端口",
+            "checks.ports.v": "可用",
+            "checks.obs": "OBS",
+            "checks.obs.v": "已连接",
+            "checks.scenes": "OBS 场景",
+            "checks.scenes.v": "已找到",
+            "checks.profile": "浏览器配置",
+            "checks.profile.v": "可用",
+            "checks.live": "你的 TikTok 直播",
+            "checks.live.v": "进行中",
+            "checks.live.bad": "尚未开始",
+            "checks.products": "直播间商品",
+            "checks.products.v": "{n} 件可用",
+            "checks.products.bad": "暂时读不到",
+            "blocker.what": "你的 TikTok 直播尚未开始",
+            "blocker.fix": "先在 TikTok 开始直播，把商品加入直播橱窗，然后点击“重新检查”。",
+
+            "etalase.title": "橱窗",
+            "etalase.aside": "观众输入什么，就置顶哪件商品",
+            "etalase.edit": "编辑",
+            "etalase.close": "收起",
+            "etalase.saveRow": "保存此橱窗",
+            "etalase.cancel": "取消",
+            "etalase.add": "添加橱窗",
+            "etalase.f.trigger": "观众输入",
+            "etalase.f.product": "商品",
+            "etalase.f.reply": "评论区回复",
+            "etalase.f.note": "播放场景 {scene}，约 {sec} 秒。",
+            "rows.foot.ready": "所有更改已保存",
+            "rows.foot.blocked": "所有更改已保存",
+            "rows.foot.running": "点击“停止机器人”后可编辑",
+
+            "activity.title": "最近动态",
+            "activity.aside.recent": "上一场，今天 {t}",
+            "activity.aside.live": "实时",
+            "activity.aside.none": "暂无",
+            "activity.req": "观众请求橱窗 {n}",
+            "activity.sceneStart": "场景 {scene} 开始",
+            "activity.pinned": "商品已置顶",
+            "activity.replied": "回复已发到直播评论",
+            "activity.finished": "场景结束",
+            "activity.finishIn": "还有 {n} 秒结束",
+            "activity.connected": "已连接到你的 TikTok 直播",
+            "activity.started": "机器人已启动",
+            "activity.summary": "已置顶并回复，场景在 {n} 秒后结束",
+            "activity.empty.title": "暂无动态",
+            "activity.empty.body":
+              "机器人运行后，让观众说出其中一个橱窗。每条请求及其结果都会显示在这里。",
+            "activity.cap": "仅保留最近 {n} 条动态，更早的记录在支持日志中。",
+
+            foot: "仅本地运行。此面板由你自己的电脑提供。"
+          }
+        };
+
+        /* ===================================================== keadaan ===== */
+
+        var ACCOUNT = "tokosnackku"; // konten customer: tidak diterjemahkan
+        var CAP = 50; // sama dengan MAX_ACTIVITY_ITEMS di ui-logic.js
+        var ON_AIR = 1; // etalase yang tayang saat state = running
+
+        var root = document.documentElement;
+        var lang = "id"; // bawaan peluncuran pertama
+        var state = "ready";
+
+        function t(key, vars) {
+          var s = DICT[lang][key];
+          if (s === undefined) return "[" + key + "]";
+          if (!vars) return s;
+          return s.replace(/\{(\w+)\}/g, function (whole, k) {
+            return vars[k] === undefined ? whole : vars[k];
+          });
         }
 
-        stopped.addEventListener("click", function () {
-          set("stopped");
+        // Desimal mengikuti bahasa. Menulis "36.4s" kepada pembaca Indonesia
+        // bukan terjemahan yang selesai.
+        function dec(n) {
+          return String(n).replace(".", DICT[lang].dec);
+        }
+
+        function set(id, text) {
+          var el = document.getElementById(id);
+          if (el) el.textContent = text;
+        }
+
+        /* -------------------------------------------------------- bilah ---- */
+
+        function renderBar() {
+          set("c-obs", t("bar.obs"));
+          set("c-acct", t("bar.acct", { name: ACCOUNT }));
+          set("c-live", state === "blocked" ? t("bar.live.off") : t("bar.live.on"));
+          document.getElementById("d-live").className =
+            "dot " + (state === "blocked" ? "warn" : "live");
+          set("c-settings", t("bar.settings"));
+          set("c-preview", t("bar.preview"));
+          set("s-ready", t("st.ready"));
+          set("s-blocked", t("st.blocked"));
+          set("s-running", t("st.running"));
+        }
+
+        /* ----------------------------------------------------- panggung ---- */
+
+        function renderStage() {
+          var h1 = document.getElementById("state-h");
+          var body = document.getElementById("state-body");
+          var meta = document.getElementById("state-meta");
+          var btn = document.getElementById("main-btn");
+
+          if (state === "running") {
+            h1.textContent = t("state.running.title", { n: ON_AIR });
+            body.textContent = t("state.running.body", { n: ON_AIR });
+            meta.textContent = t("state.running.meta", { min: 16, req: 2 });
+            meta.hidden = false;
+            btn.textContent = t("btn.stop");
+            btn.disabled = false;
+            set("act-note", t("act.running"));
+            set("strip-head", t("strip.running", { n: ON_AIR }));
+            return;
+          }
+
+          meta.hidden = true;
+          btn.textContent = t("btn.start");
+
+          if (state === "blocked") {
+            h1.textContent = t("state.blocked.title");
+            body.textContent = t("state.blocked.body");
+            btn.disabled = true;
+            set("act-note", t("act.blocked"));
+            set("strip-head", t("strip.blocked"));
+          } else {
+            h1.textContent = t("state.ready.title");
+            body.textContent = t("state.ready.body");
+            btn.disabled = false;
+            set("act-note", t("act.ready"));
+            set("strip-head", t("strip.ready"));
+          }
+        }
+
+        /* --------------------------------------------- strip: pemantauan --- */
+
+        // Hanya hal yang BERUBAH saat siaran. Tidak ada judul produk, tidak ada
+        // frasa trigger: keduanya ada di daftar pengaturan, satu kali saja.
+        var MONITOR = {
+          1: { kind: "onair", left: 31 },
+          2: { kind: "standby" },
+          3: { kind: "played", at: "16:09" },
+          4: { kind: "standby" },
+          5: { kind: "standby" }
+        };
+
+        function renderStrip() {
+          var strip = document.getElementById("strip");
+          strip.textContent = "";
+
+          for (var n = 1; n <= 5; n += 1) {
+            var li = document.createElement("li");
+            li.className = "slot";
+
+            var num = document.createElement("span");
+            num.className = "slot-n";
+            num.textContent = String(n);
+
+            var txt = document.createElement("span");
+            txt.className = "slot-txt";
+            var st = document.createElement("span");
+            st.className = "slot-state";
+            var sub = document.createElement("span");
+            sub.className = "slot-sub";
+
+            if (state === "running") {
+              var m = MONITOR[n];
+              if (m.kind === "onair") {
+                li.className = "slot on";
+                st.textContent = t("slot.onair");
+                sub.textContent = t("slot.left", { n: m.left });
+                var rail = document.createElement("span");
+                rail.className = "rail";
+                rail.appendChild(document.createElement("i"));
+                li.appendChild(rail);
+              } else if (m.kind === "played") {
+                st.textContent = t("slot.standby");
+                sub.textContent = t("slot.played", { t: m.at });
+              } else {
+                st.textContent = t("slot.standby");
+                sub.textContent = t("slot.nothing");
+              }
+            } else {
+              st.textContent = t("slot.off");
+              sub.textContent = t("slot.nothing");
+            }
+
+            txt.appendChild(st);
+            txt.appendChild(sub);
+            li.appendChild(num);
+            li.appendChild(txt);
+            strip.appendChild(li);
+          }
+        }
+
+        /* ---------------------------------------------------- pemeriksaan -- */
+
+        var CHECKS = [
+          { key: "config", v: "config.v" },
+          { key: "processes", v: "processes.v" },
+          { key: "ports", v: "ports.v" },
+          { key: "obs", v: "obs.v" },
+          { key: "scenes", v: "scenes.v" },
+          { key: "profile", v: "profile.v" },
+          { key: "live", v: "live.v", badV: "live.bad", blocker: true },
+          { key: "products", v: "products.v", badV: "products.bad", n: 5, dependsOnLive: true }
+        ];
+
+        function renderChecks() {
+          var card = document.getElementById("checks");
+          var blocked = state === "blocked";
+
+          set("checks-h", t("checks.title"));
+          set(
+            "checks-sum-txt",
+            blocked
+              ? t("checks.oneBad", { n: CHECKS.length - 1 })
+              : t("checks.allClear", { n: CHECKS.length })
+          );
+          document.getElementById("checks-dot").className = "dot" + (blocked ? " warn" : "");
+          set("blocker-what", t("blocker.what"));
+          set("blocker-fix", t("blocker.fix"));
+          set("checks-recheck", t("checks.recheck"));
+
+          // Yang menghalangi membuka dirinya sendiri; yang lolos tetap satu baris.
+          if (blocked) card.setAttribute("data-open", "yes");
+          var open = card.getAttribute("data-open") === "yes";
+          var toggle = document.getElementById("checks-toggle");
+          toggle.textContent = open ? t("checks.hide") : t("checks.show");
+          toggle.setAttribute("aria-expanded", String(open));
+
+          var body = document.getElementById("checks-body");
+          body.textContent = "";
+          CHECKS.forEach(function (c) {
+            // Satu yang MENGHALANGI, dan satu yang hanya mengikutinya.
+            var isBlocker = blocked && c.blocker === true;
+            var isDep = blocked && c.dependsOnLive === true;
+            var wrap = document.createElement("div");
+            wrap.className = "check" + (isBlocker ? " bad" : isDep ? " dep" : "");
+            var dt = document.createElement("dt");
+            dt.textContent = t("checks." + c.key);
+            var dd = document.createElement("dd");
+            dd.textContent = t("checks." + ((isBlocker || isDep) && c.badV ? c.badV : c.v), { n: c.n });
+            wrap.appendChild(dt);
+            wrap.appendChild(dd);
+            body.appendChild(wrap);
+          });
+        }
+
+        /* ----------------------------------------------------- pengaturan -- */
+
+        var F_KEYS = ["etalase.f.trigger", "etalase.f.product", "etalase.f.reply"];
+
+        function renderRows() {
+          set("etalase-h", t("etalase.title"));
+          set("etalase-aside", t("etalase.aside"));
+          set("add-btn", t("etalase.add"));
+          set("rows-foot", t("rows.foot." + state));
+
+          var editable = state !== "running";
+          document.getElementById("add-btn").disabled = !editable;
+
+          Array.prototype.forEach.call(document.querySelectorAll("#rows .row"), function (row) {
+            if (!editable) row.setAttribute("data-open", "no");
+            var open = row.getAttribute("data-open") === "yes";
+
+            var btn = row.querySelector(".row-edit-btn");
+            btn.textContent = open ? t("etalase.close") : t("etalase.edit");
+            btn.setAttribute("aria-expanded", String(open));
+            btn.disabled = !editable;
+
+            Array.prototype.forEach.call(row.querySelectorAll(".f label"), function (lab, i) {
+              lab.textContent = t(F_KEYS[i]);
+            });
+
+            row.querySelector(".f-note").textContent = t("etalase.f.note", {
+              scene: row.getAttribute("data-scene"),
+              sec: row.getAttribute("data-sec")
+            });
+
+            var acts = row.querySelectorAll(".row-acts .btn");
+            acts[0].textContent = t("etalase.saveRow");
+            acts[1].textContent = t("etalase.cancel");
+          });
+        }
+
+        /* ------------------------------------------------------ aktivitas -- */
+
+        // Kejadian nyata dari run yang tervalidasi 9 Oktober.
+        var FEED = {
+          running: [
+            {
+              at: "16:24:11",
+              head: ["activity.req", { n: 1 }],
+              chain: [
+                ["activity.sceneStart", { scene: "PAX-1" }, 0.05],
+                ["activity.pinned", null, 2.2],
+                ["activity.replied", null, 1.6],
+                ["activity.finishIn", { n: 31 }, null, true]
+              ]
+            },
+            { at: "16:09:59", head: ["activity.req", { n: 1 }], done: 36.4 },
+            { at: "16:08:14", head: ["activity.connected", null] },
+            { at: "16:08:13", head: ["activity.started", null] }
+          ],
+          ready: [
+            {
+              at: "16:09:59",
+              head: ["activity.req", { n: 1 }],
+              chain: [
+                ["activity.sceneStart", { scene: "PAX-1" }, 0.05],
+                ["activity.pinned", null, 2.2],
+                ["activity.replied", null, 1.6],
+                ["activity.finished", null, 36.4]
+              ]
+            },
+            { at: "16:08:14", head: ["activity.connected", null] },
+            { at: "16:08:13", head: ["activity.started", null] }
+          ],
+          // Belum pernah jalan hari ini: LIVE-nya belum dinyalakan, jadi umpan
+          // kosong memang isi yang BENAR untuk keadaan ini.
+          blocked: []
+        };
+
+        function renderFeed() {
+          set("activity-h", t("activity.title"));
+          var events = FEED[state];
+
+          set(
+            "activity-aside",
+            state === "running"
+              ? t("activity.aside.live")
+              : events.length
+                ? t("activity.aside.recent", { t: "16:08" })
+                : t("activity.aside.none")
+          );
+
+          var feed = document.getElementById("feed");
+          var foot = document.getElementById("feed-foot");
+          feed.textContent = "";
+
+          if (!events.length) {
+            var empty = document.createElement("li");
+            empty.className = "empty";
+            var b = document.createElement("b");
+            b.textContent = t("activity.empty.title");
+            var s = document.createElement("span");
+            s.textContent = t("activity.empty.body");
+            empty.appendChild(b);
+            empty.appendChild(s);
+            feed.appendChild(empty);
+            foot.hidden = true;
+            return;
+          }
+
+          foot.hidden = false;
+          foot.textContent = t("activity.cap", { n: CAP });
+
+          events.forEach(function (e) {
+            var li = document.createElement("li");
+            li.className = "event";
+
+            var head = document.createElement("div");
+            head.className = "event-head";
+            var when = document.createElement("span");
+            when.className = "when";
+            when.textContent = e.at;
+            var what = document.createElement("span");
+            what.className = "what";
+            what.textContent = t(e.head[0], e.head[1]);
+            head.appendChild(when);
+            head.appendChild(what);
+            li.appendChild(head);
+
+            // Yang terbaru terbuka penuh; yang sudah selesai dan berhasil
+            // diringkas satu baris.
+            if (e.chain) {
+              var ol = document.createElement("ol");
+              ol.className = "chain";
+              e.chain.forEach(function (step) {
+                var item = document.createElement("li");
+                item.className = "step" + (step[3] ? " pending" : "");
+                item.textContent = t(step[0], step[1]);
+                if (step[2] !== null && step[2] !== undefined) {
+                  var ms = document.createElement("span");
+                  ms.className = "ms";
+                  ms.textContent = dec(step[2]) + "s";
+                  item.appendChild(ms);
+                }
+                ol.appendChild(item);
+              });
+              li.appendChild(ol);
+            } else if (e.done) {
+              var sum = document.createElement("p");
+              sum.className = "summary";
+              sum.textContent = t("activity.summary", { n: dec(e.done) });
+              li.appendChild(sum);
+            }
+
+            feed.appendChild(li);
+          });
+        }
+
+        /* --------------------------------------------------------- render -- */
+
+        function render() {
+          root.setAttribute("data-state", state);
+          root.setAttribute("data-lang", lang);
+          root.lang = DICT[lang].htmlLang;
+
+          renderBar();
+          renderStage();
+          renderStrip();
+          renderChecks();
+          renderRows();
+          renderFeed();
+          set("foot", t("foot"));
+
+          Array.prototype.forEach.call(document.querySelectorAll("[data-lang-btn]"), function (b) {
+            b.setAttribute("aria-pressed", String(b.getAttribute("data-lang-btn") === lang));
+          });
+          Array.prototype.forEach.call(document.querySelectorAll("[data-state-btn]"), function (b) {
+            b.setAttribute("aria-pressed", String(b.getAttribute("data-state-btn") === state));
+          });
+        }
+
+        /* ----------------------------------------------------------- bind -- */
+
+        document.getElementById("lang-group").addEventListener("click", function (ev) {
+          var b = ev.target.closest("[data-lang-btn]");
+          if (!b) return;
+          lang = b.getAttribute("data-lang-btn");
+          render();
         });
-        running.addEventListener("click", function () {
-          set("running");
+
+        document.getElementById("state-group").addEventListener("click", function (ev) {
+          var b = ev.target.closest("[data-state-btn]");
+          if (!b) return;
+          state = b.getAttribute("data-state-btn");
+          if (state !== "blocked") document.getElementById("checks").setAttribute("data-open", "no");
+          render();
         });
-        main.addEventListener("click", function () {
-          set(root.getAttribute("data-state") === "running" ? "stopped" : "running");
+
+        document.getElementById("main-btn").addEventListener("click", function () {
+          state = state === "running" ? "ready" : "running";
+          document.getElementById("checks").setAttribute("data-open", "no");
+          render();
         });
+
+        document.getElementById("checks-toggle").addEventListener("click", function () {
+          var card = document.getElementById("checks");
+          card.setAttribute("data-open", card.getAttribute("data-open") === "yes" ? "no" : "yes");
+          renderChecks();
+        });
+
+        // Satu baris terbuka pada satu waktu: dua formulir terbuka berdampingan
+        // membuat orang lupa yang mana yang sedang ia ubah.
+        document.getElementById("rows").addEventListener("click", function (ev) {
+          var edit = ev.target.closest(".row-edit-btn");
+          var cancel = ev.target.closest(".row-acts .btn:not(.btn-ink)");
+
+          if (cancel) {
+            cancel.closest(".row").setAttribute("data-open", "no");
+            renderRows();
+            return;
+          }
+          if (!edit || edit.disabled) return;
+
+          var row = edit.closest(".row");
+          var wasOpen = row.getAttribute("data-open") === "yes";
+          Array.prototype.forEach.call(document.querySelectorAll("#rows .row"), function (r) {
+            r.setAttribute("data-open", "no");
+          });
+          row.setAttribute("data-open", wasOpen ? "no" : "yes");
+          renderRows();
+        });
+
+        render();
       })();
     </script>
   </body>
