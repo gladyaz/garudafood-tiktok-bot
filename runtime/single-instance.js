@@ -53,6 +53,99 @@ function pidAlive(pid) {
   }
 }
 
+// Membaca berkas kunci. Di tingkat modul karena dipakai DUA pihak: pemegang
+// kunci (bot) dan INDUK yang membersihkannya. Dua salinan pembaca berarti suatu
+// saat keduanya akan berbeda pendapat soal siapa pemilik kunci.
+function readLock(target, fs = fsDefault) {
+  try {
+    const raw = fs.readFileSync(target, "utf8");
+    // BOM dibuang dulu; lihat catatan di read() di bawah.
+    const parsed = JSON.parse(raw.replace(/^﻿/, ""));
+    const owner = Number(parsed && parsed.pid);
+    return Number.isInteger(owner) && owner > 0 ? { ...parsed, pid: owner } : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PEMBERSIHAN OLEH INDUK
+//
+// Kenapa ini perlu ada, dan kenapa tidak cukup mengandalkan bot sendiri:
+//
+// index.js melepas kuncinya di handler SIGINT/SIGTERM/exit. Di Windows itu
+// tidak cukup. `child.kill("SIGTERM")` memanggil TerminateProcess, jadi tidak
+// satu pun handler bot dijalankan — terlihat langsung di log run 2026-10-09:
+//
+//   [CONTROLLER_CHILD_EXIT] role=bot pid=38576 code=null signal=SIGTERM
+//
+// dan sesudah stop yang BERSIH, %APPDATA%\AI LIVE HOST\.bot.lock masih ada
+// dengan pid 38576 yang sudah mati.
+//
+// Jadi yang berwenang membersihkan adalah pihak yang MEMBUKTIKAN kematiannya,
+// yaitu induk. Dua fungsi di bawah adalah satu-satunya jalan untuk itu, dan
+// keduanya menolak bertindak tanpa bukti.
+
+// Membersihkan kunci yang ditinggalkan SATU proses tertentu.
+//
+// Hanya menghapus kalau kunci itu MEMANG milik pid tersebut DAN pid itu TERBUKTI
+// mati. Kunci milik pid lain tidak disentuh sama sekali: induk yang menghapus
+// kunci bot orang lain akan membuka jalan bagi dua bot berjalan bersamaan, yaitu
+// persis insiden 2026-10-05.
+function releaseLockFor({ file, pid, fs = fsDefault, isAlive = pidAlive } = {}) {
+  if (!file) return { ok: false, code: "no-file" };
+  if (!Number.isInteger(pid) || pid <= 0) return { ok: false, code: "no-pid" };
+
+  const existing = readLock(file, fs);
+  if (!existing) return { ok: true, code: "no-lock" };
+
+  // Bukan milik kita. JANGAN disentuh.
+  if (existing.pid !== pid) return { ok: true, code: "not-ours", pid: existing.pid };
+
+  // Milik kita tapi prosesnya masih hidup: berarti kematiannya belum terbukti,
+  // dan menghapus kunci sekarang akan mengizinkan bot kedua menyala di samping
+  // yang masih berjalan.
+  if (isAlive(pid)) return { ok: false, code: "still-alive", pid };
+
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    return { ok: false, code: "unlink-failed", pid };
+  }
+  return { ok: true, code: "removed", pid };
+}
+
+// Membersihkan kunci saat TERBUKTI tidak ada proses bot hidup sama sekali.
+//
+// Ini jawaban untuk pid yang dipakai ulang Windows. `process.kill(pid, 0)` hanya
+// bisa menjawab "ada proses dengan pid ini", bukan "proses itu bot kita". Jadi
+// kunci basi yang pid-nya kebetulan dipakai ulang proses lain akan membuat
+// acquire() menolak start — penolakan yang salah.
+//
+// Yang TIDAK dilakukan di sini: melonggarkan acquire(). Pelonggaran apa pun di
+// sana akan mengizinkan bot kedua menyala saat bot pertama masih hidup, dan itu
+// adalah insiden 2026-10-05. acquire() tetap fail-closed.
+//
+// Yang dilakukan: memakai BUKTI DARI LUAR. Penyapu yatim di controller/index.js
+// menghitung proses `node.exe` yang command line-nya memuat index.js. Kalau ia
+// membuktikan NOL, maka kunci yang tersisa tidak mungkin milik bot yang hidup —
+// apa pun pid di dalamnya. `botAlive` harus BERNILAI false secara eksplisit;
+// null/undefined berarti belum terbukti, dan tanpa bukti tidak ada yang dihapus.
+function clearLockIfNoBot({ file, fs = fsDefault, botAlive = null } = {}) {
+  if (!file) return { ok: false, code: "no-file" };
+  if (botAlive !== false) return { ok: true, code: "unproven" };
+
+  const existing = readLock(file, fs);
+  if (!existing) return { ok: true, code: "no-lock" };
+
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    return { ok: false, code: "unlink-failed", pid: existing.pid };
+  }
+  return { ok: true, code: "removed", pid: existing.pid };
+}
+
 function createInstanceLock({
   file,
   pid = process.pid,
@@ -83,21 +176,15 @@ function createInstanceLock({
     }
   };
 
+  // BOM dibuang di readLock(): berkas kunci yang disunting tangan di Windows
+  // (Out-File, Notepad) hampir selalu berawalan BOM, dan JSON.parse menolaknya.
+  // Kalau itu dibiarkan, kunci dianggap tidak ada dan bot kedua justru ikut
+  // menyala - persis kebalikan dari gunanya kunci ini.
+  //
+  // Berkas yang tidak ada, tidak terbaca, atau JSON-nya rusak semuanya
+  // diperlakukan sebagai "tidak ada pemilik sah".
   function read() {
-    try {
-      const raw = fs.readFileSync(target, "utf8");
-      // BOM dibuang dulu: berkas kunci yang disunting tangan di Windows (Out-File,
-      // Notepad) hampir selalu berawalan BOM, dan JSON.parse menolaknya. Kalau itu
-      // dibiarkan, kunci dianggap tidak ada dan bot kedua justru ikut menyala -
-      // persis kebalikan dari gunanya kunci ini.
-      const parsed = JSON.parse(raw.replace(/^﻿/, ""));
-      const owner = Number(parsed && parsed.pid);
-      return Number.isInteger(owner) && owner > 0 ? { ...parsed, pid: owner } : null;
-    } catch {
-      // Tidak ada file, tidak terbaca, atau JSON rusak: semuanya diperlakukan
-      // sebagai "tidak ada pemilik sah".
-      return null;
-    }
+    return readLock(target, fs);
   }
 
   function write() {
@@ -148,4 +235,12 @@ function createInstanceLock({
   return { acquire, release, __read: read, __state: () => ({ held, target, pid }) };
 }
 
-module.exports = { createInstanceLock, pidAlive, LOCK_FILENAME, LOCK_FILE_ENV };
+module.exports = {
+  createInstanceLock,
+  releaseLockFor,
+  clearLockIfNoBot,
+  readLock,
+  pidAlive,
+  LOCK_FILENAME,
+  LOCK_FILE_ENV,
+};

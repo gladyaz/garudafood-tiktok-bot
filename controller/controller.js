@@ -36,6 +36,10 @@ const { createChildTracer, traceEnabled } = require("./child-trace");
 // status() supaya tombol UI dan penolakan server tidak bisa menyimpang.
 const { describeMode } = require("./automation-mode");
 const { createRunAuthority } = require("./run-authority");
+// Pembersihan kunci bot oleh INDUK. Dibutuhkan karena di Windows
+// child.kill("SIGTERM") memanggil TerminateProcess, jadi handler pelepasan kunci
+// di bot tidak pernah berjalan. Lihat runtime/single-instance.js.
+const { releaseLockFor, clearLockIfNoBot, pidAlive: pidAliveDefault } = require("../runtime/single-instance");
 const { createLoginFlow } = require("./login");
 const {
   buildRuntimeConfig,
@@ -235,9 +239,9 @@ function createController({
       // yang sudah berotasi dan tersunting. Lihat traceChildLine().
       traceChildLine(role, line);
     },
-    onExit: ({ role, code, signal, expected }) => {
+    onExit: ({ role, pid, code, signal, expected }) => {
       if (expected) return; // kematian yang kita minta; bukan kejadian.
-      handleUnexpectedExit({ role, code, signal });
+      handleUnexpectedExit({ role, pid, code, signal });
     },
   });
 
@@ -351,7 +355,39 @@ function createController({
 
   // --- reaksi terhadap kematian yang tidak diminta ---------------------------
 
-  function handleUnexpectedExit({ role, code, signal }) {
+  // --- kunci bot: dibersihkan oleh INDUK --------------------------------------
+  //
+  // Bot melepas kuncinya sendiri lewat handler exit, dan di Windows itu tidak
+  // pernah berjalan: kematiannya datang dari TerminateProcess. Buktinya ada di
+  // log run 2026-10-09 — stop bersih, tapi .bot.lock tetap tertinggal dengan pid
+  // yang sudah mati.
+  //
+  // Jadi yang membersihkan adalah pihak yang MEMBUKTIKAN kematiannya. Dipanggil
+  // dari dua tempat: sesudah Stop yang berhasil, dan sesudah bot mati sendiri
+  // (crash). Keduanya hanya menghapus kunci yang memang milik pid itu.
+  //
+  // Di jalur manual (`node controller/index.js` tanpa aplikasi desktop) `paths`
+  // kosong, dan Controller TIDAK tahu di mana bot menaruh kuncinya — jadi ia
+  // tidak menyentuh apa pun. Perilaku jalur itu tidak berubah.
+  function cleanupBotLock(reason) {
+    const lockFile = paths && paths.lockFile;
+    if (!lockFile) return { ok: true, code: "not-managed" };
+
+    const pid = pm.getProcessState().bot.pid;
+    const r = releaseLockFor({
+      file: lockFile,
+      pid,
+      fs: fsImpl,
+      isAlive: pidAlive || pidAliveDefault,
+    });
+    // Dicatat apa adanya, termasuk saat TIDAK menghapus: "not-ours" dan
+    // "still-alive" adalah keputusan, bukan kegagalan, dan keduanya harus bisa
+    // dibaca kembali kalau suatu saat kunci tertinggal lagi.
+    log("BOT_LOCK", { reason, result: r.code, pid: pid || "" });
+    return r;
+  }
+
+  function handleUnexpectedExit({ role, pid, code, signal }) {
     const state = sm.state();
     log("CHILD_CRASHED", { role, code: code === null ? "null" : code, signal: signal || "", state });
     activity.push({
@@ -359,6 +395,11 @@ function createController({
       message: (role === "bot" ? "The bot" : "The pin service") + " stopped unexpectedly",
       reason: signal ? "signal-" + signal : "exit-" + code,
     });
+
+    // Bot yang mati sendiri meninggalkan kuncinya. Dibersihkan di sini juga,
+    // bukan hanya di jalur Stop: crash adalah justru kasus di mana bot paling
+    // pasti tidak sempat melepas kuncinya.
+    if (role === "bot") cleanupBotLock("bot-crashed");
 
     // Selama STARTING, kematian ditangani oleh jalur start itu sendiri (ia yang
     // memegang rollback). Menyentuh state dari sini akan berlomba dengannya.
@@ -538,6 +579,19 @@ function createController({
       return rollback("orphans-remain", "remaining=" + (swept.remaining || "?"));
     }
 
+    // Penyapu baru saja MEMBUKTIKAN tidak ada proses bot yang hidup. Maka kunci
+    // apa pun yang masih tersisa tidak mungkin milik bot yang hidup — termasuk
+    // kunci basi yang pid-nya kebetulan dipakai ulang Windows untuk proses lain.
+    //
+    // Tanpa ini, pid yang terpakai ulang akan membuat acquire() menolak start
+    // dengan "already-running" padahal tidak ada bot sama sekali. Dan acquire()
+    // SENGAJA tidak dilonggarkan untuk itu: pelonggaran di sana akan mengizinkan
+    // bot kedua menyala saat bot pertama masih hidup, yaitu insiden 2026-10-05.
+    if (paths && paths.lockFile) {
+      const cleared = clearLockIfNoBot({ file: paths.lockFile, fs: fsImpl, botAlive: false });
+      if (cleared.code === "removed") log("BOT_LOCK", { reason: "stale-before-start", result: cleared.code, pid: cleared.pid });
+    }
+
     // --- kepemilikan profil Chrome -----------------------------------------
     // Service akan membuka profil ini. Diambil SEBELUM apa pun dinyalakan, supaya
     // login tidak bisa menyelip di antara preflight dan spawn.
@@ -686,6 +740,10 @@ function createController({
         }
 
         if (sm.state() !== STATES.STOPPED) sm.to(STATES.STOPPED, { reason: "stop-complete" });
+        // Kematian bot sudah DIBUKTIKAN di atas (pemeriksaan orphans), jadi di
+        // sinilah kuncinya boleh dihapus. Di Windows bot tidak pernah bisa
+        // melepasnya sendiri: TerminateProcess melewati handler exit-nya.
+        cleanupBotLock("stopped");
         // Artefak hanya berlaku untuk satu run. Dihapus di sini supaya run
         // berikutnya tidak bisa menemukan berkas lama dan membuat generasi mana
         // yang sedang dipakai jadi pertanyaan.
