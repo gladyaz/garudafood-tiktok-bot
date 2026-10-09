@@ -3,7 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI LIVE HOST — dashboard concept</title>
+    <!-- Judul tab sama dengan aplikasi sungguhan. Yang menandai berkas ini
+         sebagai konsep adalah nama berkasnya dan dok pratinjau, bukan teks yang
+         ikut terlihat customer. -->
+    <title>AI LIVE HOST</title>
 
     <!-- KONSEP, BUKAN APLIKASI.
          Tidak terhubung ke API mana pun, dan tidak mungkin ikut terpaket:
@@ -222,16 +225,59 @@
         color: var(--text);
       }
 
-      /* Alat tinjauan, bukan kendali produk. Dipisah garis dan diberi label. */
-      .preview {
+      /* ========================================================== dok ===== */
+
+      /* Alat tinjauan, dan ia harus TERLIHAT seperti alat tinjauan. Dulu ia
+         duduk di bilah atas aplikasi, yang membuat prototipe ini tidak bisa
+         dipakai untuk menunjukkan "inilah yang customer terima". Sekarang ia
+         mengapung di luar dashboard, berwarna perkakas, dan bisa ditutup. */
+      .dock {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 20;
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding-left: 16px;
-        border-left: 1px solid var(--line);
+        gap: 9px;
+        padding: 7px 8px 7px 12px;
+        background: var(--ink);
+        border-radius: 999px;
+        box-shadow: 0 6px 22px rgba(22, 35, 58, 0.22);
         font-size: 11px;
-        color: var(--text-3);
-        flex: none;
+        color: var(--on-ink-3);
+      }
+      .dock[hidden] {
+        display: none;
+      }
+      .dock .seg {
+        border-color: var(--ink-line);
+      }
+      .dock .seg button {
+        background: var(--ink-2);
+        border-left-color: var(--ink-line);
+        color: var(--on-ink-2);
+      }
+      .dock .seg button[aria-pressed="true"] {
+        background: var(--on-ink);
+        color: var(--ink);
+      }
+      .dock .seg button:not([aria-pressed="true"]):hover {
+        background: #27385a;
+      }
+      .dock-x {
+        font: inherit;
+        font-size: 15px;
+        line-height: 1;
+        padding: 2px 6px 4px;
+        border: 0;
+        border-radius: 50%;
+        background: none;
+        color: var(--on-ink-3);
+        cursor: pointer;
+      }
+      .dock-x:hover {
+        background: var(--ink-2);
+        color: var(--on-ink);
       }
 
       /* ======================================================== stage ===== */
@@ -877,46 +923,6 @@
         font-size: 12px;
       }
 
-      /* ========================================================= notes ===== */
-
-      .notes {
-        max-width: var(--shell);
-        margin: 0 auto;
-        padding: 0 24px 56px;
-      }
-      .notes-in {
-        border-top: 1px solid var(--line);
-        padding-top: 20px;
-      }
-      .notes h2 {
-        margin: 0 0 4px;
-        font-size: 15px;
-        font-weight: 600;
-      }
-      .notes .lede {
-        margin: 0 0 15px;
-        font-size: 13px;
-        color: var(--text-3);
-        max-width: 72ch;
-      }
-      .notes dl {
-        margin: 0;
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
-        gap: 15px 30px;
-      }
-      .notes dt {
-        font-size: 13px;
-        font-weight: 600;
-        margin-bottom: 2px;
-      }
-      .notes dd {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-2);
-        max-width: 54ch;
-      }
-
       /* ===================================================== responsive ===== */
 
       @media (max-width: 1019px) {
@@ -975,8 +981,7 @@
           gap: 3px;
         }
         main,
-        .foot,
-        .notes {
+        .foot {
           padding-left: 16px;
           padding-right: 16px;
         }
@@ -1020,14 +1025,6 @@
           <button class="bar-btn" type="button" id="c-settings"></button>
         </div>
 
-        <div class="preview">
-          <span id="c-preview"></span>
-          <span class="seg" role="group" id="state-group">
-            <button type="button" data-state-btn="ready" aria-pressed="true" id="s-ready"></button>
-            <button type="button" data-state-btn="blocked" aria-pressed="false" id="s-blocked"></button>
-            <button type="button" data-state-btn="running" aria-pressed="false" id="s-running"></button>
-          </span>
-        </div>
       </div>
     </header>
 
@@ -1253,85 +1250,19 @@
 
     <p class="foot" id="foot"></p>
 
-    <section class="notes" aria-labelledby="notes-h">
-      <div class="notes-in">
-        <h2 id="notes-h">About this concept</h2>
-        <p class="lede">
-          A design proposal, not the working dashboard. Nothing is wired to the app, and this file is
-          outside the installer’s file list so it can never ship. Content is real: the etalase,
-          triggers, replies and the timings come from the validated run on 9 October. The account
-          name is deliberately not the real test account. This panel stays in English — it is a note
-          to you, not product copy.
-        </p>
-        <dl>
-          <dt>Top strip monitors, bottom list configures</dt>
-          <dd>
-            The strip carries only what changes during a broadcast: which etalase is on air, how long
-            is left, when each last played. No product titles, no trigger phrases — those live in the
-            list below and now appear exactly once on the page. Removing that duplication is also
-            what paid for most of the height reduction.
-          </dd>
+    <!-- Dok pratinjau. BUKAN bagian aplikasi: ia hidup di luar seluruh markup
+         dashboard, memakai warna perkakas, dan bisa ditutup. Dashboard di atas
+         hanya berisi hal yang benar-benar diterima customer. -->
+    <div class="dock" id="dock">
+      <span id="c-preview"></span>
+      <span class="seg" role="group" id="state-group">
+        <button type="button" data-state-btn="ready" aria-pressed="true" id="s-ready"></button>
+        <button type="button" data-state-btn="blocked" aria-pressed="false" id="s-blocked"></button>
+        <button type="button" data-state-btn="running" aria-pressed="false" id="s-running"></button>
+      </span>
+      <button class="dock-x" type="button" id="dock-x" aria-label="Hide preview dock">&times;</button>
+    </div>
 
-          <dt>Ready, blocked, running</dt>
-          <dd>
-            “Ready to start” when every check clears. “Needs attention” appears only when something
-            genuinely blocks a start, and it always arrives with the fix. Switch to the middle
-            preview state to confirm it is reserved, not decorative.
-          </dd>
-
-          <dt>Checks collapse when they pass</dt>
-          <dd>
-            Eight green rows are eight rows of nothing to do. Clear becomes one line; blocked opens
-            itself on the row that is in the way and dims the strip behind it.
-          </dd>
-
-          <dt>Rows are compact until you edit</dt>
-          <dd>
-            One line each — number, trigger, product. Edit opens that row in place, and only one at a
-            time: two open forms side by side is how people lose track of which one they are
-            changing. While the bot runs, editing is closed rather than merely discouraged.
-          </dd>
-
-          <dt>Recent, not endless</dt>
-          <dd>
-            Newest chain expanded, older ones one summary line, a bounded scroll region, and a stated
-            cap of 50 — the same number as MAX_ACTIVITY_ITEMS in the real ui-logic.js. Anything older
-            is in the support log.
-          </dd>
-
-          <dt>Language is a product feature</dt>
-          <dd>
-            Indonesian by default. Copy is rendered from a dictionary, so translated text and
-            customer content are separated by construction: product titles, trigger phrases, admin
-            replies and scene names like PAX-1 have no key and cannot be translated. Decimals follow
-            the language too — 36,4s in Indonesian, 36.4s elsewhere. Chinese uses the seller’s own
-            vocabulary: 橱窗 for the showcase, 置顶 for pinning.
-          </dd>
-
-          <dt>Fitting three languages</dt>
-          <dd>
-            Indonesian runs roughly 20% longer than English, Chinese roughly 30% shorter. Nothing is
-            sized to a string: the button grows with its label, the headline uses a clamped scale,
-            long check labels wrap while their values stay on one line, and every flex child holding
-            text has min-width 0 so it truncates instead of pushing the row apart.
-          </dd>
-
-          <dt>If you adopt it</dt>
-          <dd>
-            Every element id and class hook that app.js relies on can stay. Two real costs: IBM Plex
-            Sans means self-hosting one ~30KB subset, and the dictionary has to live in ui-logic.js so
-            it stays testable — not in app.js, where the current code already learned not to keep
-            sentences.
-          </dd>
-
-          <dt>Still open</dt>
-          <dd>
-            A dark theme. You work beside OBS, which is dark, but the app has only ever been light —
-            worth deciding rather than assuming.
-          </dd>
-        </dl>
-      </div>
-    </section>
 
     <script>
       (function () {
@@ -2084,6 +2015,22 @@
           });
           row.setAttribute("data-open", wasOpen ? "no" : "yes");
           renderRows();
+        });
+
+        // Dok bisa ditutup untuk tangkapan layar yang benar-benar bersih.
+        // Angka 1/2/3 tetap mengganti keadaan sesudah dok ditutup; muat ulang
+        // halaman untuk memunculkannya kembali.
+        document.getElementById("dock-x").addEventListener("click", function () {
+          document.getElementById("dock").hidden = true;
+        });
+
+        document.addEventListener("keydown", function (ev) {
+          if (ev.target.matches("input, select, textarea")) return;
+          var map = { 1: "ready", 2: "blocked", 3: "running" };
+          if (!map[ev.key]) return;
+          state = map[ev.key];
+          if (state !== "blocked") document.getElementById("checks").setAttribute("data-open", "no");
+          render();
         });
 
         render();
