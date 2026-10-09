@@ -390,7 +390,7 @@ test("PUT /api/config saat RUNNING -> restartRequired, dan snapshot TIDAK beruba
     assert.equal(put.status, 200);
     assert.equal(put.body.ok, true, "config tetap tersimpan");
     assert.equal(put.body.restartRequired, true);
-    assert.equal(put.body.notice.userMessage, "Your changes are saved. Restart the automation to use them.");
+    assert.equal(put.body.notice.userMessage, "Your changes are saved. Press STOP BOT, then START BOT to use them.");
 
     // Snapshot yang SEDANG dipakai tidak disentuh. Satu pemutaran tidak boleh
     // berpindah trigger atau balasan di tengah jalan.

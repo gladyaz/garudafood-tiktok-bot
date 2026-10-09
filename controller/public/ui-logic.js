@@ -43,6 +43,15 @@
     ERROR: "ERROR",
   };
 
+  // Satu kalimat untuk "halaman tidak bisa bicara dengan aplikasinya", dipakai
+  // di tiga tempat: hint Settings, hint Pemetaan, dan sebab START ditolak.
+  //
+  // Dulu tiga salinan literal berbunyi "Controller is not reachable." — nama
+  // komponen internal yang tidak pernah muncul di layar mana pun, jadi ia
+  // menyebut benda yang tidak bisa dicari customer dan tidak memberi tindakan.
+  // Tiga salinan juga berarti tiga peluang untuk menyimpang.
+  var BACKEND_DOWN = "AI LIVE HOST is not responding. Close the app and open it again.";
+
   // Nada warna. Dipakai sebagai nama kelas CSS; artinya tetap di satu tempat.
   var TONE = { READY: "ready", RUNNING: "running", ATTENTION: "attention", ERROR: "error", NEUTRAL: "neutral" };
 
@@ -196,41 +205,57 @@
 
     var rows = [];
 
+    // Automation DULU, bukan terakhir.
+    //
+    // Sampai 2026-10-09 baris ini ada di PALING BAWAH, di bawah lima baris yang
+    // semuanya hijau. Kartu yang dibaca dari atas berbunyi "tersambung, on air,
+    // produk tersedia, pemetaan siap" — dan operator membacanya sebagai "bot
+    // sedang bekerja", padahal belum ada apa pun yang jalan. Keadaan JALAN atau
+    // TIDAK adalah hal pertama yang perlu ia tahu, jadi ia dibaca pertama.
+    rows.push({ label: "Automation", value: automationLabel(status), tone: automationTone(status) });
+
     // OBS
     if (!obs) rows.push(unknown("OBS"));
     else if (obs.ok) rows.push({ label: "OBS", value: "Connected", tone: TONE.READY });
     else rows.push({ label: "OBS", value: messageOf(obs, "Not connected"), tone: TONE.ATTENTION });
 
     // TikTok
+    // Identitasnya SENGAJA tidak diulang di sini: baris "TikTok sign-in" di
+    // bawah sudah menyebutkannya, dan dua baris berbunyi "Connected as X" membuat
+    // operator mengira ia membaca dua hal padahal satu.
     if (!tiktok) rows.push(unknown("TikTok"));
-    else if (tiktok.ok) {
-      rows.push({
-        label: "TikTok",
-        value: tiktok.identity ? "Connected as " + tiktok.identity : "Connected",
-        tone: TONE.READY,
-      });
-    } else rows.push({ label: "TikTok", value: messageOf(tiktok, "Not connected"), tone: TONE.ATTENTION });
+    else if (tiktok.ok) rows.push({ label: "TikTok", value: "Connected", tone: TONE.READY });
+    else rows.push({ label: "TikTok", value: messageOf(tiktok, "Not connected"), tone: TONE.ATTENTION });
 
     // LIVE
+    //
+    // "On air", bukan "Active": kata "active" dipakai orang untuk bot yang
+    // sedang bekerja, sedangkan baris ini hanya berbicara soal siarannya.
     if (!tiktok) rows.push(unknown("LIVE"));
-    else if (!tiktok.ok) rows.push({ label: "LIVE", value: "Unknown", tone: TONE.NEUTRAL });
+    else if (!tiktok.ok) rows.push({ label: "LIVE", value: "Cannot check yet", tone: TONE.NEUTRAL });
     else rows.push(tiktok.live
-      ? { label: "LIVE", value: "Active", tone: TONE.READY }
+      ? { label: "LIVE", value: "On air", tone: TONE.READY }
       : { label: "LIVE", value: "Not on air", tone: TONE.ATTENTION });
 
     // Produk
+    //
+    // "available", bukan "detected": yang kedua adalah bahasa alat ukur, dan
+    // tidak memberi tahu apa pun tentang apa yang bisa dilakukan dengannya.
     if (!tiktok) rows.push(unknown("Products"));
     else if (typeof tiktok.productCount === "number") {
       rows.push(tiktok.productCount > 0
-        ? { label: "Products", value: tiktok.productCount + " detected", tone: TONE.READY }
-        : { label: "Products", value: "None detected", tone: TONE.ATTENTION });
-    } else rows.push({ label: "Products", value: "Unknown", tone: TONE.NEUTRAL });
+        ? { label: "Products", value: tiktok.productCount + " available in your LIVE", tone: TONE.READY }
+        : { label: "Products", value: "None available", tone: TONE.ATTENTION });
+    } else rows.push({ label: "Products", value: "Cannot check yet", tone: TONE.NEUTRAL });
 
     // Pemetaan
     if (!validation) rows.push(unknown("Mappings"));
     else if (validation.ok) {
       var n = Array.isArray(validation.mappings) ? validation.mappings.length : 0;
-      rows.push({ label: "Mappings", value: n + (n === 1 ? " mapping ready" : " mappings ready"), tone: TONE.READY });
+      // "OK", bukan "ready". Kartu ini sudah penuh hal yang terdengar siap;
+      // satu-satunya baris yang boleh berbicara soal berjalan atau tidak adalah
+      // baris Automation di paling atas.
+      rows.push({ label: "Mappings", value: n + (n === 1 ? " mapping OK" : " mappings OK"), tone: TONE.READY });
     } else {
       var bad = Array.isArray(validation.mappings) ? validation.mappings.filter(notOk).length : 0;
       rows.push({
@@ -243,12 +268,34 @@
 
     // Akun TikTok: keadaan login, terpisah dari "TikTok terhubung".
     var lv = loginView(data);
-    rows.push({ label: "TikTok Account", value: lv.label, tone: lv.tone });
-
-    // Automation
-    rows.push({ label: "Automation", value: automationLabel(status), tone: automationTone(status) });
+    rows.push({ label: "TikTok sign-in", value: lv.label, tone: lv.tone });
 
     return rows;
+  }
+
+  // Satu kalimat di kepala kartu kesiapan, dan ia BERBEDA menurut keadaan.
+  //
+  // Sebelumnya tempat ini hanya pernah berisi satu kalimat soal discovery, dan
+  // kosong selebihnya — jadi kartu berisi enam baris hijau tanpa satu pun kata
+  // yang memberi tahu bahwa belum ada apa pun yang berjalan.
+  function readinessHint(view) {
+    var status = (view && view.status) || null;
+    if (!status) return "";
+    switch (status.automation) {
+      case STATES.STOPPED:
+        return "Nothing is running yet. These are the checks for before you press START BOT.";
+      // ERROR TIDAK boleh ikut kalimat di atas. Baris teratas kartu ini sedang
+      // menampilkan sebab kegagalannya; "nothing is running YET" di sebelahnya
+      // membuat run yang mati terbaca seperti mesin yang belum pernah dipakai,
+      // dan operator menekan START BOT tanpa membaca pesannya.
+      case STATES.ERROR:
+        return "The last run ended with a problem. Read the message below, then press START BOT to try again.";
+      case STATES.RUNNING:
+      case STATES.DEGRADED:
+        return "The automation is running. If you add products to your LIVE now, the list only updates after you press STOP BOT.";
+      default:
+        return "";
+    }
   }
 
   function notOk(row) {
@@ -268,7 +315,7 @@
     if (!status) return "Checking…";
     switch (status.automation) {
       case STATES.STOPPED: return "Stopped";
-      case STATES.PREFLIGHT: return "Checking readiness…";
+      case STATES.PREFLIGHT: return "Running pre-start checks…";
       case STATES.STARTING: return "Starting…";
       case STATES.RUNNING: return "Running";
       case STATES.DEGRADED: return "Running with problems";
@@ -321,7 +368,7 @@
         canLogin: false,
         canCheck: !busy,
         canCancel: !busy,
-        hint: "Complete the TikTok login in the browser window, then press Check Login.",
+        hint: "A browser window has opened. Sign in to TikTok there, then come back here and press CHECK LOGIN.",
       };
     }
 
@@ -331,7 +378,7 @@
     if (identity) {
       return {
         state: "connected",
-        label: "Connected as " + identity,
+        label: "Signed in as " + identity,
         tone: TONE.READY,
         canLogin: stopped && !busy && !(status.config && status.config.present === false),
         canCheck: false,
@@ -353,7 +400,7 @@
       canLogin: stopped && !busy && !noConfig,
       canCheck: false,
       canCancel: false,
-      hint: noConfig ? "Save your settings first." : stopped ? "" : "Stop the automation first.",
+      hint: noConfig ? "Save your settings first." : stopped ? "" : "Press STOP BOT first, then sign in.",
     };
   }
 
@@ -576,7 +623,7 @@
   // mati. Customer lalu membaca kalimat yang menyuruhnya melakukan hal yang sudah
   // ia lakukan.
   function settingsHint(view) {
-    if (view && view.backendUnreachable) return "Controller is not reachable.";
+    if (view && view.backendUnreachable) return BACKEND_DOWN;
     var status = (view && view.status) || null;
     // Belum dimuat: jangan menuduh apa pun.
     if (!status) return "";
@@ -588,7 +635,28 @@
     if (view && view.busyOp === "saveMappings") return "Saving your mapping…";
     var s = status.automation;
     if (s === STATES.STOPPED || s === STATES.ERROR) return "";
-    return "Settings can only be changed while the automation is stopped.";
+    return "Settings can be changed after you press STOP BOT.";
+  }
+
+  // Kenapa Pemetaan tidak bisa disunting. Kembaran settingsHint, dan dengan
+  // sengaja berbentuk sama: sebabnya sama, jadi pembedaan per sebabnya juga harus
+  // sama.
+  //
+  // Sampai 2026-10-09 kartu Pemetaan memakai SATU kalimat yang ditulis langsung
+  // di app.js: "Editing is disabled while the automation is running." Penyuntingan
+  // dikunci oleh (stopped || errored) && !writingConfig — jadi kalimat itu tampil
+  // juga saat automation BERHENTI dan sebuah penyimpanan sedang jalan, yaitu
+  // pernyataan yang SALAH tentang keadaan sistem, di layar yang sedang dipakai
+  // orang mencari sesuatu untuk dihentikan.
+  function mappingHint(view) {
+    if (view && view.backendUnreachable) return BACKEND_DOWN;
+    var status = (view && view.status) || null;
+    if (!status) return "";
+    if (view && view.busyOp === "saveSettings") return "Saving your settings…";
+    if (view && view.busyOp === "saveMappings") return "Saving your mapping…";
+    var s = status.automation;
+    if (s === STATES.STOPPED || s === STATES.ERROR) return "";
+    return "Mappings can be changed after you press STOP BOT.";
   }
 
   function settingsView(view) {
@@ -656,7 +724,7 @@
     var status = v.status || null;
 
     // Tiga hal ini menutup semuanya, jadi tidak perlu daftar panjang.
-    if (v.backendUnreachable) return [{ key: "backend", message: "Controller is not reachable." }];
+    if (v.backendUnreachable) return [{ key: "backend", message: BACKEND_DOWN }];
     if (!status) return [{ key: "status", message: "Loading…" }];
     if (v.busy) return [{ key: "busy", message: "Working…" }];
 
@@ -716,9 +784,9 @@
     // DIKETAHUI, dan itu tetap memblokir — sama seperti "Checking…" di atas.
     if (status.config && status.config.present === true) {
       var mode = status.mode;
-      if (!mode) out.push({ key: "mode", message: "Checking automation mode…" });
+      if (!mode) out.push({ key: "mode", message: "Checking what the bot is allowed to do…" });
       else if (mode.ok !== true) {
-        out.push({ key: "mode", message: mode.userMessage || "Real automation actions are not enabled." });
+        out.push({ key: "mode", message: mode.userMessage || "Open Settings and choose what the bot will do." });
       }
     }
 
@@ -743,7 +811,7 @@
         editingEnabled: false,
         refreshEnabled: true,
         discoveryAllowed: false,
-        startReason: "Controller is not reachable.",
+        startReason: BACKEND_DOWN,
       };
     }
     if (!status) {
@@ -911,16 +979,19 @@
       case "PLAYBACK_END": return scene ? "Finished " + scene : "Scene finished";
       case "AUTOPIN_SUCCESS": return e.product ? "Product pinned — " + e.product : "Product pinned";
       case "AUTOPIN_FAILED": return messageOf(e, "Product was not pinned.");
-      case "AUTOCOMMENT_SUCCESS": return "Admin reply sent";
-      case "AUTOCOMMENT_FAILED": return messageOf(e, "Admin reply was not sent.");
+      case "AUTOCOMMENT_SUCCESS": return "Reply posted in your LIVE chat";
+      case "AUTOCOMMENT_FAILED": return messageOf(e, "Reply was not posted in your LIVE chat.");
       case "TIKTOK_CONNECTED": return "Connected to TikTok LIVE";
       case "TIKTOK_RECONNECTED": return "Reconnected to TikTok LIVE";
       case "TIKTOK_DISCONNECTED": return "Disconnected from TikTok LIVE";
       case "BOT_CRASHED": return "The bot stopped unexpectedly";
-      case "SERVICE_CRASHED": return "The pin service stopped unexpectedly";
+      case "SERVICE_CRASHED": return "Auto pin stopped unexpectedly";
       case "LOGIN_WAITING": return "Waiting for TikTok login";
       case "LOGIN_OK": return "Signed in to TikTok";
-      case "STATE": return e.to ? "Status: " + e.to : "Status changed";
+      // Nama state internal (PREFLIGHT, DEGRADED, STOPPING) tidak pernah tampil:
+      // dipakai fungsi yang SUDAH menerjemahkannya untuk pil status, supaya
+      // halaman ini tidak punya dua kosakata untuk satu hal yang sama.
+      case "STATE": return e.to ? "Status: " + automationLabel({ automation: e.to }) : "Status changed";
       default: return e.message ? String(e.message) : String(e.type || "");
     }
   }
@@ -983,15 +1054,42 @@
 
   // Daftar kesiapan saat Start, baris per baris. Label-nya ramah; nama check
   // internal tidak ditampilkan.
+  //
+  // Label dibaca sebagai PERTANYAAN, nilainya sebagai JAWABAN. Karena itu
+  // "No other bot running" diubah menjadi "Other bots running": label yang sudah
+  // memuat jawabannya sendiri membuat barisnya berbunyi dua kali.
   var CHECK_LABELS = {
     config: "Settings",
-    processes: "No other bot running",
-    ports: "Ports available",
+    processes: "Other bots running",
+    ports: "Ports this app needs",
     obs: "OBS",
     scenes: "OBS scenes",
     profile: "Browser profile",
     tiktok: "TikTok LIVE",
     mappings: "Mappings",
+  };
+
+  // Kata LULUS per check.
+  //
+  // Sampai 2026-10-09 kedelapan baris ini berbunyi satu kata yang sama: "Ready".
+  // Itu masalahnya sendiri — "Other bots running: Ready" membaca kebalikan dari
+  // yang dibuktikan check itu, dan satu kolom penuh "Ready" yang masih tertinggal
+  // di layar sesudah STOP BOT adalah persis salah-baca "berhenti terlihat seperti
+  // berjalan" yang diperbaiki di kartu kesiapan. Tiap check menjawab pertanyaan
+  // yang berbeda, jadi tiap check berbicara dengan kata-katanya sendiri.
+  //
+  // Hanya TAMPILAN: failedPreflight() menyaring pada r.tone, tidak pernah pada
+  // r.value, jadi tidak ada satu pun keputusan lulus/gagal yang bergantung pada
+  // kata-kata di bawah ini.
+  var CHECK_PASS = {
+    config: "Saved",
+    processes: "None",
+    ports: "Available",
+    obs: "Connected",
+    scenes: "Found",
+    profile: "Available",
+    tiktok: "On air",
+    mappings: "OK",
   };
 
   function preflightRows(result) {
@@ -1002,7 +1100,13 @@
       var c = result.checks[name];
       if (!c) continue;
       if (c.ok === true) {
-        out.push({ label: CHECK_LABELS[name], value: c.skipped ? "Skipped" : "Ready", tone: c.skipped ? TONE.NEUTRAL : TONE.READY });
+        // "Not needed", bukan "Skipped": yang kedua dibaca sebagai "dilewati
+        // karena gagal", padahal artinya check ini tidak berlaku di sini.
+        out.push({
+          label: CHECK_LABELS[name],
+          value: c.skipped ? "Not needed" : CHECK_PASS[name] || "OK",
+          tone: c.skipped ? TONE.NEUTRAL : TONE.READY,
+        });
       } else {
         out.push({ label: CHECK_LABELS[name], value: messageOf(c, "Not ready"), tone: TONE.ATTENTION });
       }
@@ -1029,6 +1133,9 @@
     productSubLabel: productSubLabel,
     extraProductOption: extraProductOption,
     readinessRows: readinessRows,
+    readinessHint: readinessHint,
+    mappingHint: mappingHint,
+    CHECK_PASS: CHECK_PASS,
     automationLabel: automationLabel,
     automationTone: automationTone,
     controlsFor: controlsFor,

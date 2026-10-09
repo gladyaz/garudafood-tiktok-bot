@@ -291,7 +291,7 @@ test("FAIL-CLOSED: backend tidak terjangkau mematikan Start DAN Stop", () => {
   assert.equal(c.editingEnabled, false);
   // Refresh tetap hidup: itu satu-satunya cara operator mencoba menyambung lagi.
   assert.equal(c.refreshEnabled, true);
-  assert.equal(c.startReason, "Controller is not reachable.");
+  assert.equal(c.startReason, "AI LIVE HOST is not responding. Close the app and open it again.");
 });
 
 test("FAIL-CLOSED: status belum dimuat mematikan Start", () => {
@@ -361,7 +361,7 @@ test("hint TIDAK menyuruh menghentikan automation yang SUDAH berhenti", () => {
   // Dan saat memang berjalan, kalimat itu BENAR.
   const running = U.settingsView({ status: { automation: S.RUNNING, config: { present: true } } });
   assert.equal(running.editable, false);
-  assert.equal(running.hint, "Settings can only be changed while the automation is stopped.");
+  assert.equal(running.hint, "Settings can be changed after you press STOP BOT.");
 
   // Stopped dan tidak ada yang menulis config: tidak ada hint sama sekali.
   const free = U.settingsView({ status: { automation: S.STOPPED, config: { present: true } } });
@@ -380,10 +380,12 @@ test("baris kesiapan: semuanya hijau", () => {
   });
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
   assert.equal(byLabel.OBS.value, "Connected");
-  assert.equal(byLabel.TikTok.value, "Connected as toko uji");
-  assert.equal(byLabel.LIVE.value, "Active");
-  assert.equal(byLabel.Products.value, "20 detected");
-  assert.equal(byLabel.Mappings.value, "2 mappings ready");
+  // Identitas tidak diulang di baris ini; baris "TikTok sign-in" yang menyebutkannya.
+  assert.equal(byLabel.TikTok.value, "Connected");
+  assert.equal(byLabel["TikTok sign-in"].value, "Signed in as toko uji");
+  assert.equal(byLabel.LIVE.value, "On air");
+  assert.equal(byLabel.Products.value, "20 available in your LIVE");
+  assert.equal(byLabel.Mappings.value, "2 mappings OK");
   assert.equal(byLabel.Automation.value, "Stopped");
 });
 
@@ -419,7 +421,7 @@ test("LIVE belum on air ditandai perlu perhatian, bukan error", () => {
 
 test("nol produk ditandai perlu perhatian", () => {
   const rows = U.readinessRows({ tiktok: { ok: true, live: true, productCount: 0 }, status: { automation: S.STOPPED } });
-  assert.equal(rows.find((r) => r.label === "Products").value, "None detected");
+  assert.equal(rows.find((r) => r.label === "Products").value, "None available");
 });
 
 test("pemetaan bermasalah menyebut BERAPA baris, bukan satu pesan umum", () => {
@@ -433,7 +435,7 @@ test("pemetaan bermasalah menyebut BERAPA baris, bukan satu pesan umum", () => {
 test("state automation diterjemahkan ke kalimat biasa", () => {
   const expected = {
     STOPPED: "Stopped",
-    PREFLIGHT: "Checking readiness…",
+    PREFLIGHT: "Running pre-start checks…",
     STARTING: "Starting…",
     RUNNING: "Running",
     DEGRADED: "Running with problems",
@@ -601,7 +603,7 @@ test("activity: kalimat untuk tiap jenis kejadian", () => {
   const texts = items.map((i) => i.text);
   assert.ok(texts.includes("Playing PAX-2"));
   assert.ok(texts.includes("Product pinned — Gery Potato"));
-  assert.ok(texts.includes("Admin reply sent"));
+  assert.ok(texts.includes("Reply posted in your LIVE chat"));
   assert.ok(texts.includes("Finished PAX-2"));
 });
 
@@ -696,8 +698,8 @@ test("baris preflight memakai label ramah, bukan nama check internal", () => {
   });
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
   assert.equal(byLabel.OBS.value, "OBS is not connected.");
-  assert.equal(byLabel.Settings.value, "Ready");
-  assert.equal(byLabel["TikTok LIVE"].value, "Skipped");
+  assert.equal(byLabel.Settings.value, "Saved");
+  assert.equal(byLabel["TikTok LIVE"].value, "Not needed");
   // Nama internal tidak muncul.
   const raw = JSON.stringify(rows);
   assert.ok(!raw.includes("obs-unavailable"));
@@ -866,7 +868,7 @@ test("REGRESI: kesiapan lengkap TAPI login aktif => Start tetap mati", () => {
 test("REGRESI: backend tidak terjangkau mengalahkan kesiapan apa pun", () => {
   const c = U.controlsFor(readyView({ backendUnreachable: true }));
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Controller is not reachable.");
+  assert.equal(c.startReason, "AI LIVE HOST is not responding. Close the app and open it again.");
   assert.deepEqual(U.startBlockers(readyView({ backendUnreachable: true })).map((b) => b.key), ["backend"]);
 });
 

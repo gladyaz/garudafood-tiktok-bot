@@ -255,7 +255,7 @@ test("DoD: login palsu -> check -> mapping -> START -> RUNNING -> STOP", async (
     st = (await get(base, "/api/status")).body;
     const lv = U.loginView({ status: st });
     assert.equal(lv.state, "connected");
-    assert.equal(lv.label, "Connected as toko uji");
+    assert.equal(lv.label, "Signed in as toko uji");
 
     // 4. START
     const pre = await post(base, "/api/preflight");
@@ -362,32 +362,32 @@ test("loginView: tombol yang benar di tiap keadaan", () => {
 
   const waiting = U.loginView({ status: { automation: "STOPPED", login: { active: true } } });
   assert.deepEqual([waiting.canLogin, waiting.canCheck, waiting.canCancel], [false, true, true]);
-  assert.match(waiting.hint, /Complete the TikTok login/);
+  assert.match(waiting.hint, /Sign in to TikTok there/);
 
   const running = U.loginView({ status: { automation: "RUNNING" } });
   assert.equal(running.canLogin, false, "tidak bisa login saat berjalan");
-  assert.equal(running.hint, "Stop the automation first.");
+  assert.equal(running.hint, "Press STOP BOT first, then sign in.");
 });
 
 test("loginView memakai identitas yang TERBUKTI, bukan yang ditulis di config", () => {
   // Nilai di config hanya harapan; yang ditampilkan harus yang benar-benar dibaca
   // dari halaman.
   const fromLogin = U.loginView({ status: { automation: "STOPPED", login: { active: false, identity: "terbukti" } } });
-  assert.equal(fromLogin.label, "Connected as terbukti");
+  assert.equal(fromLogin.label, "Signed in as terbukti");
 
   const fromDiscovery = U.loginView({
     status: { automation: "STOPPED" },
     tiktok: { ok: true, identity: "dari-discovery" },
   });
-  assert.equal(fromDiscovery.label, "Connected as dari-discovery");
+  assert.equal(fromDiscovery.label, "Signed in as dari-discovery");
 });
 
-test("readiness memuat baris TikTok Account", () => {
+test("readiness memuat baris TikTok sign-in", () => {
   const rows = U.readinessRows({
     status: { automation: "STOPPED", login: { active: true } },
   });
-  const row = rows.find((r) => r.label === "TikTok Account");
-  assert.ok(row, "baris TikTok Account harus ada");
+  const row = rows.find((r) => r.label === "TikTok sign-in");
+  assert.ok(row, "baris TikTok sign-in harus ada");
   assert.equal(row.value, "Waiting for login…");
 });
 

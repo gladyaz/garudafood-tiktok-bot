@@ -199,7 +199,10 @@ test("Controller MENOLAK start kalau generasi service berbeda dari miliknya", as
 
   assert.equal(r.ok, false);
   assert.equal(r.error.code, "runtime-config-generation-mismatch");
-  assert.equal(r.error.userMessage, "The bot and the pin service are using different settings.");
+  assert.equal(
+    r.error.userMessage,
+    "Two parts of AI LIVE HOST are using different settings. Press STOP BOT, then START BOT again."
+  );
   // Dan rollback tetap bersih: tidak ada yang tertinggal hidup.
   assert.equal(h.world.liveCount(), 0);
   assert.equal(h.world.countByScript("index.js"), 0, "bot tidak boleh pernah dinyalakan");

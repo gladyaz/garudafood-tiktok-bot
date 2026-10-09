@@ -53,8 +53,8 @@ const MESSAGES = Object.freeze({
   PLAYBACK_END: "Scene finished",
   AUTOPIN_SUCCESS: "Product pinned",
   AUTOPIN_FAILED: "Product was not pinned",
-  AUTOCOMMENT_SUCCESS: "Reply sent to chat",
-  AUTOCOMMENT_FAILED: "Reply was not sent",
+  AUTOCOMMENT_SUCCESS: "Reply posted in your LIVE chat",
+  AUTOCOMMENT_FAILED: "Reply was not posted in your LIVE chat",
 });
 
 const TAG_RE = /^\[([A-Z0-9_]+)\]\s*(.*)$/;

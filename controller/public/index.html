@@ -24,10 +24,13 @@
     <div id="banner" class="banner" hidden></div>
 
     <main>
-      <!-- 1. Kesiapan -->
+      <!-- 1. Kesiapan
+           Judulnya menyebut "pre-start" dengan sengaja. "Connection & Readiness"
+           dengan enam baris hijau terbaca seperti laporan sesuatu yang sedang
+           bekerja; yang sebenarnya ditampilkan adalah syarat SEBELUM mulai. -->
       <section class="card" aria-labelledby="readiness-title">
         <div class="card-head">
-          <h2 id="readiness-title">Connection &amp; Readiness</h2>
+          <h2 id="readiness-title">Connections &amp; pre-start checks</h2>
           <span id="readiness-hint" class="hint"></span>
         </div>
         <dl id="readiness" class="readiness"></dl>
@@ -73,7 +76,7 @@
           </div>
 
           <div class="field">
-            <label for="set-expected-shop">Account name shown in your LIVE console</label>
+            <label for="set-expected-shop">Shop name as it appears on your TikTok LIVE page</label>
             <input id="set-expected-shop" type="text" autocomplete="off" spellcheck="false" placeholder="Toko Saya" />
             <div class="field-note">Checked before anything is pinned. Must match exactly.</div>
             <div id="err-expectedShop" class="field-error" hidden></div>
@@ -102,8 +105,8 @@
               <button id="obs-password-change" type="button" class="btn btn-ghost">Change</button>
               <button id="obs-password-cancel" type="button" class="btn btn-ghost" hidden>Keep current</button>
             </div>
-            <input id="set-obs-password" type="password" autocomplete="new-password" placeholder="Leave empty if OBS has no password" hidden />
-            <div class="field-note">Optional. Leave it empty if OBS authentication is off.</div>
+            <input id="set-obs-password" type="password" autocomplete="new-password" placeholder="Type the new OBS password" hidden />
+            <div class="field-note">Only needed if OBS asks for a password. Press Change to type it.</div>
           </div>
         </div>
 
@@ -117,7 +120,7 @@
              berjalan dengan AutoPIN mati, semua indikator hijau, nol produk
              ter-pin. Lihat controller/automation-mode.js. -->
         <div class="settings-actions">
-          <h3 class="settings-actions-title">What the bot is allowed to do</h3>
+          <h3 class="settings-actions-title">What the bot will do during your LIVE</h3>
 
           <div class="field field-check">
             <label for="set-auto-pin">

@@ -3,7 +3,8 @@
  * Rasa internal SaaS: tenang, padat, tidak ada animasi yang tidak perlu. Warna
  * hanya dipakai untuk arti, bukan untuk hiasan:
  *
- *   ready      hijau    siap / berhasil
+ *   ok         biru     tersambung / tersedia / valid — BUKAN berarti berjalan
+ *   ready      hijau    berhasil (spanduk, kejadian di Activity)
  *   running    hijau    automation sedang berjalan
  *   attention  amber    perlu tindakan operator
  *   error      merah    gagal
@@ -24,6 +25,10 @@
 
   --ready: #15794c;
   --ready-bg: #e6f4ed;
+  /* ok = tersambung / tersedia / valid. SENGAJA bukan hijau: hijau
+     disisakan untuk "sedang berjalan" saja. */
+  --ok: #2a5d8f;
+  --ok-bg: #e9f1f9;
   --attention: #9a6207;
   --attention-bg: #fdf3e2;
   --error: #b02a24;
@@ -207,7 +212,14 @@ main {
   font-weight: 500;
 }
 
-.readiness dd.ready,
+/* "ready" dan "running" TIDAK boleh berwarna sama.
+   Sampai 2026-10-09 keduanya hijau, jadi "produk tersedia" terlihat persis
+   seperti "bot berjalan", dan satu kartu penuh hijau terbaca sebagai sistem
+   yang sedang bekerja padahal automation berhenti. Hijau sekarang hanya untuk
+   yang benar-benar JALAN; tersambung/tersedia memakai biru tenang. */
+.readiness dd.ready {
+  color: var(--ok);
+}
 .readiness dd.running {
   color: var(--ready);
 }
@@ -233,7 +245,11 @@ main {
   border: 1px solid transparent;
 }
 
-.pill.ready,
+.pill.ready {
+  background: var(--ok-bg);
+  border-color: #bcd4e8;
+  color: var(--ok);
+}
 .pill.running {
   background: var(--ready-bg);
   border-color: #b4ddc8;
@@ -454,7 +470,9 @@ main {
   font-weight: 600;
 }
 
-.run-value.ready,
+.run-value.ready {
+  color: var(--ok);
+}
 .run-value.running {
   color: var(--ready);
 }

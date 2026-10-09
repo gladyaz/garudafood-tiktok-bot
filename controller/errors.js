@@ -47,15 +47,15 @@ const CATALOG = Object.freeze({
   "version-missing": "This configuration is missing its version number.",
 
   // --- lifecycle ---
-  "service-already-running": "The pin service is already running.",
+  "service-already-running": "Auto pin is already running.",
   "bot-already-running": "The bot is already running.",
   "spawn-failed": "A required program could not be started.",
   "spawn-no-pid": "A required program failed to start.",
-  "service-health-timeout": "The pin service did not become ready in time.",
-  "service-exited-early": "The pin service stopped right after starting.",
+  "service-health-timeout": "Auto pin did not start in time. Press STOP BOT, then START BOT again.",
+  "service-exited-early": "Auto pin stopped right after starting.",
   "bot-exited-early": "The bot stopped right after starting.",
   "bot-ready-timeout": "The bot did not connect to TikTok LIVE in time.",
-  "service-did-not-die": "The pin service could not be stopped.",
+  "service-did-not-die": "Auto pin could not be stopped.",
   "bot-did-not-die": "The bot could not be stopped.",
   "start-rejected-busy": "The automation is already starting or running.",
   "preflight-failed": "Some checks did not pass, so nothing was started.",
@@ -78,7 +78,7 @@ const CATALOG = Object.freeze({
   stale: "The scene changed before this finished, so it was skipped.",
   "duplicate-playId": "This scene was already handled.",
   "dispatch-threw": "Something went wrong while handling this scene.",
-  "service-error": "The pin service hit an unexpected problem.",
+  "service-error": "Auto pin hit an unexpected problem.",
 
   // --- P2: discovery OBS ---
   "obs-timeout": "OBS did not respond in time.",
@@ -104,13 +104,13 @@ const CATALOG = Object.freeze({
   "mapping-validation-failed": "Some of your scene mappings need fixing.",
 
   // --- P2: config runtime ---
-  "runtime-config-missing": "The generated runtime settings file is missing.",
-  "runtime-config-unreadable": "The generated runtime settings file could not be read.",
-  "runtime-config-invalid-json": "The generated runtime settings file is damaged.",
-  "runtime-config-id-mismatch": "The generated runtime settings file was modified after it was created.",
-  "runtime-config-write-failed": "The runtime settings could not be prepared.",
-  "runtime-config-generation-mismatch": "The bot and the pin service are using different settings.",
-  "restart-required": "Your changes are saved. Restart the automation to use them.",
+  "runtime-config-missing": "AI LIVE HOST could not prepare this run. Press START BOT again.",
+  "runtime-config-unreadable": "AI LIVE HOST could not prepare this run. Press START BOT again.",
+  "runtime-config-invalid-json": "AI LIVE HOST could not prepare this run. Press START BOT again.",
+  "runtime-config-id-mismatch": "AI LIVE HOST could not prepare this run. Press START BOT again.",
+  "runtime-config-write-failed": "AI LIVE HOST could not prepare this run. Press START BOT again.",
+  "runtime-config-generation-mismatch": "Two parts of AI LIVE HOST are using different settings. Press STOP BOT, then START BOT again.",
+  "restart-required": "Your changes are saved. Press STOP BOT, then START BOT to use them.",
 
   // --- P4: login TikTok dan kepemilikan profil ---
   "login-not-configured": "TikTok sign-in is not available in this build.",

@@ -310,7 +310,7 @@ test("blank state: firstRun true, Settings bisa disunting", () => {
 test("RUNNING: Settings TIDAK bisa disunting, dan alasannya disebut", () => {
   const sv = U.settingsView({ status: { automation: "RUNNING", config: { present: true } } });
   assert.equal(sv.editable, false);
-  assert.equal(sv.hint, "Settings can only be changed while the automation is stopped.");
+  assert.equal(sv.hint, "Settings can be changed after you press STOP BOT.");
 });
 
 // --- gerbang START dan LOGIN -------------------------------------------------

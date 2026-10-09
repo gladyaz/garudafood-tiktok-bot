@@ -540,7 +540,7 @@ test("menyimpan config saat RUNNING: restartRequired dan kalimatnya", async () =
 
     assert.equal(put.body.ok, true);
     assert.equal(put.body.restartRequired, true);
-    assert.equal(put.body.notice.userMessage, "Your changes are saved. Restart the automation to use them.");
+    assert.equal(put.body.notice.userMessage, "Your changes are saved. Press STOP BOT, then START BOT to use them.");
     assert.equal((await getJson(base, "/api/status")).body.restartRequired, true);
   });
 });
@@ -572,7 +572,7 @@ test("backend mati: UI punya keadaan aman, dan Start TIDAK pernah hidup", async 
   assert.equal(c.startEnabled, false);
   assert.equal(c.stopEnabled, false);
   assert.equal(c.editingEnabled, false);
-  assert.equal(c.startReason, "Controller is not reachable.");
+  assert.equal(c.startReason, "AI LIVE HOST is not responding. Close the app and open it again.");
 });
 
 // --- activity dibatasi -----------------------------------------------------

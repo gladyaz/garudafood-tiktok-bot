@@ -206,7 +206,7 @@
       // --- Scene ---
       var sceneSel = document.createElement("select");
       sceneSel.disabled = !controls.editingEnabled;
-      sceneSel.appendChild(option("", state.scenes.length ? "Select a scene…" : "No scenes discovered yet"));
+      sceneSel.appendChild(option("", state.scenes.length ? "Select a scene…" : "No scenes found yet — press Refresh Connections"));
       sceneOpts.forEach(function (o) {
         sceneSel.appendChild(option(o.value, o.supported ? o.label : o.label + " (" + o.note + ")"));
       });
@@ -230,7 +230,7 @@
       // --- Product ---
       var prodSel = document.createElement("select");
       prodSel.disabled = !controls.editingEnabled;
-      prodSel.appendChild(option("", state.products.length ? "No product (scene only)" : "No products discovered yet"));
+      prodSel.appendChild(option("", state.products.length ? "Pin nothing for this scene" : "No products found yet — press Refresh Connections"));
       productOpts.forEach(function (o) {
         prodSel.appendChild(option(o.value, o.sub ? o.label + " — " + o.sub : o.label));
       });
@@ -330,7 +330,7 @@
     else if (state.dirty && c.editingEnabled) setText(el["run-note"], "You have unsaved changes. They will be saved when you press START BOT.");
     else setText(el["run-note"], "");
 
-    setText(el["mapping-hint"], c.editingEnabled ? "" : "Editing is disabled while the automation is running.");
+    setText(el["mapping-hint"], c.editingEnabled ? "" : U.mappingHint(state));
   }
 
   function renderReadiness() {
@@ -338,11 +338,9 @@
       el.readiness,
       U.readinessRows({ obs: state.obs, tiktok: state.tiktok, status: state.status, validation: state.validation })
     );
-    var c = U.controlsFor(state);
-    setText(
-      el["readiness-hint"],
-      c.discoveryAllowed ? "" : "Product details are only read while the automation is stopped."
-    );
+    // Kalimatnya diputuskan di ui-logic.js, bukan di sini: kalimat customer
+    // tidak boleh hidup di lapisan DOM, karena di sana ia tidak bisa diuji.
+    setText(el["readiness-hint"], U.readinessHint(state));
     renderLogin();
     // Panduan pertama kali hanya saat belum ada config sama sekali.
     var noConfig = !!(state.status && state.status.config && state.status.config.present === false);
@@ -462,8 +460,8 @@
       state.changingPassword
         ? "Type the new password, or leave empty to remove it."
         : f.obsPasswordSet
-          ? "Password is configured."
-          : "No password set."
+          ? "A password is saved."
+          : "No password saved yet."
     );
     el["obs-password-change"].hidden = state.changingPassword;
     el["obs-password-change"].textContent = f.obsPasswordSet ? "Change" : "Set password";
@@ -521,7 +519,7 @@
       if (!r) return;
       state.status = r.body;
       if (r.body && r.body.restartRequired) {
-        showBanner("Changes saved. Stop and restart the automation to apply them.", "attention");
+        showBanner("Changes saved. Press STOP BOT, then START BOT to use them.", "attention");
       }
     });
   }
@@ -625,7 +623,7 @@
         state.dirty = false;
         setText(el["save-state"], "Saved");
         if (r.body.restartRequired) {
-          showBanner("Changes saved. Stop and restart the automation to apply them.", "attention");
+          showBanner("Changes saved. Press STOP BOT, then START BOT to use them.", "attention");
         } else {
           showBanner("", null);
         }
@@ -794,7 +792,7 @@
         state.settingsDirty = false;
         state.changingPassword = false;
         setText(el["settings-state"], "Saved");
-        showBanner(r.body.restartRequired ? "Changes saved. Stop and restart the automation to apply them." : "", r.body.restartRequired ? "attention" : null);
+        showBanner(r.body.restartRequired ? "Changes saved. Press STOP BOT, then START BOT to use them." : "", r.body.restartRequired ? "attention" : null);
 
         // Kesiapan disegarkan: dengan OBS dan akun terisi, discovery sekarang bisa
         // menjawab, dan LOGIN TIKTOK boleh dipakai.
