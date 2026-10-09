@@ -363,34 +363,21 @@
 
   // Pasangan field formulir <-> elemen input. Satu tempat, supaya membaca dan
   // menulis formulir tidak bisa menyimpang satu sama lain.
-  var SETTINGS_FIELDS = [
-    ["tiktokUsername", "set-tiktok-username"],
-    ["expectedShop", "set-expected-shop"],
-    ["obsHost", "set-obs-host"],
-    ["obsPort", "set-obs-port"],
-  ];
-
-  // Saklar aksi nyata. DIPISAH dari SETTINGS_FIELDS karena dibaca lewat
-  // `.checked`, bukan `.value` — sebuah checkbox punya value "on" walau tidak
-  // dicentang, jadi membacanya seperti field teks akan selalu berbunyi menyala.
-  var SETTINGS_TOGGLES = [
-    ["autoPinProduct", "set-auto-pin"],
-    ["sendAdminReply", "set-admin-reply"],
-  ];
+  // Pemetaan field <-> id node hidup di ui-logic.js, SATU sumber. Dengan begitu
+  // tes bisa menjalankan interaksi yang SAMA atas node palsu — repo ini tidak
+  // punya jsdom, dan tes yang hanya mencocokkan teks sumber app.js tidak akan
+  // pernah menangkap bug URUTAN seperti yang terjadi pada 2026-10-08.
+  var SETTINGS_FIELDS = U.SETTINGS_FIELD_IDS;
+  var SETTINGS_TOGGLES = U.SETTINGS_TOGGLE_IDS;
 
   function readSettingsForm() {
-    var f = Object.assign({}, state.settings || {});
-    SETTINGS_FIELDS.forEach(function (pair) {
-      f[pair[0]] = el[pair[1]] ? el[pair[1]].value : "";
-    });
-    // Saklar: ketiadaan node diperlakukan sebagai MATI, bukan sebagai menyala.
-    SETTINGS_TOGGLES.forEach(function (pair) {
-      f[pair[0]] = el[pair[1]] ? el[pair[1]].checked === true : false;
-    });
-    // Password hanya dibaca kalau customer memang sedang menggantinya.
-    f.obsPassword = state.changingPassword && el["set-obs-password"] ? el["set-obs-password"].value : "";
-    f.obsPasswordClear = state.changingPassword && f.obsPassword === "" ? true : false;
-    return f;
+    return U.readSettingsNodes(
+      function (id) {
+        return el[id];
+      },
+      state.settings,
+      state.changingPassword
+    );
   }
 
   // HANYA keadaan boleh/tidak-boleh disunting: disabled + hint. TIDAK menyentuh
@@ -437,36 +424,30 @@
     // renderSettingsEnabled().
     var f = state.settings || U.settingsToForm(null);
 
-    SETTINGS_FIELDS.forEach(function (pair) {
-      var node = el[pair[1]];
-      if (!node) return;
-      // Nilai hanya ditulis ulang kalau customer tidak sedang mengetik di kotak itu;
-      // polling status tidak boleh memindahkan kursor atau menghapus ketikan.
-      if (document.activeElement !== node) node.value = f[pair[0]] === undefined ? "" : String(f[pair[0]]);
+    // NILAI lewat fungsi yang SAMA yang dijalankan tes interaksi atas node
+    // palsu. Kotak yang sedang diketik customer dilewati: polling tidak boleh
+    // memindahkan kursor atau menghapus ketikan.
+    U.writeSettingsNodes(
+      function (id) {
+        return el[id];
+      },
+      f,
+      function (id) {
+        return !!el[id] && document.activeElement === el[id];
+      }
+    );
 
+    // Error + aria per field. Satu lintasan untuk field teks DAN saklar; dua
+    // salinan loop yang sama hanya menunggu salah satunya menyimpang.
+    SETTINGS_FIELDS.concat(SETTINGS_TOGGLES).forEach(function (pair) {
+      var node = el[pair[1]];
       var errNode = el["err-" + pair[0]];
       var msg = state.settingsErrors[pair[0]];
       if (errNode) {
         errNode.hidden = !msg;
         setText(errNode, msg || "");
       }
-      node.setAttribute("aria-invalid", msg ? "true" : "false");
-    });
-
-    SETTINGS_TOGGLES.forEach(function (pair) {
-      var node = el[pair[1]];
-      if (!node) return;
-      // Checkbox tidak punya kursor yang bisa tergeser, jadi ia tidak butuh
-      // penjagaan activeElement seperti field teks.
-      node.checked = f[pair[0]] === true;
-
-      var errNode = el["err-" + pair[0]];
-      var msg = state.settingsErrors[pair[0]];
-      if (errNode) {
-        errNode.hidden = !msg;
-        setText(errNode, msg || "");
-      }
-      node.setAttribute("aria-invalid", msg ? "true" : "false");
+      if (node) node.setAttribute("aria-invalid", msg ? "true" : "false");
     });
 
     // Password OBS: yang tersimpan tidak pernah ada di halaman, jadi yang
@@ -829,6 +810,18 @@
   }
 
   function markSettingsDirty() {
+    // DOM adalah yang PALING BARU, dan state disamakan dengannya DI SINI —
+    // sebelum apa pun merender.
+    //
+    // Tanpa baris ini renderSettings() menuliskan kembali nilai LAMA dari
+    // state.settings, dan centang customer hilang seketika. Itu terjadi
+    // sungguhan pada 2026-10-08: klik "Auto pin product" tidak bertahan, lalu
+    // klik "Send admin reply" melaporkan "Turn on Auto pin product first" —
+    // karena dari sudut pandang state, Auto pin memang masih mati.
+    //
+    // Sejak sekarang state.settings SELALU mencerminkan apa yang TERLIHAT
+    // customer, bukan config terakhir yang dibaca dari server.
+    state.settings = readSettingsForm();
     state.settingsDirty = true;
     setText(el["settings-state"], "Unsaved changes");
     el["save-settings-btn"].disabled = !U.settingsView(state).editable;
@@ -918,10 +911,14 @@
       var node = el[pair[1]];
       // "change", bukan "input": itulah peristiwa checkbox.
       if (node) node.addEventListener("change", function () {
+        // markSettingsDirty() menyalin DOM -> state.settings LEBIH DULU, jadi
+        // validasi dan render di bawah bekerja atas pilihan customer yang BARU.
         markSettingsDirty();
+        // Divalidasi dari STATE, bukan dengan membaca DOM lagi: satu sumber,
+        // dan tidak ada celah di antara keduanya.
+        state.settingsErrors = U.validateSettingsForm(state.settings).errors;
         // Dirender ulang supaya error "nyalakan Auto pin dulu" muncul seketika,
         // bukan baru saat Save ditekan.
-        state.settingsErrors = U.validateSettingsForm(readSettingsForm()).errors;
         renderSettings();
       });
     });

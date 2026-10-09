@@ -373,6 +373,73 @@
   // Password OBS TIDAK PERNAH ikut: server hanya mengirim `passwordSet` (lihat
   // redactConfig). Formulir cukup tahu "sudah diisi atau belum", bukan isinya.
   // Nilai yang tidak pernah sampai ke halaman tidak bisa bocor dari halaman.
+  // Pemetaan field formulir <-> id node. SATU sumber, dipakai app.js (untuk
+  // cacheEls, membaca, dan merender) dan dipakai tes (dengan node palsu).
+  //
+  // Ada di modul MURNI ini, bukan di app.js, karena repo ini tidak punya jsdom:
+  // satu-satunya cara menguji interaksi klik yang SUNGGUHAN adalah dengan
+  // menjalankan fungsi yang sama atas node palsu. Tes yang hanya mencocokkan
+  // teks sumber app.js tidak akan pernah menangkap bug urutan — dan bug urutan
+  // itulah yang terjadi pada 2026-10-08.
+  var SETTINGS_FIELD_IDS = [
+    ["tiktokUsername", "set-tiktok-username"],
+    ["expectedShop", "set-expected-shop"],
+    ["obsHost", "set-obs-host"],
+    ["obsPort", "set-obs-port"],
+  ];
+
+  var SETTINGS_TOGGLE_IDS = [
+    ["autoPinProduct", "set-auto-pin"],
+    ["sendAdminReply", "set-admin-reply"],
+  ];
+
+  // DOM -> formulir. `get(id)` mengembalikan node atau null.
+  //
+  // `prev` dipertahankan untuk field yang tidak diurus formulir ini (mis.
+  // obsPasswordSet, penanda buatan server).
+  function readSettingsNodes(get, prev, changingPassword) {
+    var f = Object.assign({}, prev || {});
+
+    SETTINGS_FIELD_IDS.forEach(function (pair) {
+      var n = get(pair[1]);
+      f[pair[0]] = n ? n.value : "";
+    });
+
+    // Saklar: ketiadaan node diperlakukan sebagai MATI, bukan sebagai menyala.
+    SETTINGS_TOGGLE_IDS.forEach(function (pair) {
+      var n = get(pair[1]);
+      f[pair[0]] = n ? n.checked === true : false;
+    });
+
+    // Password hanya dibaca kalau customer memang sedang menggantinya.
+    var pw = get("set-obs-password");
+    f.obsPassword = changingPassword && pw ? pw.value : "";
+    f.obsPasswordClear = changingPassword && f.obsPassword === "" ? true : false;
+    return f;
+  }
+
+  // Formulir -> DOM. Hanya NILAI; keadaan terkunci diurus di tempat lain.
+  //
+  // `isFocused(id)` menjaga kotak yang sedang diketik customer: polling tidak
+  // boleh memindahkan kursor atau menghapus ketikan. Checkbox tidak punya kursor,
+  // jadi ia tidak butuh penjagaan itu — yang menjaganya adalah bahwa `form`
+  // SUDAH disinkronkan dari DOM sebelum render dipanggil.
+  function writeSettingsNodes(get, form, isFocused) {
+    var f = form || {};
+
+    SETTINGS_FIELD_IDS.forEach(function (pair) {
+      var n = get(pair[1]);
+      if (!n) return;
+      if (isFocused && isFocused(pair[1])) return;
+      n.value = f[pair[0]] === undefined ? "" : String(f[pair[0]]);
+    });
+
+    SETTINGS_TOGGLE_IDS.forEach(function (pair) {
+      var n = get(pair[1]);
+      if (n) n.checked = f[pair[0]] === true;
+    });
+  }
+
   function settingsToForm(config) {
     var c = config || {};
     var obs = c.obs || {};
@@ -968,6 +1035,10 @@
     startBlockers: startBlockers,
     loginView: loginView,
     settingsToForm: settingsToForm,
+    SETTINGS_FIELD_IDS: SETTINGS_FIELD_IDS,
+    SETTINGS_TOGGLE_IDS: SETTINGS_TOGGLE_IDS,
+    readSettingsNodes: readSettingsNodes,
+    writeSettingsNodes: writeSettingsNodes,
     validateSettingsForm: validateSettingsForm,
     applySettingsToConfig: applySettingsToConfig,
     settingsView: settingsView,

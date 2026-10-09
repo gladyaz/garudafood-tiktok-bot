@@ -341,7 +341,16 @@ test("app.js tidak pernah menyentuh kredensial TikTok, dan tidak menyimpan passw
   assert.ok(!/cookie|document\.cookie|localStorage|sessionStorage/i.test(appCode), "tidak menyimpan apa pun di browser");
 
   // Password OBS hanya dibaca saat sedang diganti, dan dikosongkan sesudahnya.
-  assert.match(appCode, /state\.changingPassword && el\["set-obs-password"\]/);
+  //
+  // Pembacaan DOM-nya sendiri pindah ke ui-logic.js (readSettingsNodes) supaya
+  // interaksinya bisa diuji tanpa jsdom, jadi penjaganya diperiksa DI SANA.
+  // app.js tetap harus meneruskan keadaan "sedang mengganti" itu.
+  // Dibaca MENTAH: frasa yang dicari hanya ada di kode, tidak di komentar,
+  // jadi tidak perlu membuang komentar dulu.
+  const uiLogic = fs.readFileSync(path.join(PUBLIC_DIR, "ui-logic.js"), "utf8");
+  assert.match(uiLogic, /changingPassword && pw/, "password hanya dibaca saat sedang diganti");
+  assert.match(uiLogic, /get\("set-obs-password"\)/);
+  assert.match(appCode, /state\.changingPassword/, "app.js meneruskan keadaan itu");
   assert.match(appCode, /if \(!state\.changingPassword\) pwInput\.value = ""/);
   // Dan ia tidak pernah dibaca dari balasan server.
   assert.ok(!/body\.config\.obs\.password/.test(appCode), "password tersimpan tidak pernah dibaca dari server");

@@ -232,10 +232,15 @@ test("halaman PUNYA kedua saklar, dan app.js memakainya", () => {
     assert.ok(html.includes('id="' + id + '"'), "index.html harus punya " + id);
     assert.ok(app.includes('"' + id + '"'), "app.js harus memakai " + id);
   }
-  // Keduanya checkbox: dibaca lewat .checked, bukan .value.
+  // Keduanya checkbox: dibaca lewat .checked, bukan .value. Sebuah checkbox
+  // punya value "on" walau tidak dicentang, jadi membacanya seperti field teks
+  // akan selalu berbunyi menyala.
   assert.match(html, /id="set-auto-pin"[^>]*type="checkbox"/);
   assert.match(html, /id="set-admin-reply"[^>]*type="checkbox"/);
-  assert.match(app, /\.checked === true/, "app.js harus membaca .checked");
+  // Pembacaannya ada di ui-logic.js, bukan app.js: di situlah ia bisa diuji
+  // dengan node palsu.
+  const ui = fs.readFileSync(path.join(PUBLIC_DIR, "ui-logic.js"), "utf8");
+  assert.match(ui, /\.checked === true/, "ui-logic harus membaca .checked");
 });
 
 test("halaman TIDAK PERNAH menyebut istilah teknis aksi nyata", () => {
