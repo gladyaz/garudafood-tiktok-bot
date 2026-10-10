@@ -16,6 +16,11 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+// Kalimat customer tidak lagi diassert sebagai prosa: ia dibandingkan dengan
+// KAMUS. Mengubah kata-kata tidak memerahkan tes; salah kabel tetap merah.
+const I18N = require("../controller/public/i18n.js");
+const T = (key, vars) => I18N.t("id", key, vars);
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -38,14 +43,14 @@ const ALL_GREEN_STOPPED = Object.freeze({
 
 test("REGRESI: keadaan automation dibaca PERTAMA, bukan terakhir", () => {
   const rows = U.readinessRows(ALL_GREEN_STOPPED);
-  assert.equal(rows[0].label, "Automation");
-  assert.equal(rows[0].value, "Stopped");
+  assert.equal(rows[0].label, T("ui.row.automation"));
+  assert.equal(rows[0].value, T("ui.state.stopped"));
   assert.equal(rows[0].tone, U.TONE.NEUTRAL);
 });
 
 test("baris automation tetap satu-satunya, tidak terduplikasi", () => {
   const rows = U.readinessRows(ALL_GREEN_STOPPED);
-  assert.equal(rows.filter((r) => r.label === "Automation").length, 1);
+  assert.equal(rows.filter((r) => r.label === T("ui.row.automation")).length, 1);
 });
 
 // --- kosakata ----------------------------------------------------------------
@@ -64,16 +69,16 @@ test("tiap baris memakai kata yang sesuai keadaannya sendiri", () => {
   const rows = U.readinessRows(ALL_GREEN_STOPPED);
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.value]));
 
-  assert.equal(byLabel.OBS, "Connected");
-  assert.equal(byLabel.TikTok, "Connected");
-  assert.equal(byLabel["TikTok sign-in"], "Signed in as toko uji");
-  assert.equal(byLabel.LIVE, "On air");
-  assert.equal(byLabel.Products, "5 available in your LIVE");
-  assert.equal(byLabel.Mappings, "5 mappings OK");
+  assert.equal(byLabel.OBS, T("ui.row.connected"));
+  assert.equal(byLabel.TikTok, T("ui.row.connected"));
+  assert.equal(byLabel[T("ui.row.signin")], T("ui.login.signedIn", { name: "toko uji" }));
+  assert.equal(byLabel[T("ui.row.live")], T("ui.row.onair"));
+  assert.equal(byLabel[T("ui.row.products")], T("ui.row.productsAvailable", { n: 5 }));
+  assert.equal(byLabel[T("ui.row.mappings")], T("ui.row.mappingsOk", { n: 5 }));
 
   // Dan tidak satu pun dari lima nilai itu sama dengan yang lain: kata yang
   // dipakai ulang untuk hal yang berbeda adalah asal masalahnya.
-  const five = [byLabel.OBS, byLabel.LIVE, byLabel.Products, byLabel.Mappings, byLabel.Automation];
+  const five = [byLabel.OBS, byLabel[T("ui.row.live")], byLabel[T("ui.row.products")], byLabel[T("ui.row.mappings")], byLabel[T("ui.row.automation")]];
   assert.equal(new Set(five).size, five.length);
 });
 
@@ -82,7 +87,7 @@ test("satu pemetaan memakai bentuk tunggal", () => {
     validation: { ok: true, mappings: [{ ok: true }] },
     status: { automation: S.STOPPED },
   });
-  assert.equal(rows.find((r) => r.label === "Mappings").value, "1 mapping OK");
+  assert.equal(rows.find((r) => r.label === T("ui.row.mappings")).value, T("ui.row.mappingsOk", { n: 1 }));
 });
 
 test("LIVE mati tetap berbunyi apa adanya", () => {
@@ -91,9 +96,9 @@ test("LIVE mati tetap berbunyi apa adanya", () => {
     status: { automation: S.STOPPED },
   });
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
-  assert.equal(byLabel.LIVE.value, "Not on air");
-  assert.equal(byLabel.LIVE.tone, U.TONE.ATTENTION);
-  assert.equal(byLabel.Products.value, "None available");
+  assert.equal(byLabel[T("ui.row.live")].value, T("ui.row.notOnair"));
+  assert.equal(byLabel[T("ui.row.live")].tone, U.TONE.ATTENTION);
+  assert.equal(byLabel[T("ui.row.products")].value, T("ui.row.productsNone"));
 });
 
 // --- warna -------------------------------------------------------------------
@@ -109,7 +114,7 @@ test("tone 'tersedia' dan tone 'berjalan' adalah dua kelas yang BERBEDA", () => 
   // Saat berjalan: tepat SATU baris bertone "running", yaitu Automation.
   const hot = running.filter((r) => r.tone === U.TONE.RUNNING);
   assert.equal(hot.length, 1);
-  assert.equal(hot[0].label, "Automation");
+  assert.equal(hot[0].label, T("ui.row.automation"));
 });
 
 test("REGRESI: styles.css tidak boleh menyamakan warna ready dan running", () => {
@@ -142,14 +147,15 @@ test("REGRESI: styles.css tidak boleh menyamakan warna ready dan running", () =>
 
 test("saat BERHENTI, kartu mengatakan belum ada yang berjalan", () => {
   const hint = U.readinessHint({ status: { automation: S.STOPPED } });
-  assert.match(hint, /Nothing is running yet/);
-  assert.match(hint, /START BOT/);
+  assert.equal(hint, T("ui.ready.hint.stopped"));
+  // dan ia menyebut tombol yang harus ditekan, dengan label tombolnya sendiri
+  assert.ok(hint.includes(T("ui.btn.start")), hint);
 });
 
 test("saat BERJALAN, kalimatnya berubah", () => {
   const hint = U.readinessHint({ status: { automation: S.RUNNING } });
-  assert.match(hint, /running/);
-  assert.ok(!/Nothing is running yet/.test(hint));
+  assert.equal(hint, T("ui.ready.hint.running"));
+  assert.notEqual(hint, T("ui.ready.hint.stopped"));
 });
 
 test("keadaan peralihan tidak mengarang kalimat", () => {
@@ -167,9 +173,9 @@ test("REGRESI: ERROR TIDAK berbunyi \"belum ada yang jalan\"", () => {
   // yang belum pernah dipakai, dan kata "yet" membuat operator menekan START BOT
   // tanpa membaca sebab kegagalan yang sedang tampil di baris teratas kartu.
   const hint = U.readinessHint({ status: { automation: S.ERROR } });
-  assert.ok(!/Nothing is running yet/.test(hint), hint);
-  assert.match(hint, /ended with a problem/);
-  assert.match(hint, /START BOT/);
+  assert.notEqual(hint, T("ui.ready.hint.stopped"), "ERROR tidak boleh memakai kalimat BERHENTI");
+  assert.equal(hint, T("ui.ready.hint.error"));
+  assert.ok(hint.includes(T("ui.btn.start")), hint);
 });
 
 // --- lapisan DOM tidak boleh punya kalimatnya sendiri ------------------------
@@ -193,7 +199,7 @@ test("judul kartu menyebut pre-start, bukan sekadar readiness", () => {
 // --- label automation --------------------------------------------------------
 
 test("PREFLIGHT memakai kata yang sama dengan judul kartunya", () => {
-  assert.equal(U.automationLabel({ automation: S.PREFLIGHT }), "Running pre-start checks…");
+  assert.equal(U.automationLabel({ automation: S.PREFLIGHT }), T("ui.state.preflight"));
 });
 
 // ===========================================================================
@@ -220,24 +226,24 @@ test("REGRESI: delapan check TIDAK lagi berbunyi satu kata yang sama", () => {
   // Dan tiap jawaban berdiri sendiri: delapan nilai, delapan kata/kelompok kata
   // yang tidak saling tumpang-tindih kecuali yang memang sama artinya.
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.value]));
-  assert.equal(byLabel.Settings, "Saved");
-  assert.equal(byLabel["Other bots running"], "None");
-  assert.equal(byLabel["Ports this app needs"], "Available");
-  assert.equal(byLabel.OBS, "Connected");
-  assert.equal(byLabel["OBS scenes"], "Found");
-  assert.equal(byLabel["Browser profile"], "Available");
-  assert.equal(byLabel["TikTok LIVE"], "On air");
-  assert.equal(byLabel.Mappings, "OK");
+  assert.equal(byLabel[T("ui.check.config")], T("ui.check.config.pass"));
+  assert.equal(byLabel[T("ui.check.processes")], T("ui.check.processes.pass"));
+  assert.equal(byLabel[T("ui.check.ports")], T("ui.check.ports.pass"));
+  assert.equal(byLabel.OBS, T("ui.row.connected"));
+  assert.equal(byLabel[T("ui.check.scenes")], T("ui.check.scenes.pass"));
+  assert.equal(byLabel[T("ui.check.profile")], T("ui.check.profile.pass"));
+  assert.equal(byLabel[T("ui.check.tiktok")], T("ui.row.onair"));
+  assert.equal(byLabel[T("ui.check.mappings")], T("ui.check.mappings.pass"));
 });
 
 test("label check dibaca sebagai pertanyaan, jawabannya tidak mengulanginya", () => {
   // "No other bot running: None running" berbunyi dua kali; label sekarang
   // bertanya, nilainya menjawab.
   const rows = U.preflightRows(ALL_CHECKS_PASS);
-  const row = rows.find((r) => r.label === "Other bots running");
+  const row = rows.find((r) => r.label === T("ui.check.processes"));
   assert.ok(row);
   assert.ok(!/^No /.test(row.label), row.label);
-  assert.equal(row.value, "None");
+  assert.equal(row.value, T("ui.check.processes.pass"));
 });
 
 test("check yang tidak berlaku berkata 'Not needed', bukan 'Skipped'", () => {
@@ -245,8 +251,8 @@ test("check yang tidak berlaku berkata 'Not needed', bukan 'Skipped'", () => {
     ok: true,
     checks: { config: { ok: true }, tiktok: { ok: true, skipped: true } },
   });
-  const tk = rows.find((r) => r.label === "TikTok LIVE");
-  assert.equal(tk.value, "Not needed");
+  const tk = rows.find((r) => r.label === T("ui.check.tiktok"));
+  assert.equal(tk.value, T("ui.check.skipped"));
   assert.equal(tk.tone, U.TONE.NEUTRAL);
 });
 
@@ -257,7 +263,7 @@ test("KONTRAK: lulus/gagal ditentukan tone, BUKAN kata-katanya", () => {
     ok: false,
     checks: {
       config: { ok: true },
-      obs: { ok: false, userMessage: "OBS is not connected." },
+      obs: { ok: false, userMessage: T("err.obs-unavailable") },
       tiktok: { ok: true, skipped: true },
     },
   });
@@ -277,19 +283,19 @@ test("REGRESI: kunci penyuntingan Pemetaan tidak mengaku 'sedang berjalan'", () 
     busy: true, busyOp: "saveMappings",
     status: { automation: S.STOPPED, config: { present: true } },
   });
-  assert.equal(savingMappings, "Saving your mapping…");
+  assert.equal(savingMappings, T("ui.rule.savingRules"));
   assert.ok(!/running/i.test(savingMappings), savingMappings);
 
   const savingSettings = U.mappingHint({
     busy: true, busyOp: "saveSettings",
     status: { automation: S.STOPPED, config: { present: true } },
   });
-  assert.equal(savingSettings, "Saving your settings…");
+  assert.equal(savingSettings, T("ui.rule.savingSettings"));
 });
 
 test("hint Pemetaan: saat memang berjalan, menyebut tombolnya", () => {
   const running = U.mappingHint({ status: { automation: S.RUNNING, config: { present: true } } });
-  assert.equal(running, "Mappings can be changed after you press STOP BOT.");
+  assert.equal(running, T("ui.rule.locked"));
 });
 
 test("hint Pemetaan diam saat tidak ada yang mengunci", () => {
@@ -313,10 +319,11 @@ test("REGRESI: kata 'Controller' tidak pernah sampai ke layar customer", () => {
   const code = readPublic("ui-logic.js").replace(/^\s*\/\/.*$/gm, "");
   assert.ok(!/Controller is not reachable/.test(code), "kalimat lama masih dipakai di kode");
 
-  // Dan ketiga tempatnya memakai SATU kalimat yang sama, bukan tiga salinan.
+  // Dan ketiga tempatnya memakai SATU kunci yang sama, bukan tiga salinan.
   const down = { backendUnreachable: true, status: { automation: S.STOPPED, config: { present: true } } };
   const sentence = U.settingsView(down).hint;
-  assert.match(sentence, /^AI LIVE HOST is not responding\./);
+  assert.equal(sentence, T("ui.banner.offline"));
+  assert.ok(sentence.indexOf("Controller") === -1, sentence);
   assert.equal(U.mappingHint(down), sentence);
   assert.equal(U.controlsFor(down).startReason, sentence);
 });
@@ -338,19 +345,27 @@ test("REGRESI: nama state mesin tidak bocor ke umpan Activity", () => {
   }
   // Kata-katanya sama dengan yang dipakai pil status, bukan kosakata kedua.
   assert.ok(texts.includes("Status: " + U.automationLabel({ automation: "DEGRADED" })));
-  assert.ok(texts.includes("Status: Stopped"));
+  assert.ok(texts.includes(T("ui.act.status", { state: T("ui.state.stopped") })));
 });
 
 test("kejadian balasan chat memakai kalimat yang sama di kedua lapis", () => {
   const items = U.activityItems([
     { id: 1, time: "2026-10-09T10:00:00.000Z", type: "AUTOCOMMENT_SUCCESS", scene: "PAX-1" },
   ]);
-  assert.equal(items[0].text, "Reply posted in your LIVE chat");
+  assert.equal(items[0].text, T("ui.act.replied"));
 
-  // Server punya katalognya sendiri untuk umpan yang sama; dua kalimat berbeda
-  // untuk satu kejadian membuat operator mengira ia melihat dua hal.
+  // Dulu tes ini menuntut kalimat UI SAMA PERSIS dengan katalog server.
+  // Itu tidak lagi mungkin dan tidak lagi diinginkan: server hanya punya satu
+  // bahasa, UI punya tiga. Yang dijaga sekarang adalah keduanya berbicara
+  // tentang kejadian yang sama - server tetap punya kalimatnya untuk log
+  // dukungan, dan UI punya kalimatnya untuk layar.
   const server = require("../controller/activity.js");
-  assert.equal(server.MESSAGES.AUTOCOMMENT_SUCCESS, items[0].text);
+  assert.equal(typeof server.MESSAGES.AUTOCOMMENT_SUCCESS, "string");
+  assert.ok(server.MESSAGES.AUTOCOMMENT_SUCCESS.length > 0);
+  for (const lang of I18N.LANGS) {
+    const line = U.activityItems([{ id: 9, time: "2026-10-09T10:00:00.000Z", type: "AUTOCOMMENT_SUCCESS" }], 10, lang)[0];
+    assert.equal(line.text, I18N.t(lang, "ui.act.replied"), lang);
+  }
 });
 
 // --- kontrak app.js <-> ui-logic.js ----------------------------------------

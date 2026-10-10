@@ -21,10 +21,22 @@
  * dari aslinya dan membuat Controller mengatakan hal yang tidak benar.
  */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.AiLiveUI = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./i18n.js"));
+  else root.AiLiveUI = factory(root.AiLiveI18N);
+})(typeof self !== "undefined" ? self : this, function (I18N) {
   "use strict";
+
+  // SETIAP kalimat customer datang dari i18n.js. Tidak ada satu pun literal
+  // bahasa di berkas ini, dan tidak ada di app.js - itulah gunanya modul kamus.
+  //
+  // Kenapa fungsi di sini menerima `lang` dan bukan mengembalikan kunci mentah:
+  // kalau app.js yang menerima kunci, ia harus memanggil t() di puluhan tempat,
+  // dan SATU yang terlewat akan menampilkan "ui.row.connected" ke customer.
+  // Dengan lang, satu-satunya cara gagal adalah lupa meneruskannya - dan itu
+  // jatuh ke bahasa Indonesia, bawaan yang aman, bukan kunci mentah.
+  function tr(lang, key, vars) {
+    return I18N.t(lang || I18N.DEFAULT_LANG, key, vars);
+  }
 
   // Scene etalase. Hanya PAX-1..PAX-10 yang punya saran otomatis, sejalan dengan
   // autocomment/formatter.js yang juga hanya mengenal nomor 1..10.
@@ -45,12 +57,9 @@
 
   // Satu kalimat untuk "halaman tidak bisa bicara dengan aplikasinya", dipakai
   // di tiga tempat: hint Settings, hint Pemetaan, dan sebab START ditolak.
-  //
-  // Dulu tiga salinan literal berbunyi "Controller is not reachable." — nama
-  // komponen internal yang tidak pernah muncul di layar mana pun, jadi ia
-  // menyebut benda yang tidak bisa dicari customer dan tidak memberi tindakan.
-  // Tiga salinan juga berarti tiga peluang untuk menyimpang.
-  var BACKEND_DOWN = "AI LIVE HOST is not responding. Close the app and open it again.";
+  // Dulu tiga salinan literal yang menyebut "Controller" - nama komponen yang
+  // tidak pernah muncul di layar mana pun. Sekarang satu kunci.
+  var BACKEND_DOWN_KEY = "ui.banner.offline";
 
   // Nada warna. Dipakai sebagai nama kelas CSS; artinya tetap di satu tempat.
   var TONE = { READY: "ready", RUNNING: "running", ATTENTION: "attention", ERROR: "error", NEUTRAL: "neutral" };
@@ -102,7 +111,7 @@
   // definisi pemutaran — tapi yang belum punya ditandai, bukan disembunyikan.
   // Menyembunyikannya membuat operator mencari scene yang ia tahu ada di OBS dan
   // tidak menemukannya, tanpa penjelasan apa pun.
-  function sceneOptions(scenes, opts) {
+  function sceneOptions(scenes, opts, lang) {
     var playable = opts && Array.isArray(opts.playableScenes) ? opts.playableScenes : null;
     var list = Array.isArray(scenes) ? scenes : [];
     return list.map(function (name) {
@@ -113,7 +122,7 @@
         supported: supported,
         // Kalimatnya tetap dari server lewat validasi; ini hanya penanda ringkas
         // di dalam dropdown.
-        note: supported ? "" : "not configured for automation",
+        note: supported ? "" : tr(lang, "ui.rule.f.sceneNotPlayable"),
       };
     });
   }
@@ -128,22 +137,22 @@
 
   // Baris kedua: harga dan stok kalau ada. Tidak pernah kelas DOM, selector,
   // maupun apa pun dari struktur internal halaman TikTok.
-  function productSubLabel(p) {
+  function productSubLabel(p, lang) {
     if (!p) return "";
     var parts = [];
     if (!isBlank(p.price)) parts.push(String(p.price));
     if (!isBlank(p.stock)) parts.push(String(p.stock));
-    if (p.pinAvailable === false) parts.push("Pin control unavailable");
+    if (p.pinAvailable === false) parts.push(tr(lang, "ui.rule.f.pinUnavailable"));
     return parts.join(" · ");
   }
 
-  function productOptions(products) {
+  function productOptions(products, lang) {
     var list = Array.isArray(products) ? products : [];
     return list.map(function (p) {
       return {
         value: String(p.title || ""),
         label: productLabel(p),
-        sub: productSubLabel(p),
+        sub: productSubLabel(p, lang),
         number: p.number === undefined ? null : p.number,
         pinAvailable: p.pinAvailable !== false,
       };
@@ -193,14 +202,14 @@
   // Baris-baris panel kesiapan. Bentuknya tetap: UI tidak perlu menebak baris
   // mana yang ada, dan baris yang belum diketahui berkata "Checking…" daripada
   // berpura-pura hijau.
-  function readinessRows(data) {
+  function readinessRows(data, lang) {
     var obs = (data && data.obs) || null;
     var tiktok = (data && data.tiktok) || null;
     var status = (data && data.status) || null;
     var validation = (data && data.validation) || null;
 
-    function unknown(label) {
-      return { label: label, value: "Checking…", tone: TONE.NEUTRAL };
+    function unknown(labelKey) {
+      return { label: tr(lang, labelKey), value: tr(lang, "ui.state.checking"), tone: TONE.NEUTRAL };
     }
 
     var rows = [];
@@ -212,63 +221,68 @@
     // produk tersedia, pemetaan siap" — dan operator membacanya sebagai "bot
     // sedang bekerja", padahal belum ada apa pun yang jalan. Keadaan JALAN atau
     // TIDAK adalah hal pertama yang perlu ia tahu, jadi ia dibaca pertama.
-    rows.push({ label: "Automation", value: automationLabel(status), tone: automationTone(status) });
+    rows.push({
+      label: tr(lang, "ui.row.automation"),
+      value: automationLabel(status, lang),
+      tone: automationTone(status),
+    });
 
     // OBS
-    if (!obs) rows.push(unknown("OBS"));
-    else if (obs.ok) rows.push({ label: "OBS", value: "Connected", tone: TONE.READY });
-    else rows.push({ label: "OBS", value: messageOf(obs, "Not connected"), tone: TONE.ATTENTION });
+    if (!obs) rows.push(unknown("ui.row.obs"));
+    else if (obs.ok) rows.push({ label: tr(lang, "ui.row.obs"), value: tr(lang, "ui.row.connected"), tone: TONE.READY });
+    else rows.push({ label: tr(lang, "ui.row.obs"), value: messageOf(lang, obs, "ui.row.notConnected"), tone: TONE.ATTENTION });
 
     // TikTok
     // Identitasnya SENGAJA tidak diulang di sini: baris "TikTok sign-in" di
     // bawah sudah menyebutkannya, dan dua baris berbunyi "Connected as X" membuat
     // operator mengira ia membaca dua hal padahal satu.
-    if (!tiktok) rows.push(unknown("TikTok"));
-    else if (tiktok.ok) rows.push({ label: "TikTok", value: "Connected", tone: TONE.READY });
-    else rows.push({ label: "TikTok", value: messageOf(tiktok, "Not connected"), tone: TONE.ATTENTION });
+    if (!tiktok) rows.push(unknown("ui.row.tiktok"));
+    else if (tiktok.ok) rows.push({ label: tr(lang, "ui.row.tiktok"), value: tr(lang, "ui.row.connected"), tone: TONE.READY });
+    else rows.push({ label: tr(lang, "ui.row.tiktok"), value: messageOf(lang, tiktok, "ui.row.notConnected"), tone: TONE.ATTENTION });
 
     // LIVE
     //
     // "On air", bukan "Active": kata "active" dipakai orang untuk bot yang
     // sedang bekerja, sedangkan baris ini hanya berbicara soal siarannya.
-    if (!tiktok) rows.push(unknown("LIVE"));
-    else if (!tiktok.ok) rows.push({ label: "LIVE", value: "Cannot check yet", tone: TONE.NEUTRAL });
+    if (!tiktok) rows.push(unknown("ui.row.live"));
+    else if (!tiktok.ok) rows.push({ label: tr(lang, "ui.row.live"), value: tr(lang, "ui.row.cannotCheck"), tone: TONE.NEUTRAL });
     else rows.push(tiktok.live
-      ? { label: "LIVE", value: "On air", tone: TONE.READY }
-      : { label: "LIVE", value: "Not on air", tone: TONE.ATTENTION });
+      ? { label: tr(lang, "ui.row.live"), value: tr(lang, "ui.row.onair"), tone: TONE.READY }
+      : { label: tr(lang, "ui.row.live"), value: tr(lang, "ui.row.notOnair"), tone: TONE.ATTENTION });
 
     // Produk
     //
     // "available", bukan "detected": yang kedua adalah bahasa alat ukur, dan
     // tidak memberi tahu apa pun tentang apa yang bisa dilakukan dengannya.
-    if (!tiktok) rows.push(unknown("Products"));
+    if (!tiktok) rows.push(unknown("ui.row.products"));
     else if (typeof tiktok.productCount === "number") {
       rows.push(tiktok.productCount > 0
-        ? { label: "Products", value: tiktok.productCount + " available in your LIVE", tone: TONE.READY }
-        : { label: "Products", value: "None available", tone: TONE.ATTENTION });
-    } else rows.push({ label: "Products", value: "Cannot check yet", tone: TONE.NEUTRAL });
+        ? { label: tr(lang, "ui.row.products"), value: tr(lang, "ui.row.productsAvailable", { n: tiktok.productCount }), tone: TONE.READY }
+        : { label: tr(lang, "ui.row.products"), value: tr(lang, "ui.row.productsNone"), tone: TONE.ATTENTION });
+    } else rows.push({ label: tr(lang, "ui.row.products"), value: tr(lang, "ui.row.cannotCheck"), tone: TONE.NEUTRAL });
 
     // Pemetaan
-    if (!validation) rows.push(unknown("Mappings"));
+    if (!validation) rows.push(unknown("ui.row.mappings"));
     else if (validation.ok) {
       var n = Array.isArray(validation.mappings) ? validation.mappings.length : 0;
-      // "OK", bukan "ready". Kartu ini sudah penuh hal yang terdengar siap;
-      // satu-satunya baris yang boleh berbicara soal berjalan atau tidak adalah
-      // baris Automation di paling atas.
-      rows.push({ label: "Mappings", value: n + (n === 1 ? " mapping OK" : " mappings OK"), tone: TONE.READY });
+      // Kalimatnya netral-angka di setiap bahasa: bentuk jamak tidak dihitung
+      // di sini, karena Indonesia dan Mandarin tidak menandainya dan Inggris
+      // sudah ditulis supaya benar pada angka berapa pun.
+      rows.push({ label: tr(lang, "ui.row.mappings"), value: tr(lang, "ui.row.mappingsOk", { n: n }), tone: TONE.READY });
     } else {
       var bad = Array.isArray(validation.mappings) ? validation.mappings.filter(notOk).length : 0;
       rows.push({
-        label: "Mappings",
-        value: bad > 0 ? bad + (bad === 1 ? " mapping needs attention" : " mappings need attention")
-                       : messageOf(validation, "Needs attention"),
+        label: tr(lang, "ui.row.mappings"),
+        value: bad > 0
+          ? tr(lang, "ui.row.mappingsBad", { n: bad })
+          : messageOf(lang, validation, "ui.row.needsAttention"),
         tone: TONE.ATTENTION,
       });
     }
 
     // Akun TikTok: keadaan login, terpisah dari "TikTok terhubung".
-    var lv = loginView(data);
-    rows.push({ label: "TikTok sign-in", value: lv.label, tone: lv.tone });
+    var lv = loginView(data, lang);
+    rows.push({ label: tr(lang, "ui.row.signin"), value: lv.label, tone: lv.tone });
 
     return rows;
   }
@@ -278,21 +292,21 @@
   // Sebelumnya tempat ini hanya pernah berisi satu kalimat soal discovery, dan
   // kosong selebihnya — jadi kartu berisi enam baris hijau tanpa satu pun kata
   // yang memberi tahu bahwa belum ada apa pun yang berjalan.
-  function readinessHint(view) {
+  function readinessHint(view, lang) {
     var status = (view && view.status) || null;
     if (!status) return "";
     switch (status.automation) {
       case STATES.STOPPED:
-        return "Nothing is running yet. These are the checks for before you press START BOT.";
+        return tr(lang, "ui.ready.hint.stopped");
       // ERROR TIDAK boleh ikut kalimat di atas. Baris teratas kartu ini sedang
       // menampilkan sebab kegagalannya; "nothing is running YET" di sebelahnya
       // membuat run yang mati terbaca seperti mesin yang belum pernah dipakai,
       // dan operator menekan START BOT tanpa membaca pesannya.
       case STATES.ERROR:
-        return "The last run ended with a problem. Read the message below, then press START BOT to try again.";
+        return tr(lang, "ui.ready.hint.error");
       case STATES.RUNNING:
       case STATES.DEGRADED:
-        return "The automation is running. If you add products to your LIVE now, the list only updates after you press STOP BOT.";
+        return tr(lang, "ui.ready.hint.running");
       default:
         return "";
     }
@@ -302,26 +316,42 @@
     return !row || row.ok !== true;
   }
 
-  // Kalimat dari server kalau ada. TIDAK PERNAH kode mesin: `reason` tetap
-  // tersedia di objeknya untuk ditelusuri, tapi tidak pernah ditampilkan.
-  function messageOf(obj, fallback) {
-    if (!obj) return fallback;
-    if (obj.userMessage) return String(obj.userMessage);
-    if (obj.error && obj.error.userMessage) return String(obj.error.userMessage);
-    return fallback;
+  // Kalimat untuk sebuah hasil dari server.
+  //
+  // Server mengirim KODE bersama kalimatnya (withUserMessage memakai
+  // Object.assign, jadi `reason` tetap ada; translate() mengembalikan
+  // {code, userMessage}). Jadi kode itu yang dipakai mencari terjemahan, dan
+  // kalimat server hanya jaring kalau kodenya belum dikenal kamus.
+  //
+  // Urutannya: kamus[bahasa][kode] -> userMessage server -> kalimat cadangan.
+  // Kode mesin tidak pernah ditampilkan.
+  function messageOf(lang, obj, fallbackKey) {
+    if (!obj) return tr(lang, fallbackKey);
+    var err = obj.error || null;
+    var code = obj.reason || obj.code || (err && (err.reason || err.code)) || "";
+    var server = obj.userMessage || (err && err.userMessage) || "";
+    // Kode yang DIKENAL kamus menang; kode yang belum dikenal jatuh ke kalimat
+    // server; dan kalau server pun diam, yang dipakai adalah kalimat cadangan
+    // yang DIMINTA PEMANGGIL - bukan "terjadi masalah tak dikenal", karena
+    // pemanggil tahu konteksnya dan kalimat umum menghapus konteks itu.
+    if (code && I18N.DICT[I18N.normalizeLang(lang)]["err." + code] !== undefined) {
+      return I18N.fromServer(lang, code, server);
+    }
+    if (server) return String(server);
+    return tr(lang, fallbackKey);
   }
 
-  function automationLabel(status) {
-    if (!status) return "Checking…";
+  function automationLabel(status, lang) {
+    if (!status) return tr(lang, "ui.state.checking");
     switch (status.automation) {
-      case STATES.STOPPED: return "Stopped";
-      case STATES.PREFLIGHT: return "Running pre-start checks…";
-      case STATES.STARTING: return "Starting…";
-      case STATES.RUNNING: return "Running";
-      case STATES.DEGRADED: return "Running with problems";
-      case STATES.STOPPING: return "Stopping…";
-      case STATES.ERROR: return messageOf(status.lastError, "Error");
-      default: return "Unknown";
+      case STATES.STOPPED: return tr(lang, "ui.state.stopped");
+      case STATES.PREFLIGHT: return tr(lang, "ui.state.preflight");
+      case STATES.STARTING: return tr(lang, "ui.state.starting");
+      case STATES.RUNNING: return tr(lang, "ui.state.running");
+      case STATES.DEGRADED: return tr(lang, "ui.state.degraded");
+      case STATES.STOPPING: return tr(lang, "ui.state.stopping");
+      case STATES.ERROR: return messageOf(lang, status.lastError, "ui.state.error");
+      default: return tr(lang, "ui.state.unknown");
     }
   }
 
@@ -348,7 +378,7 @@
   // Tiga keadaan, dan tombolnya berbeda di tiap keadaan. `identity` yang
   // ditampilkan adalah nama akun yang TERBUKTI dibaca dari halaman — bukan nilai
   // yang ditulis customer di config, karena yang kedua hanya harapan.
-  function loginView(view) {
+  function loginView(view, lang) {
     var status = (view && view.status) || null;
     var login = status && status.login ? status.login : null;
     var tiktok = (view && view.tiktok) || null;
@@ -357,18 +387,18 @@
     var stopped = automation === STATES.STOPPED || automation === STATES.ERROR;
 
     if (!status) {
-      return { state: "unknown", label: "Checking…", tone: TONE.NEUTRAL, canLogin: false, canCheck: false, canCancel: false, hint: "" };
+      return { state: "unknown", label: tr(lang, "ui.state.checking"), tone: TONE.NEUTRAL, canLogin: false, canCheck: false, canCancel: false, hint: "" };
     }
 
     if (login && login.active) {
       return {
         state: "waiting",
-        label: "Waiting for login…",
+        label: tr(lang, "ui.login.waiting"),
         tone: TONE.ATTENTION,
         canLogin: false,
         canCheck: !busy,
         canCancel: !busy,
-        hint: "A browser window has opened. Sign in to TikTok there, then come back here and press CHECK LOGIN.",
+        hint: tr(lang, "ui.login.hintWaiting"),
       };
     }
 
@@ -378,7 +408,9 @@
     if (identity) {
       return {
         state: "connected",
-        label: "Signed in as " + identity,
+        // Nama akun adalah milik customer: ia masuk sebagai nilai, bukan
+        // diterjemahkan.
+        label: tr(lang, "ui.login.signedIn", { name: identity }),
         tone: TONE.READY,
         canLogin: stopped && !busy && !(status.config && status.config.present === false),
         canCheck: false,
@@ -394,13 +426,13 @@
 
     return {
       state: "signed-out",
-      label: "Not signed in",
+      label: tr(lang, "ui.login.none"),
       tone: TONE.ATTENTION,
       // Login hanya saat berhenti: service memegang profil Chrome saat berjalan.
       canLogin: stopped && !busy && !noConfig,
       canCheck: false,
       canCancel: false,
-      hint: noConfig ? "Save your settings first." : stopped ? "" : "Press STOP BOT first, then sign in.",
+      hint: noConfig ? tr(lang, "ui.login.hintSaveFirst") : stopped ? "" : tr(lang, "ui.login.hintStopFirst"),
     };
   }
 
@@ -522,29 +554,29 @@
   // Pembagiannya: skema menjaga BENTUK, formulir menjaga KELENGKAPAN, preflight
   // menjaga KESIAPAN. Server tetap yang berwenang — pesan per field darinya
   // ditampilkan apa adanya kalau ia menolak.
-  function validateSettingsForm(form) {
+  function validateSettingsForm(form, lang) {
     var f = form || {};
     var errors = {};
 
     if (isBlank(f.tiktokUsername)) {
-      errors.tiktokUsername = "Enter the TikTok username that goes LIVE.";
+      errors.tiktokUsername = tr(lang, "ui.valid.username");
     }
     if (isBlank(f.expectedShop)) {
-      errors.expectedShop = "Enter the account name exactly as it appears in your LIVE console.";
+      errors.expectedShop = tr(lang, "ui.valid.shop");
     }
     if (isBlank(f.obsHost)) {
-      errors.obsHost = "Enter the computer running OBS, usually 127.0.0.1.";
+      errors.obsHost = tr(lang, "ui.valid.host");
     }
 
     var portRaw = String(f.obsPort === undefined || f.obsPort === null ? "" : f.obsPort).trim();
     if (portRaw === "") {
-      errors.obsPort = "Enter the OBS WebSocket port, usually 4455.";
+      errors.obsPort = tr(lang, "ui.valid.port");
     } else if (!/^[0-9]+$/.test(portRaw)) {
-      errors.obsPort = "The port must be a whole number.";
+      errors.obsPort = tr(lang, "ui.valid.portNumber");
     } else {
       var port = Number(portRaw);
       if (port < PORT_MIN || port > PORT_MAX) {
-        errors.obsPort = "The port must be between " + PORT_MIN + " and " + PORT_MAX + ".";
+        errors.obsPort = tr(lang, "ui.valid.portRange", { min: PORT_MIN, max: PORT_MAX });
       }
     }
 
@@ -556,7 +588,7 @@
     // yang tidak pernah bisa terjadi, dan ditolak di sini supaya customer tahu
     // SAAT MENYIMPAN, bukan nanti saat START BOT mati tanpa ia mengerti kenapa.
     if (f.sendAdminReply === true && f.autoPinProduct !== true) {
-      errors.sendAdminReply = "Turn on Auto pin product first. The reply is only sent after a product is pinned.";
+      errors.sendAdminReply = tr(lang, "ui.valid.replyNeedsPin");
     }
 
     var keys = Object.keys(errors);
@@ -622,8 +654,8 @@
   // yang paling membingungkan — automation SUDAH stopped, tapi Settings tetap
   // mati. Customer lalu membaca kalimat yang menyuruhnya melakukan hal yang sudah
   // ia lakukan.
-  function settingsHint(view) {
-    if (view && view.backendUnreachable) return BACKEND_DOWN;
+  function settingsHint(view, lang) {
+    if (view && view.backendUnreachable) return tr(lang, BACKEND_DOWN_KEY);
     var status = (view && view.status) || null;
     // Belum dimuat: jangan menuduh apa pun.
     if (!status) return "";
@@ -631,11 +663,11 @@
     // MAPPING sedang berjalan adalah kalimat yang salah, dan kalimat yang
     // salah di tempat yang menjelaskan kenapa sesuatu terkunci justru yang
     // paling membingungkan.
-    if (view && view.busyOp === "saveSettings") return "Saving your settings…";
-    if (view && view.busyOp === "saveMappings") return "Saving your mapping…";
+    if (view && view.busyOp === "saveSettings") return tr(lang, "ui.rule.savingSettings");
+    if (view && view.busyOp === "saveMappings") return tr(lang, "ui.rule.savingRules");
     var s = status.automation;
     if (s === STATES.STOPPED || s === STATES.ERROR) return "";
-    return "Settings can be changed after you press STOP BOT.";
+    return tr(lang, "ui.set.locked");
   }
 
   // Kenapa Pemetaan tidak bisa disunting. Kembaran settingsHint, dan dengan
@@ -648,18 +680,18 @@
   // juga saat automation BERHENTI dan sebuah penyimpanan sedang jalan, yaitu
   // pernyataan yang SALAH tentang keadaan sistem, di layar yang sedang dipakai
   // orang mencari sesuatu untuk dihentikan.
-  function mappingHint(view) {
-    if (view && view.backendUnreachable) return BACKEND_DOWN;
+  function mappingHint(view, lang) {
+    if (view && view.backendUnreachable) return tr(lang, BACKEND_DOWN_KEY);
     var status = (view && view.status) || null;
     if (!status) return "";
-    if (view && view.busyOp === "saveSettings") return "Saving your settings…";
-    if (view && view.busyOp === "saveMappings") return "Saving your mapping…";
+    if (view && view.busyOp === "saveSettings") return tr(lang, "ui.rule.savingSettings");
+    if (view && view.busyOp === "saveMappings") return tr(lang, "ui.rule.savingRules");
     var s = status.automation;
     if (s === STATES.STOPPED || s === STATES.ERROR) return "";
-    return "Mappings can be changed after you press STOP BOT.";
+    return tr(lang, "ui.rule.locked");
   }
 
-  function settingsView(view) {
+  function settingsView(view, lang) {
     var status = (view && view.status) || null;
     var controls = controlsFor(view);
     return {
@@ -667,7 +699,7 @@
       firstRun: !!(status && status.config && status.config.present === false),
       configured: !!(status && status.config && status.config.present === true),
       editable: controls.editingEnabled,
-      hint: controls.editingEnabled ? "" : settingsHint(view),
+      hint: controls.editingEnabled ? "" : settingsHint(view, lang),
     };
   }
 
@@ -719,23 +751,23 @@
   // Kesiapan yang BELUM DIKETAHUI juga memblokir. "Belum tahu" bukan "aman":
   // satu-satunya cara tombol ini hidup adalah kalau setiap syarat sudah terbukti
   // terpenuhi.
-  function startBlockers(view) {
+  function startBlockers(view, lang) {
     var v = view || {};
     var status = v.status || null;
 
     // Tiga hal ini menutup semuanya, jadi tidak perlu daftar panjang.
-    if (v.backendUnreachable) return [{ key: "backend", message: BACKEND_DOWN }];
-    if (!status) return [{ key: "status", message: "Loading…" }];
-    if (v.busy) return [{ key: "busy", message: "Working…" }];
+    if (v.backendUnreachable) return [{ key: "backend", message: tr(lang, BACKEND_DOWN_KEY) }];
+    if (!status) return [{ key: "status", message: tr(lang, "ui.loading") }];
+    if (v.busy) return [{ key: "busy", message: tr(lang, "ui.working") }];
 
     var out = [];
 
     // --- syarat dasar ---
     if (status.config && status.config.present === false) {
-      out.push({ key: "config", message: "Save your settings first." });
+      out.push({ key: "config", message: tr(lang, "ui.login.hintSaveFirst") });
     }
     if (status.login && status.login.active) {
-      out.push({ key: "login", message: "Finish or cancel the TikTok sign-in first." });
+      out.push({ key: "login", message: tr(lang, "ui.login.finishFirst") });
     }
 
     var s = status.automation;
@@ -745,32 +777,32 @@
       stopped || errored || s === STATES.RUNNING || s === STATES.DEGRADED ||
       s === STATES.STARTING || s === STATES.STOPPING || s === STATES.PREFLIGHT;
 
-    if (!known) out.push({ key: "state", message: "Automation state is unknown." });
-    else if (s === STATES.RUNNING || s === STATES.DEGRADED) out.push({ key: "state", message: "Automation is already running." });
-    else if (s === STATES.STARTING || s === STATES.PREFLIGHT) out.push({ key: "state", message: "Automation is already starting." });
-    else if (s === STATES.STOPPING) out.push({ key: "state", message: "Automation is still stopping." });
+    if (!known) out.push({ key: "state", message: tr(lang, "ui.block.stateUnknown") });
+    else if (s === STATES.RUNNING || s === STATES.DEGRADED) out.push({ key: "state", message: tr(lang, "ui.block.alreadyRunning") });
+    else if (s === STATES.STARTING || s === STATES.PREFLIGHT) out.push({ key: "state", message: tr(lang, "ui.block.alreadyStarting") });
+    else if (s === STATES.STOPPING) out.push({ key: "state", message: tr(lang, "ui.block.stillStopping") });
 
     // --- kesiapan. Kalimatnya dari server kalau ada; "Checking…" berarti BELUM
     //     DIKETAHUI, dan itu tetap memblokir. ---
     var obs = v.obs;
-    if (!obs) out.push({ key: "obs", message: "Checking OBS…" });
-    else if (obs.ok !== true) out.push({ key: "obs", message: messageOf(obs, "OBS is not connected.") });
+    if (!obs) out.push({ key: "obs", message: tr(lang, "ui.block.checkingObs") });
+    else if (obs.ok !== true) out.push({ key: "obs", message: messageOf(lang, obs, "err.obs-unavailable") });
 
     var tk = v.tiktok;
     if (!tk) {
-      out.push({ key: "tiktok", message: "Checking TikTok…" });
+      out.push({ key: "tiktok", message: tr(lang, "ui.block.checkingTiktok") });
     } else if (tk.ok !== true) {
-      out.push({ key: "tiktok", message: messageOf(tk, "TikTok is not ready.") });
+      out.push({ key: "tiktok", message: messageOf(lang, tk, "err.tiktok-not-logged-in") });
     } else {
-      if (tk.identityOk === false) out.push({ key: "identity", message: "The TikTok account on screen is not the one you configured." });
-      if (tk.live !== true) out.push({ key: "live", message: "Your TikTok LIVE is not on air yet." });
-      if (typeof tk.productCount !== "number") out.push({ key: "products", message: "Checking LIVE products…" });
-      else if (tk.productCount < 1) out.push({ key: "products", message: "No LIVE products detected." });
+      if (tk.identityOk === false) out.push({ key: "identity", message: tr(lang, "err.identity-mismatch") });
+      if (tk.live !== true) out.push({ key: "live", message: tr(lang, "err.live-not-active") });
+      if (typeof tk.productCount !== "number") out.push({ key: "products", message: tr(lang, "ui.block.checkingProducts") });
+      else if (tk.productCount < 1) out.push({ key: "products", message: tr(lang, "err.no-live-products") });
     }
 
     var val = v.validation;
-    if (!val) out.push({ key: "mappings", message: "Checking your mappings…" });
-    else if (val.ok !== true) out.push({ key: "mappings", message: messageOf(val, "Some of your scene mappings need fixing.") });
+    if (!val) out.push({ key: "mappings", message: tr(lang, "ui.block.checkingMappings") });
+    else if (val.ok !== true) out.push({ key: "mappings", message: messageOf(lang, val, "err.mapping-validation-failed") });
 
     // --- mode aksi nyata. Verdict dan kalimatnya datang dari SERVER. ---
     //
@@ -784,9 +816,11 @@
     // DIKETAHUI, dan itu tetap memblokir — sama seperti "Checking…" di atas.
     if (status.config && status.config.present === true) {
       var mode = status.mode;
-      if (!mode) out.push({ key: "mode", message: "Checking what the bot is allowed to do…" });
+      if (!mode) out.push({ key: "mode", message: tr(lang, "ui.block.checkingMode") });
       else if (mode.ok !== true) {
-        out.push({ key: "mode", message: mode.userMessage || "Open Settings and choose what the bot will do." });
+        // mode membawa `reason` (controller/automation-mode.js), jadi kamus
+        // yang menjawab; kalimat server hanya jaring kalau kodenya baru.
+        out.push({ key: "mode", message: messageOf(lang, mode, "ui.block.modeOff") });
       }
     }
 
@@ -799,7 +833,7 @@
   // operasi yang sedang berjalan semuanya MEMATIKAN Start. Tombol Start yang
   // hidup saat keadaan tidak jelas adalah tombol yang bisa menyalakan sesuatu di
   // akun sungguhan atas dasar tebakan.
-  function controlsFor(view) {
+  function controlsFor(view, lang) {
     var status = (view && view.status) || null;
     var busy = !!(view && view.busy);
     var reachable = !(view && view.backendUnreachable);
@@ -811,13 +845,13 @@
         editingEnabled: false,
         refreshEnabled: true,
         discoveryAllowed: false,
-        startReason: BACKEND_DOWN,
+        startReason: tr(lang, BACKEND_DOWN_KEY),
       };
     }
     if (!status) {
       return {
         startEnabled: false, stopEnabled: false, editingEnabled: false,
-        refreshEnabled: false, discoveryAllowed: false, startReason: "Loading…",
+        refreshEnabled: false, discoveryAllowed: false, startReason: tr(lang, "ui.loading"),
       };
     }
 
@@ -875,7 +909,7 @@
   // Scene yang sama bisa muncul dua kali (dan itu justru salah satu kesalahan
   // yang dilaporkan), jadi mencocokkan dengan nama akan menaruh pesan di baris
   // yang salah.
-  function mappingIssues(validation, count) {
+  function mappingIssues(validation, count, lang) {
     var rows = validation && Array.isArray(validation.mappings) ? validation.mappings : [];
     var n = typeof count === "number" ? count : rows.length;
     var out = [];
@@ -886,7 +920,7 @@
         continue;
       }
       out.push({
-        message: messageOf(r, "This mapping needs attention."),
+        message: messageOf(lang, r, "ui.row.needsAttention"),
         reason: r.reason || null,
         resolvedTitle: r.resolvedTitle || null,
       });
@@ -971,27 +1005,31 @@
 
   // Kalimat untuk tiap jenis kejadian. Scene disisipkan kalau ada, supaya
   // operator tahu baris itu milik etalase mana.
-  function activityText(e) {
+  function activityText(e, lang) {
     if (!e) return "";
+    // Nama scene dan judul produk adalah milik customer: keduanya masuk sebagai
+    // NILAI ke dalam kalimat, tidak pernah diterjemahkan.
     var scene = e.scene ? String(e.scene) : "";
     switch (e.type) {
-      case "PLAY": return scene ? "Playing " + scene : "Scene started";
-      case "PLAYBACK_END": return scene ? "Finished " + scene : "Scene finished";
-      case "AUTOPIN_SUCCESS": return e.product ? "Product pinned — " + e.product : "Product pinned";
-      case "AUTOPIN_FAILED": return messageOf(e, "Product was not pinned.");
-      case "AUTOCOMMENT_SUCCESS": return "Reply posted in your LIVE chat";
-      case "AUTOCOMMENT_FAILED": return messageOf(e, "Reply was not posted in your LIVE chat.");
-      case "TIKTOK_CONNECTED": return "Connected to TikTok LIVE";
-      case "TIKTOK_RECONNECTED": return "Reconnected to TikTok LIVE";
-      case "TIKTOK_DISCONNECTED": return "Disconnected from TikTok LIVE";
-      case "BOT_CRASHED": return "The bot stopped unexpectedly";
-      case "SERVICE_CRASHED": return "Auto pin stopped unexpectedly";
-      case "LOGIN_WAITING": return "Waiting for TikTok login";
-      case "LOGIN_OK": return "Signed in to TikTok";
+      case "PLAY": return scene ? tr(lang, "ui.act.play", { scene: scene }) : tr(lang, "ui.act.playPlain");
+      case "PLAYBACK_END": return scene ? tr(lang, "ui.act.playbackEnd", { scene: scene }) : tr(lang, "ui.act.endPlain");
+      case "AUTOPIN_SUCCESS": return e.product ? tr(lang, "ui.act.pinnedNamed", { product: e.product }) : tr(lang, "ui.act.pinned");
+      case "AUTOPIN_FAILED": return messageOf(lang, e, "ui.act.pinFailed");
+      case "AUTOCOMMENT_SUCCESS": return tr(lang, "ui.act.replied");
+      case "AUTOCOMMENT_FAILED": return messageOf(lang, e, "ui.act.replyFailed");
+      case "TIKTOK_CONNECTED": return tr(lang, "ui.act.connected");
+      case "TIKTOK_RECONNECTED": return tr(lang, "ui.act.reconnected");
+      case "TIKTOK_DISCONNECTED": return tr(lang, "ui.act.disconnected");
+      case "BOT_CRASHED": return tr(lang, "ui.act.botCrashed");
+      case "SERVICE_CRASHED": return tr(lang, "ui.act.pinCrashed");
+      case "LOGIN_WAITING": return tr(lang, "ui.act.loginWaiting");
+      case "LOGIN_OK": return tr(lang, "ui.act.loginOk");
       // Nama state internal (PREFLIGHT, DEGRADED, STOPPING) tidak pernah tampil:
       // dipakai fungsi yang SUDAH menerjemahkannya untuk pil status, supaya
       // halaman ini tidak punya dua kosakata untuk satu hal yang sama.
-      case "STATE": return e.to ? "Status: " + automationLabel({ automation: e.to }) : "Status changed";
+      case "STATE": return e.to
+        ? tr(lang, "ui.act.status", { state: automationLabel({ automation: e.to }, lang) })
+        : tr(lang, "ui.act.statusChanged");
       default: return e.message ? String(e.message) : String(e.type || "");
     }
   }
@@ -1006,9 +1044,12 @@
 
   // HH:MM waktu lokal. Tanggal tidak ditampilkan: feed ini untuk sesi yang sedang
   // berjalan, dan tanggal hanya menambah bising.
-  function activityTime(iso) {
+  function activityTime(iso, lang) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
+    // Jam mengikuti kebiasaan bahasanya lewat Intl, bukan dirakit tangan.
+    var viaIntl = I18N.clockTime(lang, d);
+    if (viaIntl) return viaIntl.slice(0, 5);
     var hh = String(d.getHours()).padStart(2, "0");
     var mm = String(d.getMinutes()).padStart(2, "0");
     return hh + ":" + mm;
@@ -1020,14 +1061,14 @@
   // riwayatnya sendiri tanpa batas. Halaman ini bisa terbuka berjam-jam selama
   // LIVE, dan daftar DOM yang tumbuh terus adalah kebocoran memori yang sama
   // bentuknya dengan yang sudah diperbaiki di sisi backend.
-  function activityItems(events, limit) {
+  function activityItems(events, limit, lang) {
     var max = typeof limit === "number" && limit > 0 ? limit : MAX_ACTIVITY_ITEMS;
     var list = Array.isArray(events) ? events.slice() : [];
     // Server mengirim yang tertua lebih dulu; yang paling baru yang paling
     // berguna, jadi urutannya dibalik untuk tampilan.
     list.reverse();
     return list.slice(0, max).map(function (e) {
-      return { id: e.id, time: activityTime(e.time), text: activityText(e), tone: activityTone(e) };
+      return { id: e.id, time: activityTime(e.time, lang), text: activityText(e, lang), tone: activityTone(e) };
     });
   }
 
@@ -1058,16 +1099,10 @@
   // Label dibaca sebagai PERTANYAAN, nilainya sebagai JAWABAN. Karena itu
   // "No other bot running" diubah menjadi "Other bots running": label yang sudah
   // memuat jawabannya sendiri membuat barisnya berbunyi dua kali.
-  var CHECK_LABELS = {
-    config: "Settings",
-    processes: "Other bots running",
-    ports: "Ports this app needs",
-    obs: "OBS",
-    scenes: "OBS scenes",
-    profile: "Browser profile",
-    tiktok: "TikTok LIVE",
-    mappings: "Mappings",
-  };
+  // Urutan check, dan HANYA urutannya. Kalimatnya ada di kamus dengan kunci
+  // "ui.check.<nama>" dan "ui.check.<nama>.pass" - berkas ini tidak lagi
+  // memiliki satu pun kata yang dibaca customer.
+  var CHECK_NAMES = ["config", "processes", "ports", "obs", "scenes", "profile", "tiktok", "mappings"];
 
   // Kata LULUS per check.
   //
@@ -1081,49 +1116,43 @@
   // Hanya TAMPILAN: failedPreflight() menyaring pada r.tone, tidak pernah pada
   // r.value, jadi tidak ada satu pun keputusan lulus/gagal yang bergantung pada
   // kata-kata di bawah ini.
-  var CHECK_PASS = {
-    config: "Saved",
-    processes: "None",
-    ports: "Available",
-    obs: "Connected",
-    scenes: "Found",
-    profile: "Available",
-    tiktok: "On air",
-    mappings: "OK",
-  };
+  function checkLabel(name, lang) { return tr(lang, "ui.check." + name); }
+  function checkPass(name, lang) { return tr(lang, "ui.check." + name + ".pass"); }
 
-  function preflightRows(result) {
+  function preflightRows(result, lang) {
     if (!result || !result.checks) return [];
     var out = [];
-    for (var name in CHECK_LABELS) {
-      if (!Object.prototype.hasOwnProperty.call(CHECK_LABELS, name)) continue;
+    for (var i = 0; i < CHECK_NAMES.length; i += 1) {
+      var name = CHECK_NAMES[i];
       var c = result.checks[name];
       if (!c) continue;
       if (c.ok === true) {
-        // "Not needed", bukan "Skipped": yang kedua dibaca sebagai "dilewati
-        // karena gagal", padahal artinya check ini tidak berlaku di sini.
+        // "Tidak perlu", bukan "Dilewati": yang kedua dibaca sebagai "gagal
+        // sehingga dilompati", padahal artinya check ini tidak berlaku di sini.
         out.push({
-          label: CHECK_LABELS[name],
-          value: c.skipped ? "Not needed" : CHECK_PASS[name] || "OK",
+          label: checkLabel(name, lang),
+          value: c.skipped ? tr(lang, "ui.check.skipped") : checkPass(name, lang),
           tone: c.skipped ? TONE.NEUTRAL : TONE.READY,
         });
       } else {
-        out.push({ label: CHECK_LABELS[name], value: messageOf(c, "Not ready"), tone: TONE.ATTENTION });
+        out.push({ label: checkLabel(name, lang), value: messageOf(lang, c, "ui.check.notReady"), tone: TONE.ATTENTION });
       }
     }
     return out;
   }
 
   // Check yang gagal saja, untuk ditampilkan saat Start ditolak.
-  function failedPreflight(result) {
-    return preflightRows(result).filter(function (r) { return r.tone === TONE.ATTENTION; });
+  function failedPreflight(result, lang) {
+    return preflightRows(result, lang).filter(function (r) { return r.tone === TONE.ATTENTION; });
   }
 
   return {
     STATES: STATES,
     TONE: TONE,
     MAX_ACTIVITY_ITEMS: MAX_ACTIVITY_ITEMS,
-    CHECK_LABELS: CHECK_LABELS,
+    CHECK_NAMES: CHECK_NAMES,
+    checkLabel: checkLabel,
+    checkPass: checkPass,
     paxNumber: paxNumber,
     suggestForScene: suggestForScene,
     applySuggestion: applySuggestion,
@@ -1135,7 +1164,6 @@
     readinessRows: readinessRows,
     readinessHint: readinessHint,
     mappingHint: mappingHint,
-    CHECK_PASS: CHECK_PASS,
     automationLabel: automationLabel,
     automationTone: automationTone,
     controlsFor: controlsFor,

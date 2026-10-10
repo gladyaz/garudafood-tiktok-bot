@@ -5,6 +5,11 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+// Kalimat customer tidak lagi diassert sebagai prosa: ia dibandingkan dengan
+// KAMUS. Mengubah kata-kata tidak memerahkan tes; salah kabel tetap merah.
+const I18N = require("../controller/public/i18n.js");
+const T = (key, vars) => I18N.t("id", key, vars);
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -255,7 +260,7 @@ test("DoD: login palsu -> check -> mapping -> START -> RUNNING -> STOP", async (
     st = (await get(base, "/api/status")).body;
     const lv = U.loginView({ status: st });
     assert.equal(lv.state, "connected");
-    assert.equal(lv.label, "Signed in as toko uji");
+    assert.equal(lv.label, T("ui.login.signedIn", { name: "toko uji" }));
 
     // 4. START
     const pre = await post(base, "/api/preflight");
@@ -362,33 +367,33 @@ test("loginView: tombol yang benar di tiap keadaan", () => {
 
   const waiting = U.loginView({ status: { automation: "STOPPED", login: { active: true } } });
   assert.deepEqual([waiting.canLogin, waiting.canCheck, waiting.canCancel], [false, true, true]);
-  assert.match(waiting.hint, /Sign in to TikTok there/);
+  assert.equal(waiting.hint, T("ui.login.hintWaiting"));
 
   const running = U.loginView({ status: { automation: "RUNNING" } });
   assert.equal(running.canLogin, false, "tidak bisa login saat berjalan");
-  assert.equal(running.hint, "Press STOP BOT first, then sign in.");
+  assert.equal(running.hint, T("ui.login.hintStopFirst"));
 });
 
 test("loginView memakai identitas yang TERBUKTI, bukan yang ditulis di config", () => {
   // Nilai di config hanya harapan; yang ditampilkan harus yang benar-benar dibaca
   // dari halaman.
   const fromLogin = U.loginView({ status: { automation: "STOPPED", login: { active: false, identity: "terbukti" } } });
-  assert.equal(fromLogin.label, "Signed in as terbukti");
+  assert.equal(fromLogin.label, T("ui.login.signedIn", { name: "terbukti" }));
 
   const fromDiscovery = U.loginView({
     status: { automation: "STOPPED" },
     tiktok: { ok: true, identity: "dari-discovery" },
   });
-  assert.equal(fromDiscovery.label, "Signed in as dari-discovery");
+  assert.equal(fromDiscovery.label, T("ui.login.signedIn", { name: "dari-discovery" }));
 });
 
 test("readiness memuat baris TikTok sign-in", () => {
   const rows = U.readinessRows({
     status: { automation: "STOPPED", login: { active: true } },
   });
-  const row = rows.find((r) => r.label === "TikTok sign-in");
+  const row = rows.find((r) => r.label === T("ui.row.signin"));
   assert.ok(row, "baris TikTok sign-in harus ada");
-  assert.equal(row.value, "Waiting for login…");
+  assert.equal(row.value, T("ui.login.waiting"));
 });
 
 test("activity menerjemahkan kejadian login", () => {
@@ -397,6 +402,6 @@ test("activity menerjemahkan kejadian login", () => {
     { id: 2, time: "2026-10-08T10:01:00.000Z", type: "LOGIN_OK" },
   ]);
   const texts = items.map((i) => i.text);
-  assert.ok(texts.includes("Waiting for TikTok login"));
-  assert.ok(texts.includes("Signed in to TikTok"));
+  assert.ok(texts.includes(T("ui.act.loginWaiting")));
+  assert.ok(texts.includes(T("ui.act.loginOk")));
 });

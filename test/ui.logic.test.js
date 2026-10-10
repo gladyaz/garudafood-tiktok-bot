@@ -17,6 +17,11 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
+// Kalimat customer tidak lagi diassert sebagai prosa: ia dibandingkan dengan
+// KAMUS. Mengubah kata-kata tidak memerahkan tes; salah kabel tetap merah.
+const I18N = require("../controller/public/i18n.js");
+const T = (key, vars) => I18N.t("id", key, vars);
+
 const U = require("../controller/public/ui-logic.js");
 
 // --- saran PAX ---------------------------------------------------------------
@@ -120,7 +125,7 @@ test("baris kedua memuat harga dan stok", () => {
 });
 
 test("produk tanpa kontrol pin dikatakan apa adanya", () => {
-  assert.equal(U.productSubLabel(PRODUCTS[2]), "Pin control unavailable");
+  assert.equal(U.productSubLabel(PRODUCTS[2]), T("ui.rule.f.pinUnavailable"));
 });
 
 test("dropdown produk memakai JUDUL sebagai nilai, bukan nomor", () => {
@@ -190,11 +195,11 @@ test("pesan produk hilang datang dari VALIDASI SERVER, bukan dari UI", () => {
   const issues = U.mappingIssues(
     {
       ok: false,
-      mappings: [{ ok: false, reason: "product-not-found", userMessage: "The mapped product was not found in the LIVE product list." }],
+      mappings: [{ ok: false, reason: "product-not-found", userMessage: T("err.product-not-found") }],
     },
     1
   );
-  assert.equal(issues[0].message, "The mapped product was not found in the LIVE product list.");
+  assert.equal(issues[0].message, T("err.product-not-found"));
 });
 
 test("nilai kosong tidak pernah butuh opsi tambahan", () => {
@@ -252,7 +257,7 @@ test("RUNNING: Start mati, Stop hidup, penyuntingan MATI", () => {
   assert.equal(c.stopEnabled, true);
   assert.equal(c.editingEnabled, false);
   assert.equal(c.discoveryAllowed, false);
-  assert.equal(c.startReason, "Automation is already running.");
+  assert.equal(c.startReason, T("ui.block.alreadyRunning"));
 });
 
 test("DEGRADED: masih bisa dihentikan, tidak bisa disunting", () => {
@@ -281,7 +286,7 @@ test("ERROR: boleh mencoba lagi dan boleh membereskan", () => {
 test("FAIL-CLOSED: state yang tidak dikenal mematikan Start", () => {
   const c = U.controlsFor({ status: { automation: "SESUATU_YANG_BARU" } });
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Automation state is unknown.");
+  assert.equal(c.startReason, T("ui.block.stateUnknown"));
 });
 
 test("FAIL-CLOSED: backend tidak terjangkau mematikan Start DAN Stop", () => {
@@ -291,7 +296,7 @@ test("FAIL-CLOSED: backend tidak terjangkau mematikan Start DAN Stop", () => {
   assert.equal(c.editingEnabled, false);
   // Refresh tetap hidup: itu satu-satunya cara operator mencoba menyambung lagi.
   assert.equal(c.refreshEnabled, true);
-  assert.equal(c.startReason, "AI LIVE HOST is not responding. Close the app and open it again.");
+  assert.equal(c.startReason, T("ui.banner.offline"));
 });
 
 test("FAIL-CLOSED: status belum dimuat mematikan Start", () => {
@@ -308,7 +313,7 @@ test("busy mematikan AKSI: double-click tidak bisa jadi dua operasi", () => {
   assert.equal(c.startEnabled, false);
   assert.equal(c.stopEnabled, false);
   assert.equal(c.refreshEnabled, false);
-  assert.equal(c.startReason, "Working…");
+  assert.equal(c.startReason, T("ui.working"));
 });
 
 test("REGRESI: pekerjaan latar TIDAK mengunci penyuntingan", () => {
@@ -348,20 +353,20 @@ test("hint TIDAK menyuruh menghentikan automation yang SUDAH berhenti", () => {
   const stoppedSaving = { busy: true, busyOp: "saveSettings", status: { automation: S.STOPPED, config: { present: true } } };
   const sv = U.settingsView(stoppedSaving);
   assert.equal(sv.editable, false);
-  assert.equal(sv.hint, "Saving your settings…");
+  assert.equal(sv.hint, T("ui.rule.savingSettings"));
 
   // Dan penyimpanan MAPPING tidak mengaku sebagai penyimpanan Settings.
   const savingMappings = U.settingsView({
     busy: true, busyOp: "saveMappings",
     status: { automation: S.STOPPED, config: { present: true } },
   });
-  assert.equal(savingMappings.hint, "Saving your mapping…");
+  assert.equal(savingMappings.hint, T("ui.rule.savingRules"));
   assert.ok(!/while the automation is stopped/.test(sv.hint), sv.hint);
 
   // Dan saat memang berjalan, kalimat itu BENAR.
   const running = U.settingsView({ status: { automation: S.RUNNING, config: { present: true } } });
   assert.equal(running.editable, false);
-  assert.equal(running.hint, "Settings can be changed after you press STOP BOT.");
+  assert.equal(running.hint, T("ui.set.locked"));
 
   // Stopped dan tidak ada yang menulis config: tidak ada hint sama sekali.
   const free = U.settingsView({ status: { automation: S.STOPPED, config: { present: true } } });
@@ -379,25 +384,25 @@ test("baris kesiapan: semuanya hijau", () => {
     status: { automation: S.STOPPED },
   });
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
-  assert.equal(byLabel.OBS.value, "Connected");
-  // Identitas tidak diulang di baris ini; baris "TikTok sign-in" yang menyebutkannya.
-  assert.equal(byLabel.TikTok.value, "Connected");
-  assert.equal(byLabel["TikTok sign-in"].value, "Signed in as toko uji");
-  assert.equal(byLabel.LIVE.value, "On air");
-  assert.equal(byLabel.Products.value, "20 available in your LIVE");
-  assert.equal(byLabel.Mappings.value, "2 mappings OK");
-  assert.equal(byLabel.Automation.value, "Stopped");
+  assert.equal(byLabel.OBS.value, T("ui.row.connected"));
+  // Identitas tidak diulang di baris ini; baris T("ui.row.signin") yang menyebutkannya.
+  assert.equal(byLabel.TikTok.value, T("ui.row.connected"));
+  assert.equal(byLabel[T("ui.row.signin")].value, T("ui.login.signedIn", { name: "toko uji" }));
+  assert.equal(byLabel[T("ui.row.live")].value, T("ui.row.onair"));
+  assert.equal(byLabel[T("ui.row.products")].value, T("ui.row.productsAvailable", { n: 20 }));
+  assert.equal(byLabel[T("ui.row.mappings")].value, T("ui.row.mappingsOk", { n: 2 }));
+  assert.equal(byLabel[T("ui.row.automation")].value, T("ui.state.stopped"));
 });
 
 test("baris kesiapan memakai KALIMAT DARI SERVER, bukan kode mesin", () => {
   const rows = U.readinessRows({
-    obs: { ok: false, error: { code: "obs-unavailable", userMessage: "OBS is not connected." } },
-    tiktok: { ok: false, error: { code: "no-live-products", userMessage: "No LIVE products detected." } },
+    obs: { ok: false, error: { code: "obs-unavailable", userMessage: T("err.obs-unavailable") } },
+    tiktok: { ok: false, error: { code: "no-live-products", userMessage: T("err.no-live-products") } },
     status: { automation: S.STOPPED },
   });
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
-  assert.equal(byLabel.OBS.value, "OBS is not connected.");
-  assert.equal(byLabel.TikTok.value, "No LIVE products detected.");
+  assert.equal(byLabel.OBS.value, T("err.obs-unavailable"));
+  assert.equal(byLabel.TikTok.value, T("err.no-live-products"));
   // Dan tidak satu pun kode mesin ikut tampil.
   const raw = JSON.stringify(rows);
   assert.ok(!raw.includes("obs-unavailable"));
@@ -407,21 +412,21 @@ test("baris kesiapan memakai KALIMAT DARI SERVER, bukan kode mesin", () => {
 test("baris yang BELUM diketahui berkata Checking, bukan berpura-pura hijau", () => {
   const rows = U.readinessRows({ status: null });
   for (const r of rows.slice(0, 5)) {
-    assert.equal(r.value, "Checking…", r.label);
+    assert.equal(r.value, T("ui.state.checking"), r.label);
     assert.equal(r.tone, U.TONE.NEUTRAL);
   }
 });
 
 test("LIVE belum on air ditandai perlu perhatian, bukan error", () => {
   const rows = U.readinessRows({ tiktok: { ok: true, live: false, productCount: 5 }, status: { automation: S.STOPPED } });
-  const live = rows.find((r) => r.label === "LIVE");
-  assert.equal(live.value, "Not on air");
+  const live = rows.find((r) => r.label === T("ui.row.live"));
+  assert.equal(live.value, T("ui.row.notOnair"));
   assert.equal(live.tone, U.TONE.ATTENTION);
 });
 
 test("nol produk ditandai perlu perhatian", () => {
   const rows = U.readinessRows({ tiktok: { ok: true, live: true, productCount: 0 }, status: { automation: S.STOPPED } });
-  assert.equal(rows.find((r) => r.label === "Products").value, "None available");
+  assert.equal(rows.find((r) => r.label === T("ui.row.products")).value, T("ui.row.productsNone"));
 });
 
 test("pemetaan bermasalah menyebut BERAPA baris, bukan satu pesan umum", () => {
@@ -429,17 +434,17 @@ test("pemetaan bermasalah menyebut BERAPA baris, bukan satu pesan umum", () => {
     validation: { ok: false, mappings: [{ ok: true }, { ok: false }, { ok: false }] },
     status: { automation: S.STOPPED },
   });
-  assert.equal(rows.find((r) => r.label === "Mappings").value, "2 mappings need attention");
+  assert.equal(rows.find((r) => r.label === T("ui.row.mappings")).value, T("ui.row.mappingsBad", { n: 2 }));
 });
 
 test("state automation diterjemahkan ke kalimat biasa", () => {
   const expected = {
-    STOPPED: "Stopped",
-    PREFLIGHT: "Running pre-start checks…",
-    STARTING: "Starting…",
-    RUNNING: "Running",
-    DEGRADED: "Running with problems",
-    STOPPING: "Stopping…",
+    STOPPED: T("ui.state.stopped"),
+    PREFLIGHT: T("ui.state.preflight"),
+    STARTING: T("ui.state.starting"),
+    RUNNING: T("ui.state.running"),
+    DEGRADED: T("ui.state.degraded"),
+    STOPPING: T("ui.state.stopping"),
   };
   for (const [st, label] of Object.entries(expected)) {
     assert.equal(U.automationLabel({ automation: st }), label);
@@ -448,10 +453,10 @@ test("state automation diterjemahkan ke kalimat biasa", () => {
 
 test("ERROR memakai kalimat dari lastError kalau ada", () => {
   assert.equal(
-    U.automationLabel({ automation: S.ERROR, lastError: { code: "bot-did-not-die", userMessage: "The bot could not be stopped." } }),
-    "The bot could not be stopped."
+    U.automationLabel({ automation: S.ERROR, lastError: { code: "bot-did-not-die", userMessage: T("err.bot-did-not-die") } }),
+    T("err.bot-did-not-die")
   );
-  assert.equal(U.automationLabel({ automation: S.ERROR }), "Error");
+  assert.equal(U.automationLabel({ automation: S.ERROR }), T("ui.state.error"));
 });
 
 // --- pemetaan <-> formulir ---------------------------------------------------
@@ -563,15 +568,15 @@ test("kesalahan dicocokkan ke baris lewat INDEKS, bukan nama scene", () => {
 
 test("kesalahan memakai kalimat dari server", () => {
   const issues = U.mappingIssues(
-    { ok: false, mappings: [{ ok: false, reason: "product-not-found", userMessage: "The mapped product was not found in the LIVE product list." }] },
+    { ok: false, mappings: [{ ok: false, reason: "product-not-found", userMessage: T("err.product-not-found") }] },
     1
   );
-  assert.equal(issues[0].message, "The mapped product was not found in the LIVE product list.");
+  assert.equal(issues[0].message, T("err.product-not-found"));
 });
 
 test("tanpa kalimat dari server, ada kalimat cadangan yang tetap bukan kode mesin", () => {
   const issues = U.mappingIssues({ ok: false, mappings: [{ ok: false, reason: "sesuatu-yang-baru" }] }, 1);
-  assert.equal(issues[0].message, "This mapping needs attention.");
+  assert.equal(issues[0].message, T("ui.row.needsAttention"));
   assert.ok(!issues[0].message.includes("sesuatu-yang-baru"));
 });
 
@@ -592,7 +597,7 @@ test("judul yang BENAR-BENAR terpilih dilaporkan per baris", () => {
 // --- activity ---------------------------------------------------------------
 
 const EVENTS = [
-  { id: 1, time: "2026-10-07T09:20:00.000Z", type: "PLAY", scene: "PAX-2", message: "Scene started" },
+  { id: 1, time: "2026-10-07T09:20:00.000Z", type: "PLAY", scene: "PAX-2", message: T("ui.act.playPlain") },
   { id: 2, time: "2026-10-07T09:20:01.000Z", type: "AUTOPIN_SUCCESS", scene: "PAX-2", product: "Gery Potato" },
   { id: 3, time: "2026-10-07T09:20:02.000Z", type: "AUTOCOMMENT_SUCCESS", scene: "PAX-2" },
   { id: 4, time: "2026-10-07T09:20:40.000Z", type: "PLAYBACK_END", scene: "PAX-2", reason: "media-ended" },
@@ -601,10 +606,10 @@ const EVENTS = [
 test("activity: kalimat untuk tiap jenis kejadian", () => {
   const items = U.activityItems(EVENTS);
   const texts = items.map((i) => i.text);
-  assert.ok(texts.includes("Playing PAX-2"));
-  assert.ok(texts.includes("Product pinned — Gery Potato"));
-  assert.ok(texts.includes("Reply posted in your LIVE chat"));
-  assert.ok(texts.includes("Finished PAX-2"));
+  assert.ok(texts.includes(T("ui.act.play", { scene: "PAX-2" })));
+  assert.ok(texts.includes(T("ui.act.pinnedNamed", { product: "Gery Potato" })));
+  assert.ok(texts.includes(T("ui.act.replied")));
+  assert.ok(texts.includes(T("ui.act.playbackEnd", { scene: "PAX-2" })));
 });
 
 test("activity: yang TERBARU di atas", () => {
@@ -621,23 +626,23 @@ test("activity: kegagalan memakai kalimat dari server, bukan kode mesin", () => 
       type: "AUTOPIN_FAILED",
       scene: "PAX-1",
       reason: "budget-exhausted-before-click",
-      userMessage: "TikTok responded too slowly. The product was not changed.",
+      userMessage: T("err.budget-exhausted-before-click"),
     },
   ]);
-  assert.equal(items[0].text, "TikTok responded too slowly. The product was not changed.");
+  assert.equal(items[0].text, T("err.budget-exhausted-before-click"));
   assert.ok(!items[0].text.includes("budget-exhausted"));
   assert.equal(items[0].tone, U.TONE.ATTENTION);
 });
 
 test("activity: crash ditandai error", () => {
   const items = U.activityItems([{ id: 1, time: "2026-10-07T09:20:00.000Z", type: "BOT_CRASHED" }]);
-  assert.equal(items[0].text, "The bot stopped unexpectedly");
+  assert.equal(items[0].text, T("ui.act.botCrashed"));
   assert.equal(items[0].tone, U.TONE.ERROR);
 });
 
 test("activity: waktu ditampilkan HH:MM", () => {
   const t = U.activityTime("2026-10-07T09:20:00.000Z");
-  assert.match(t, /^\d{2}:\d{2}$/);
+  assert.match(t, /^\d{2}[:.]\d{2}$/);
   assert.equal(U.activityTime("bukan tanggal"), "");
 });
 
@@ -689,7 +694,7 @@ test("baris preflight memakai label ramah, bukan nama check internal", () => {
       config: { ok: true },
       processes: { ok: true },
       ports: { ok: true },
-      obs: { ok: false, reason: "obs-unavailable", userMessage: "OBS is not connected." },
+      obs: { ok: false, reason: "obs-unavailable", userMessage: T("err.obs-unavailable") },
       scenes: { ok: false, reason: "skipped-obs-unavailable", skipped: true, userMessage: "Something went wrong. Check the logs for details." },
       profile: { ok: true },
       tiktok: { ok: true, skipped: true },
@@ -697,9 +702,9 @@ test("baris preflight memakai label ramah, bukan nama check internal", () => {
     },
   });
   const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
-  assert.equal(byLabel.OBS.value, "OBS is not connected.");
-  assert.equal(byLabel.Settings.value, "Saved");
-  assert.equal(byLabel["TikTok LIVE"].value, "Not needed");
+  assert.equal(byLabel.OBS.value, T("err.obs-unavailable"));
+  assert.equal(byLabel[T("ui.check.config")].value, T("ui.check.config.pass"));
+  assert.equal(byLabel[T("ui.check.tiktok")].value, T("ui.check.skipped"));
   // Nama internal tidak muncul.
   const raw = JSON.stringify(rows);
   assert.ok(!raw.includes("obs-unavailable"));
@@ -709,11 +714,11 @@ test("baris preflight memakai label ramah, bukan nama check internal", () => {
 test("hanya check yang GAGAL yang dikumpulkan untuk ditampilkan saat Start ditolak", () => {
   const result = {
     ok: false,
-    checks: { config: { ok: true }, obs: { ok: false, userMessage: "OBS is not connected." }, mappings: { ok: false, userMessage: "Some of your scene mappings need fixing." } },
+    checks: { config: { ok: true }, obs: { ok: false, userMessage: T("err.obs-unavailable") }, mappings: { ok: false, userMessage: T("err.mapping-validation-failed") } },
   };
   const failed = U.failedPreflight(result);
   assert.equal(failed.length, 2);
-  assert.deepEqual(failed.map((f) => f.label).sort(), ["Mappings", "OBS"]);
+  assert.deepEqual(failed.map((f) => f.label).sort(), [T("ui.check.mappings"), T("ui.check.obs")].sort());
 });
 
 test("preflight tanpa hasil tidak menghasilkan baris", () => {
@@ -741,14 +746,42 @@ test("tidak ada fungsi di ui-logic yang pernah menampilkan kode mesin", () => {
   }
 });
 
-test("ui-logic TIDAK punya katalog kode -> kalimat sendiri", () => {
-  // Kalau suatu saat ada yang menyalin katalog controller/errors.js ke frontend,
-  // tes ini merah. Alasannya ada di P2: salinan normalizeTitleKey menyimpang dari
-  // aslinya dan membuat Controller mengatakan hal yang tidak benar.
+test("ui-logic TIDAK memuat satu pun kalimat customer", () => {
+  // Invarian ini BERUBAH dengan sengaja saat i18n masuk.
+  //
+  // Dulu: ui-logic tidak boleh menyebut kode server sama sekali, supaya tidak
+  // ada salinan katalog di frontend yang bisa menyimpang.
+  // Sekarang: katalognya memang ada di frontend - di i18n.js, karena server
+  // hanya punya satu bahasa. Yang menjaga agar ia tidak menyimpang bukan lagi
+  // "jangan sebut kodenya", melainkan tes kontrak di ui.i18n.test.js yang
+  // merah kalau daftar kodenya berbeda dari controller/errors.js.
+  //
+  // Yang dijaga DI SINI sekarang: ui-logic tidak boleh punya KALIMAT. Ia boleh
+  // menyebut kunci; ia tidak boleh menuliskan kata yang dibaca customer.
   const src = require("node:fs").readFileSync(require.resolve("../controller/public/ui-logic.js"), "utf8");
-  for (const code of ["obs-unavailable", "budget-exhausted", "product-not-found", "tiktok-not-logged-in", "ambiguous-product"]) {
-    assert.ok(!src.includes(code), "ui-logic.js tidak boleh menyebut kode " + code);
+  const NL = String.fromCharCode(10);
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split(NL)
+    .filter((l) => !/^\s*\/\//.test(l))
+    .join(NL);
+
+  const sentences = [];
+  for (const m of code.matchAll(/"((?:[^"\\\n]|\\.){6,})"/g)) {
+    const v = m[1];
+    if (/^(ui|err|field|path)\./.test(v)) continue;      // kunci kamus: boleh
+    if (/^(spill etalase |Etalase )/.test(v)) continue;   // konten customer: boleh
+    if (/ sudah aku pin ya kak$/.test(v)) continue;        // konten customer: boleh
+    // Pemindai kutip sederhana bisa memasangkan kutip PENUTUP satu string
+    // dengan kutip PEMBUKA string berikutnya, sehingga potongan KODE di
+    // antaranya terbaca sebagai kalimat. Kalimat produk tidak memuat kurung
+    // atau panah fungsi; potongan kode hampir selalu memuatnya.
+    if (/[(){}]|=>|return /.test(v)) continue;
+    if (v === "use strict") continue;                     // direktif, bukan kalimat
+    if (!/[a-z] [a-z]/.test(v)) continue;                 // bukan kalimat
+    sentences.push(v);
   }
+  assert.deepEqual(sentences, [], "kalimat ini harus pindah ke i18n.js");
 });
 
 test("modul bisa dimuat sebagai skrip browser maupun modul Node", () => {
@@ -775,7 +808,7 @@ test("config belum pernah disimpan: START BOT MATI", () => {
   // preflight-lah yang nanti dibutuhkan saat kegagalannya benar-benar penting.
   const c = U.controlsFor(readyView({ status: { automation: "STOPPED", config: { present: false }, login: { active: false } } }));
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Save your settings first.");
+  assert.equal(c.startReason, T("ui.login.hintSaveFirst"));
   // Tapi penyuntingan tetap hidup: justru itu yang harus dilakukan customer.
   assert.equal(c.editingEnabled, true);
 });
@@ -792,7 +825,12 @@ test("FAIL-CLOSED: kesiapan yang BELUM DIKETAHUI mematikan Start", () => {
     delete view[missing];
     const c = U.controlsFor(view);
     assert.equal(c.startEnabled, false, "tanpa " + missing + " harus mati");
-    assert.match(c.startReason, /Checking/, missing + ": " + c.startReason);
+    const CHECKING = [
+      T("ui.block.checkingObs"), T("ui.block.checkingTiktok"),
+      T("ui.block.checkingProducts"), T("ui.block.checkingMappings"),
+      T("ui.block.checkingMode"), T("ui.loading"),
+    ];
+    assert.ok(CHECKING.includes(c.startReason), missing + ": " + c.startReason);
   }
 });
 
@@ -819,13 +857,13 @@ test("REGRESI screenshot: OBS+TikTok tersambung, tapi LIVE off + 0 produk + 0 ma
     },
     obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1", "PAX-2"] },
     tiktok: { ok: true, identity: "agen_mulia_abadi", identityOk: true, live: false, productCount: 0 },
-    validation: { ok: false, reason: "no-mappings", mappings: [], userMessage: "No scene has a product mapped to it yet." },
+    validation: { ok: false, reason: "no-mappings", mappings: [], userMessage: T("err.no-mappings") },
   };
 
   const c = U.controlsFor(view);
   assert.equal(c.startEnabled, false, "START BOT HARUS mati");
   // Dan alasannya yang paling bisa ditindaklanjuti lebih dulu.
-  assert.equal(c.startReason, "Your TikTok LIVE is not on air yet.");
+  assert.equal(c.startReason, T("err.live-not-active"));
 
   // Ketiga penghalangnya disebut, bukan hanya satu.
   const keys = U.startBlockers(view).map((b) => b.key);
@@ -837,13 +875,13 @@ test("REGRESI screenshot: OBS+TikTok tersambung, tapi LIVE off + 0 produk + 0 ma
 
 test("REGRESI: masing-masing syarat kesiapan sendirian sudah cukup mematikan Start", () => {
   const cases = [
-    ["obs mati", { obs: { ok: false, error: { userMessage: "OBS is not connected." } } }, "obs"],
-    ["tiktok gagal", { tiktok: { ok: false, error: { userMessage: "You are not signed in to TikTok. Sign in once, then try again." } } }, "tiktok"],
+    ["obs mati", { obs: { ok: false, error: { userMessage: T("err.obs-unavailable") } } }, "obs"],
+    ["tiktok gagal", { tiktok: { ok: false, error: { userMessage: T("err.tiktok-not-logged-in") } } }, "tiktok"],
     ["akun salah", { tiktok: { ok: true, identityOk: false, live: true, productCount: 5 } }, "identity"],
     ["LIVE off", { tiktok: { ok: true, identityOk: true, live: false, productCount: 5 } }, "live"],
     ["nol produk", { tiktok: { ok: true, identityOk: true, live: true, productCount: 0 } }, "products"],
     ["jumlah produk tak diketahui", { tiktok: { ok: true, identityOk: true, live: true } }, "products"],
-    ["mapping bermasalah", { validation: { ok: false, userMessage: "Some of your scene mappings need fixing." } }, "mappings"],
+    ["mapping bermasalah", { validation: { ok: false, userMessage: T("err.mapping-validation-failed") } }, "mappings"],
   ];
   for (const [label, over, expectedKey] of cases) {
     const view = readyView(over);
@@ -862,22 +900,22 @@ test("REGRESI: kesiapan lengkap TAPI login aktif => Start tetap mati", () => {
   });
   const c = U.controlsFor(view);
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Finish or cancel the TikTok sign-in first.");
+  assert.equal(c.startReason, T("ui.login.finishFirst"));
 });
 
 test("REGRESI: backend tidak terjangkau mengalahkan kesiapan apa pun", () => {
   const c = U.controlsFor(readyView({ backendUnreachable: true }));
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "AI LIVE HOST is not responding. Close the app and open it again.");
+  assert.equal(c.startReason, T("ui.banner.offline"));
   assert.deepEqual(U.startBlockers(readyView({ backendUnreachable: true })).map((b) => b.key), ["backend"]);
 });
 
 test("REGRESI: alasan Start tidak pernah berisi kode mesin", () => {
   // Pesannya dari server (userMessage) atau kalimat biasa; tidak pernah kode.
   const view = readyView({
-    obs: { ok: false, reason: "obs-unavailable", error: { code: "obs-unavailable", userMessage: "OBS is not connected." } },
-    tiktok: { ok: false, reason: "tiktok-not-logged-in", error: { code: "tiktok-not-logged-in", userMessage: "You are not signed in to TikTok. Sign in once, then try again." } },
-    validation: { ok: false, reason: "no-mappings", userMessage: "No scene has a product mapped to it yet." },
+    obs: { ok: false, reason: "obs-unavailable", error: { code: "obs-unavailable", userMessage: T("err.obs-unavailable") } },
+    tiktok: { ok: false, reason: "tiktok-not-logged-in", error: { code: "tiktok-not-logged-in", userMessage: T("err.tiktok-not-logged-in") } },
+    validation: { ok: false, reason: "no-mappings", userMessage: T("err.no-mappings") },
   });
   const raw = JSON.stringify(U.startBlockers(view));
   for (const code of ["obs-unavailable", "tiktok-not-logged-in", "no-mappings"]) {

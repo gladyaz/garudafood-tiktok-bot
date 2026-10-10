@@ -11,6 +11,11 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+// Kalimat customer tidak lagi diassert sebagai prosa: ia dibandingkan dengan
+// KAMUS. Mengubah kata-kata tidak memerahkan tes; salah kabel tetap merah.
+const I18N = require("../controller/public/i18n.js");
+const T = (key, vars) => I18N.t("id", key, vars);
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -157,7 +162,7 @@ test("username TikTok wajib", () => {
   for (const bad of ["", "   ", null, undefined]) {
     const v = U.validateSettingsForm(Object.assign({}, FILLED, { tiktokUsername: bad }));
     assert.equal(v.ok, false, JSON.stringify(bad));
-    assert.match(v.errors.tiktokUsername, /TikTok username/);
+    assert.equal(v.errors.tiktokUsername, T("ui.valid.username"));
   }
 });
 
@@ -310,7 +315,7 @@ test("blank state: firstRun true, Settings bisa disunting", () => {
 test("RUNNING: Settings TIDAK bisa disunting, dan alasannya disebut", () => {
   const sv = U.settingsView({ status: { automation: "RUNNING", config: { present: true } } });
   assert.equal(sv.editable, false);
-  assert.equal(sv.hint, "Settings can be changed after you press STOP BOT.");
+  assert.equal(sv.hint, T("ui.set.locked"));
 });
 
 // --- gerbang START dan LOGIN -------------------------------------------------
@@ -319,11 +324,11 @@ test("blank state: START BOT dan LOGIN TIKTOK keduanya MATI", () => {
   const status = { automation: "STOPPED", config: { present: false } };
   const c = U.controlsFor({ status });
   assert.equal(c.startEnabled, false);
-  assert.equal(c.startReason, "Save your settings first.");
+  assert.equal(c.startReason, T("ui.login.hintSaveFirst"));
 
   const lv = U.loginView({ status });
   assert.equal(lv.canLogin, false);
-  assert.equal(lv.hint, "Save your settings first.");
+  assert.equal(lv.hint, T("ui.login.hintSaveFirst"));
 });
 
 test("sesudah config ada: LOGIN TIKTOK HIDUP", () => {
@@ -578,9 +583,9 @@ test("Settings adalah section TERPISAH dari Mapping", () => {
 
 // --- REGRESI P4.1.1: label status Settings dan Mapping saling independen -------
 //
-// Terlihat di UI sungguhan pada 2026-10-08: "Saving settings…" muncul di sebelah
+// Terlihat di UI sungguhan pada 2026-10-08: T("ui.rule.savingSettings") muncul di sebelah
 // tombol Save Changes milik Mapping, dan tertinggal di sana walau Settings sudah
-// melaporkan "Saved" dan tidak ada satu pun mapping.
+// melaporkan T("ui.check.config.pass") dan tidak ada satu pun mapping.
 //
 // Sebabnya withBusy() selalu menulis ke "save-state" — label milik Mapping —
 // apa pun operasinya. Refresh, Start, dan Stop menimpanya dengan cara yang sama.

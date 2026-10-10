@@ -15,6 +15,9 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+const I18N = require("../controller/public/i18n.js");
+const T = (key, vars) => I18N.t("id", key, vars);
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -455,7 +458,9 @@ test("preflight merah menyebut baris mana yang belum siap, dengan kalimatnya", a
     const failed = U.failedPreflight(seq.preflight);
     assert.ok(failed.length > 0);
     const obs = failed.find((f) => f.label === "OBS");
-    assert.equal(obs.value, "OBS is not connected.");
+    // failedPreflight adalah lapisan UI: kalimatnya ikut bahasa customer, dan
+    // yang menghubungkannya ke server adalah KODE-nya, bukan kata-katanya.
+    assert.equal(obs.value, T("err.obs-unavailable"));
   });
 });
 
@@ -572,7 +577,9 @@ test("backend mati: UI punya keadaan aman, dan Start TIDAK pernah hidup", async 
   assert.equal(c.startEnabled, false);
   assert.equal(c.stopEnabled, false);
   assert.equal(c.editingEnabled, false);
-  assert.equal(c.startReason, "AI LIVE HOST is not responding. Close the app and open it again.");
+  // controlsFor adalah lapisan UI, jadi kalimatnya ikut bahasa - bukan
+  // kalimat server. Yang diassert kuncinya.
+  assert.equal(c.startReason, I18N.t("id", "ui.banner.offline"));
 });
 
 // --- activity dibatasi -----------------------------------------------------

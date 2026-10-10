@@ -18,6 +18,11 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+
+// Kalimat customer tidak lagi diassert sebagai prosa: ia dibandingkan dengan
+// KAMUS. Mengubah kata-kata tidak memerahkan tes; salah kabel tetap merah.
+const I18N = require("../controller/public/i18n.js");
+const T = (key, vars) => I18N.t("id", key, vars);
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -134,7 +139,8 @@ test("balasan ON tanpa pin DITOLAK saat menyimpan, dengan kalimat yang bisa diti
   const v = U.validateSettingsForm(filledForm({ autoPinProduct: false, sendAdminReply: true }));
   assert.equal(v.ok, false);
   assert.ok(v.fields.includes("sendAdminReply"), JSON.stringify(v.fields));
-  assert.match(v.errors.sendAdminReply, /Auto pin product/);
+  // menyebut saklar yang harus dinyalakan, dengan nama saklarnya sendiri
+  assert.ok(v.errors.sendAdminReply.includes(T("ui.set.autopin")), v.errors.sendAdminReply);
   // Tanpa istilah teknis.
   assert.ok(!/dry-run|browser|transport/i.test(v.errors.sendAdminReply), v.errors.sendAdminReply);
 });
@@ -169,7 +175,7 @@ test("REGRESI 2026-10-08: semua kesiapan hijau TAPI AutoPIN mati => START MATI",
   const view = viewWithMode({
     ok: false,
     reason: "autopin-disabled",
-    userMessage: "Auto pin product is turned off.",
+    userMessage: T("err.autopin-disabled"),
     pin: false,
     reply: false,
     needsPin: true,
@@ -177,20 +183,20 @@ test("REGRESI 2026-10-08: semua kesiapan hijau TAPI AutoPIN mati => START MATI",
 
   const c = U.controlsFor(view);
   assert.equal(c.startEnabled, false, "START BOT HARUS mati");
-  assert.equal(c.startReason, "Auto pin product is turned off.");
+  assert.equal(c.startReason, T("err.autopin-disabled"));
 
   const blocker = U.startBlockers(view).find((b) => b.key === "mode");
   assert.ok(blocker, JSON.stringify(U.startBlockers(view).map((b) => b.key)));
-  assert.equal(blocker.message, "Auto pin product is turned off.");
+  assert.equal(blocker.message, T("err.autopin-disabled"));
 });
 
 test("kalimat penghalang datang dari SERVER, bukan dikarang halaman", () => {
   // Kalau halaman mengarang kalimatnya sendiri, ia akan menyimpang dari alasan
   // server menolak — dan yang menyimpang akan menjadi tombol hijau untuk run
   // yang tidak bisa memin apa pun.
-  const view = viewWithMode({ ok: false, reason: "admin-reply-not-enabled", userMessage: "Admin reply is not enabled." });
+  const view = viewWithMode({ ok: false, reason: "admin-reply-not-enabled", userMessage: T("err.admin-reply-not-enabled") });
   const blocker = U.startBlockers(view).find((b) => b.key === "mode");
-  assert.equal(blocker.message, "Admin reply is not enabled.");
+  assert.equal(blocker.message, T("err.admin-reply-not-enabled"));
 });
 
 test("mode SAH tidak memblokir apa pun", () => {
@@ -208,11 +214,11 @@ test("FAIL-CLOSED: mode yang BELUM DIKETAHUI tetap memblokir", () => {
   assert.equal(c.startEnabled, false);
   const blocker = U.startBlockers(view).find((b) => b.key === "mode");
   assert.ok(blocker);
-  assert.match(blocker.message, /Checking/);
+  assert.equal(blocker.message, T("ui.block.checkingMode"));
 });
 
 test("tanpa config, penghalang mode TIDAK menambah kebisingan", () => {
-  // First-run sudah punya pesannya sendiri ("Save your settings first."); menambah
+  // First-run sudah punya pesannya sendiri (T("ui.login.hintSaveFirst")); menambah
   // "Checking automation mode…" di situ hanya mengaburkan pekerjaan pertama.
   const view = viewWithMode(undefined);
   view.status.config = { present: false };
@@ -295,7 +301,7 @@ test("REGRESI screenshot: STOPPED + LIVE aktif + produk + mapping siap, discover
       config: { present: true },
       login: { active: false, state: "idle" },
       run: { armed: false },
-      mode: { ok: false, reason: "autopin-disabled", userMessage: "Auto pin product is turned off.", pin: false, reply: false, needsPin: true },
+      mode: { ok: false, reason: "autopin-disabled", userMessage: T("err.autopin-disabled"), pin: false, reply: false, needsPin: true },
     },
     obs: { ok: true, connected: true, scenes: ["MAIN", "PAX-1", "PAX-2"] },
     tiktok: { ok: true, identity: "agen_mulia_abadi", identityOk: true, live: true, productCount: 10 },
@@ -313,7 +319,7 @@ test("REGRESI screenshot: STOPPED + LIVE aktif + produk + mapping siap, discover
 
   // Dan START tetap mati — tapi karena MODE-nya, bukan karena busy.
   assert.equal(U.controlsFor(done).startEnabled, false);
-  assert.equal(U.controlsFor(done).startReason, "Auto pin product is turned off.");
+  assert.equal(U.controlsFor(done).startReason, T("err.autopin-disabled"));
 });
 
 test("REGRESI: keadaan terkunci Settings disegarkan setiap polling, jadi tidak bisa LATCH", () => {
