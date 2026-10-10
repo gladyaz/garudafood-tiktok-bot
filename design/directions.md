@@ -1,7 +1,8 @@
-# Tiga arah visual untuk AI LIVE HOST
+# Empat arah visual untuk AI LIVE HOST
 
-Studi desain, bukan kode produksi. Ketiganya memecahkan alur kerja operator yang
-sama dengan konten yang sama, dan masing-masing menampilkan tiga keadaan.
+Studi desain, bukan kode produksi. Keempatnya memecahkan alur kerja operator
+yang sama dengan konten yang sama, dan masing-masing menampilkan tiga keadaan.
+A, B dan C saya bangun dari brief; D berasal dari desain Anda sendiri.
 Semuanya di `design/`, yang tidak ada dalam allowlist `files` sehingga tidak
 mungkin ikut terpaket.
 
@@ -56,7 +57,7 @@ digambar sepanjang durasi sebenarnya, dan di bawahnya ada pita adegan yang
 memperbesar satu adegan: tanda pin pada 2,2s dan balasan pada 3,8s di dalam
 balok 36,4s.
 
-Yang bekerja: pita adegan itu gagasan terbaik dari ketiga arah — ia menjawab
+Yang bekerja: pita adegan itu gagasan terbaik dari keempat arah — ia menjawab
 "apakah pin dan balasan mendarat, dan secepat apa" tanpa satu kata pun. Satu
 objek menggantikan strip status dan umpan aktivitas sekaligus.
 
@@ -75,7 +76,7 @@ Bilah status gelap setinggi 30px yang tidak pernah berpindah, lalu daftar lima
 etalase di kiri dan panel detail di kanan. Memilih satu etalase memunculkan
 seluruh isinya: konfigurasi dan riwayat permintaannya sendiri.
 
-Yang bekerja: kepadatan operasional tertinggi dari ketiganya. Rantai enam
+Yang bekerja: kepadatan operasional tertinggi dari keempatnya. Rantai enam
 langkah per permintaan — termasuk jeda 120 detik — dengan waktu terukur, dan
 saat tayang etalase yang sedang berjalan memilih dirinya sendiri. Keadaan
 berhenti memakai panel besar itu untuk menjelaskan apa yang menghalangi.
@@ -141,7 +142,7 @@ Dilaporkan, bukan diperbaiki, karena ini keputusan desain bukan cacat:
   tinggi 660px kalimat perbaikan dan tombol Periksa ulang terdorong keluar.
 - **A** — kata "sedang tayang" dipakai untuk siaran TikTok, untuk adegan, dan
   untuk otomasi. Tiga hal, satu frasa.
-- Ketiganya memuat IBM-kelas webfont dari Google Fonts. Untuk dipakai sungguhan
+- Keempatnya memuat webfont dari Google Fonts. Untuk dipakai sungguhan
   masing-masing berarti self-host satu subset, karena aplikasi ini sengaja tidak
   memuat apa pun dari jaringan.
 
