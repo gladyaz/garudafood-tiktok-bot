@@ -10,6 +10,7 @@ mungkin ikut terpaket.
 | A | `direction-a-console.html` | satu permukaan utuh, tanpa panel dan tanpa kartu | rel keadaan di tepi kiri; satu kolom angka bersama |
 | B | `direction-b-timetable.html` | waktu sebagai sumbu utama; lima jalur dan penggaris waktu | balok berdurasi nyata; pita adegan dengan tanda pin dan balasan |
 | C | `direction-c-inspector.html` | master–detail seperti perkakas profesional | bilah status tipis yang tidak pernah bergerak; panel detail per etalase |
+| D | `direction-d-rulebook.html` | aturan dibaca sebagai kalimat utuh | satu baris = pemicu → scene → produk → balasan; checklist berprogres |
 
 ## Tiga keadaan
 
@@ -86,6 +87,47 @@ inspector, baris syarat, alasan tombol Mulai).
 Diperbaiki sesudah tinjauan: panel detail dulu identik antara berhenti dan siap
 — dua dari tiga keadaan praktis sama di 896 dari 1280 piksel. Sekarang panel itu
 sendiri membawa pembedanya.
+
+## D — Rulebook
+
+Berasal dari desain yang Anda buat sendiri di Claude Design
+(`claude.ai/artifact/Adt7x65M8jsGJ7d86b1Xq6`). Versi aslinya tersimpan utuh di
+riwayat git sebagai `design/claude-design-dashboard.html` sebelum saya ubah.
+
+Gagasannya: satu aturan dibaca sebagai satu kalimat — *"Kalau penonton ketik
+`spill etalase 1` → ganti scene `PAX-1` → pin `Garuda Kacang Atom`"* — lengkap
+dengan balasan chat di bawahnya. Untuk penjual yang tidak teknis ini lebih mudah
+dipahami daripada tabel berkolom mana pun di arah A, B atau C. Checklist
+"Sebelum mulai" dengan bilah progres lima segmen juga paling ramah dari semuanya.
+
+Yang saya ubah supaya bisa dibandingkan dengan yang lain:
+
+- **Data nyata.** Produk karangan ("Dilan Cookies Original/Matcha/Brownies")
+  diganti lima produk asli, pemicu asli, balasan asli, panjang scene asli.
+- **Akun disamarkan** menjadi `tokosnackku`. Versi artifact memuat akun uji yang
+  sebenarnya, nilai yang sengaja kita keluarkan dari berkas customer setelah
+  audit paket menemukannya di `index.html`.
+- **Keadaan tayang ditambahkan.** Ini yang paling tidak ada: versi aslinya punya
+  penghitung di hero, tapi tidak pernah memberi tahu etalase mana yang jalan,
+  sisa berapa, dan apakah pin serta balasannya mendarat. Sekarang ada blok
+  tayang dengan hitung mundur dan rantai enam langkah berwaktu nyata.
+- **Perancah demo dibuang.** Panel "Mode uji" dan simulator komentar penonton
+  tampil sebagai UI produk padahal keduanya alat demo; digantikan dok pratinjau
+  yang sama dengan arah lain.
+- **Config tidak lagi dibaca dari localStorage.** Siapa pun yang pernah membuka
+  versi artifact punya produk karangan tersimpan di sana dan ia akan muncul lagi
+  diam-diam.
+
+Ketiga keadaan tidak digambar terpisah: dok memutar tuas yang memang sudah
+dipakai dashboard ini (`test.*` dan `run.*`), jadi yang terlihat adalah reaksi
+logikanya sendiri.
+
+Yang berbeda dari daftar larangan brief tiga arah sebelumnya, dan **sengaja
+dibiarkan** karena ini bahasa visual pilihan Anda, bukan cacat: kartu bersudut
+membulat dengan bayangan, label kapital bertracking lebar, JetBrains Mono untuk
+frasa pemicu, dan ikon SVG. Satu yang layak dipertimbangkan ulang: merah dipakai
+untuk dua arti sekaligus — lencana "ON AIR" dan hitung mundur memakai merah yang
+sama dengan tombol "Hentikan Bot".
 
 ## Yang belum dibereskan
 

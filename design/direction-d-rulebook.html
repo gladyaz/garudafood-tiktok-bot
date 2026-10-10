@@ -96,6 +96,22 @@ h1, h2 { text-wrap: balance; }
 .stat.fail b { color: var(--danger); }
 .stats.dim { opacity: .4; }
 
+/* On air */
+.onair { border-color: var(--live); }
+.onair-head { display: flex; gap: 24px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.onair-t { font-size: 22px; line-height: 28px; font-weight: 800; letter-spacing: -.02em; margin-top: 2px; }
+.onair-p { font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+.onair-left { text-align: right; font-variant-numeric: tabular-nums; flex: none; }
+.onair-left b { display: block; font-size: 38px; line-height: 40px; font-weight: 800; letter-spacing: -.03em; color: var(--live); }
+.onair-left b span { font-size: 18px; font-weight: 700; margin-left: 1px; }
+.onair-left > span { font-size: 12px; color: var(--ink-muted); font-weight: 600; }
+.onair-chain { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.oc { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.oc span { font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: .04em; color: var(--ink-muted); }
+.oc b { font-size: 13px; line-height: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.oc.ok b { color: var(--ok); }
+.oc.wait b { color: var(--ink-muted); font-weight: 600; }
+
 /* Grid */
 .grid { display: grid; grid-template-columns: 340px minmax(0,1fr); gap: 20px; align-items: start; }
 .rail { display: flex; flex-direction: column; gap: 20px; position: sticky; top: 84px; }
@@ -218,6 +234,16 @@ h1, h2 { text-wrap: balance; }
 .toast.err::before { background: var(--danger); }
 @keyframes tin { from { opacity: 0; transform: translateY(-6px); } }
 
+/* Dok pratinjau - perkakas tinjauan, bukan UI produk */
+.dock { position: fixed; right: 14px; bottom: 14px; z-index: 50; display: flex; align-items: center; gap: 9px; padding: 7px 8px 7px 12px; background: #17181c; border-radius: 999px; box-shadow: 0 6px 22px rgba(0,0,0,.28); font-size: 11px; font-weight: 700; color: #a6a59f; }
+.dock[hidden] { display: none; }
+.dockseg { display: inline-flex; border: 1px solid #3a3b40; border-radius: 999px; overflow: hidden; }
+.dockseg button { appearance: none; border: 0; border-left: 1px solid #3a3b40; background: #212227; color: #d7d6d2; font: inherit; font-size: 12px; padding: 4px 11px; cursor: pointer; }
+.dockseg button:first-child { border-left: 0; }
+.dockseg button[aria-pressed="true"] { background: #f2f1ee; color: #17181c; }
+.dockx { appearance: none; border: 0; background: none; color: #a6a59f; font-size: 15px; line-height: 1; padding: 2px 6px 4px; border-radius: 50%; cursor: pointer; }
+.dockx:hover { background: #2d2f35; color: #fff; }
+
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 @media (max-width: 960px) {
@@ -245,7 +271,7 @@ h1, h2 { text-wrap: balance; }
 <header class="top">
   <div class="top-in">
     <div class="mark"><i></i>AI Live Host</div>
-    <span class="acct" id="acct"><b>AM</b><span id="acctName">@agen_mulia_abadi</span></span>
+    <span class="acct" id="acct"><b>TS</b><span id="acctName">@tokosnackku</span></span>
     <div class="spacer"></div>
     <button class="btn ghost icon-btn" id="themeBtn" aria-label="Ganti tema terang/gelap" title="Ganti tema"></button>
     <span id="pill" class="pill">Mengecek…</span>
@@ -268,6 +294,25 @@ h1, h2 { text-wrap: balance; }
     </div>
   </section>
 
+  <!-- Keadaan TAYANG. Ini yang paling sering dilihat saat siaran dan satu-
+       satunya yang belum ada di versi artifact: angka besar di hero hanya
+       menghitung, tapi tidak memberi tahu etalase mana yang sedang jalan,
+       berapa sisanya, dan apakah pin serta balasannya mendarat. -->
+  <section class="card pad onair" id="onair" hidden aria-live="polite">
+    <div class="onair-head">
+      <div style="min-width:0">
+        <div class="overline">Sedang tayang</div>
+        <h2 class="onair-t" id="onairT">Etalase 1</h2>
+        <p class="onair-p" id="onairP"></p>
+      </div>
+      <div class="onair-left">
+        <b id="onairS">31<span>s</span></b>
+        <span>sisa dari 46s</span>
+      </div>
+    </div>
+    <div class="onair-chain" id="onairC"></div>
+  </section>
+
   <div class="grid">
     <aside class="rail">
       <section class="card pad stack" aria-label="Pengecekan sebelum mulai">
@@ -277,15 +322,6 @@ h1, h2 { text-wrap: balance; }
         <button class="btn" id="recheck">Cek ulang</button>
       </section>
 
-      <section class="card pad" aria-label="Mode uji">
-        <div class="row between" style="margin-bottom:4px"><span class="overline">Mode uji</span><span class="small muted">khusus demo</span></div>
-        <p class="small muted" style="margin-bottom:8px">Pura-pura kondisi berubah, untuk melihat reaksi dashboard.</p>
-        <label class="testrow" for="tObs">OBS tersambung <input type="checkbox" class="tgl" id="tObs" data-test="obs" checked></label>
-        <label class="testrow" for="tLogin">Masuk akun TikTok <input type="checkbox" class="tgl" id="tLogin" data-test="login" checked></label>
-        <label class="testrow" for="tLive">Sedang LIVE di TikTok <input type="checkbox" class="tgl" id="tLive" data-test="live"></label>
-        <label class="testrow" for="tShelf">Etalase LIVE terisi <input type="checkbox" class="tgl" id="tShelf" data-test="shelf"></label>
-        <label class="testrow" for="tAuto">Penonton otomatis <input type="checkbox" class="tgl" id="tAuto" data-test="auto" checked></label>
-      </section>
     </aside>
 
     <section class="card">
@@ -309,17 +345,6 @@ h1, h2 { text-wrap: balance; }
 
       <!-- ACTIVITY -->
       <div class="pad stack" data-panel="activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
-        <form class="card pad stack" id="simForm" style="box-shadow:none;background:var(--surface-2)">
-          <div class="row between">
-            <div><h2 class="title" style="font-size:15px">Coba ketik komentar penonton</h2><p class="small muted">Komentar ini diproses seperti chat LIVE asli.</p></div>
-          </div>
-          <div class="sim">
-            <div class="affix"><span>@</span><input class="input" id="simUser" value="penonton_tes" aria-label="Nama penonton" autocomplete="off"></div>
-            <input class="input" id="simText" placeholder="contoh: spill etalase 3" aria-label="Komentar" autocomplete="off">
-            <button class="btn primary" type="submit">Kirim</button>
-          </div>
-          <div class="quick" id="quick"><span class="small muted">Coba cepat:</span></div>
-        </form>
         <div class="row between">
           <div class="seg" role="group" aria-label="Saring aktivitas">
             <button type="button" data-filter="all" aria-pressed="true">Semua</button>
@@ -339,7 +364,7 @@ h1, h2 { text-wrap: balance; }
           <div class="gfields">
             <div class="field"><label class="label" for="sUser">Username yang LIVE</label><div class="affix"><span>@</span><input class="input" id="sUser" data-set="username" autocomplete="off"></div><span class="help" id="sUserHelp">Ketik tanpa @. Kalau ikut tertulis, otomatis dihapus.</span></div>
             <div class="field"><label class="label" for="sShop">Nama toko di halaman LIVE</label><input class="input" id="sShop" data-set="shop" autocomplete="off"><span class="help" id="sShopHelp">Harus sama persis. Dicek sebelum pin.</span></div>
-            <div class="trow"><div><div class="label" id="loginLabel">Masuk sebagai @agen_mulia_abadi</div><div class="help" id="loginHelp">Sesi masih aktif.</div></div><button type="button" class="btn sm" id="relogin">Masuk ulang</button></div>
+            <div class="trow"><div><div class="label" id="loginLabel">Masuk sebagai @tokosnackku</div><div class="help" id="loginHelp">Sesi masih aktif.</div></div><button type="button" class="btn sm" id="relogin">Masuk ulang</button></div>
           </div>
         </div>
         <div class="group">
@@ -373,6 +398,20 @@ h1, h2 { text-wrap: balance; }
 </div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
+<!-- Dok pratinjau. BUKAN bagian aplikasi: ia hidup di luar seluruh markup
+     dashboard, memakai warna perkakas, dan bisa ditutup. Bentuknya sama persis
+     dengan arah A, B dan C supaya keempatnya bisa ditinjau dengan cara yang
+     sama. Menggantikan panel "Mode uji" yang dulu tampil sebagai UI produk. -->
+<div class="dock" id="dock">
+  <span>Pratinjau</span>
+  <span class="dockseg" role="group" id="stateGroup">
+    <button type="button" data-st="stopped" aria-pressed="true">Berhenti</button>
+    <button type="button" data-st="ready" aria-pressed="false">Siap</button>
+    <button type="button" data-st="running" aria-pressed="false">Tayang</button>
+  </span>
+  <button class="dockx" type="button" id="dockX" aria-label="Tutup dok pratinjau">&times;</button>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -395,19 +434,33 @@ h1, h2 { text-wrap: balance; }
   };
 
   /* ---------- Example data (contoh) ---------- */
-  var SCENES = ["Intro", "Standby", "PAX-1", "PAX-2", "PAX-3", "PAX-4", "PAX-5"];
-  var PRODUCTS = ["Dilan Cookies Original", "Dilan Cookies Matcha", "Dilan Brownies Box", "DILAN COOKIES COKLAT", "Dilan Waffle 1 BOX", "Dilan Nastar Premium"];
-  var VIEWERS = ["rina.cookies", "budi_88", "sari.snack", "dewi_ayu", "kak_tono", "mila.jkt", "andre.sby", "putri_lpg"];
-  var CHATTER = ["kak harganya berapa?", "ready kak?", "mantap", "ongkir ke medan berapa", "halo kak", "boleh cod?"];
+  /* Konten NYATA dari config yang dipakai run LIVE 9 Oktober. Judul produk,
+     frasa pemicu, balasan admin dan nama scene tidak boleh diubah sedikit pun
+     - termasuk tanda kali di "10 bungkus × 18gr". */
+  var SCENES = ["MAIN", "PAX-1", "PAX-2", "PAX-3", "PAX-4", "PAX-5"];
+  var PRODUCTS = [
+    "Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs",
+    "Gery Saluut Malkist Family Pack 100gr",
+    "Gery Saluut Malkist renceng, 10 bungkus × 18gr",
+    "Dilan Cookies Choco Chip 12gr, pack isi 23",
+    "Dilan Waffle, 1 box kue coklat 16gr"
+  ];
+  var TRIGGERS = [["spill etalase 1"], ["no 2"], ["et 3"], ["et 4"], ["spill etalase 5"]];
+  var LENGTHS = [46, 46, 52, 69, 46];
 
   var DEFAULT = {
-    settings: { username: "agen_mulia_abadi", shop: "agen_mulia_abadi", host: "127.0.0.1", port: "4455", autoScene: true, autoPin: true, autoReply: true, cooldown: "5" },
+    /* Nama akun SENGAJA bukan akun uji yang sebenarnya: akun itu pernah bocor
+       ke index.html sebagai placeholder dan tertangkap audit paket. */
+    settings: { username: "tokosnackku", shop: "tokosnackku", host: "127.0.0.1", port: "4455", autoScene: true, autoPin: true, autoReply: true, cooldown: "120" },
     rules: [1, 2, 3, 4, 5].map(function (n) {
-      return { id: "r" + n, triggers: ["spill etalase " + n, "et " + n], scene: "PAX-" + n, product: PRODUCTS[n - 1], reply: "Etalase " + n + " sudah aku pin ya kak", on: true };
+      return { id: "r" + n, triggers: TRIGGERS[n - 1].slice(), scene: "PAX-" + n, product: PRODUCTS[n - 1], reply: "Etalase " + n + " sudah aku pin ya kak", on: true };
     })
   };
 
-  var saved = store.get("config") || clone(DEFAULT);
+  /* Studi arah visual: config TIDAK dibaca dari localStorage. Siapa pun yang
+     pernah membuka versi artifact-nya punya produk karangan tersimpan di
+     sana, dan itu akan muncul lagi diam-diam. */
+  var saved = clone(DEFAULT);
   var draft = clone(saved);
   var test = { obs: true, login: true, live: false, shelf: false, auto: true };
   var ui = { tab: "rules", editing: null, confirmDel: null, filter: "all", checking: false };
@@ -584,6 +637,7 @@ h1, h2 { text-wrap: balance; }
   }
 
   function renderQuick() {
+    if (!$("quick")) return;   /* simulator komentar dibuang dari studi ini */
     var q = ['<span class="small muted">Coba cepat:</span>'];
     saved.rules.filter(function (r) { return r.on && r.triggers.length; }).slice(0, 5).forEach(function (r) {
       q.push('<button type="button" class="chip trig" data-quick="' + esc(r.triggers[0]) + '">' + esc(r.triggers[0]) + '</button>');
@@ -635,7 +689,30 @@ h1, h2 { text-wrap: balance; }
     $("save").title = bad ? "Perbaiki isian berwarna merah di Pengaturan dulu" : "";
   }
 
-  function renderAll() { renderChecks(); renderStatus(); renderRules(); renderQuick(); renderFeed(); renderSavebar(); }
+  /* Rantai nyata dari run yang tervalidasi: 0,05s / 2,2s / 1,6s, scene
+     berhenti di 36,4s karena videonya habis, bukan karena batas 46s. */
+  function renderOnAir() {
+    var box = $("onair");
+    if (!box) return;
+    var r = run.on && !run.paused ? saved.rules[0] : null;
+    box.hidden = !r;
+    if (!r) return;
+    $("onairT").textContent = "Etalase 1";
+    $("onairP").textContent = r.product + " · scene " + r.scene;
+    $("onairS").innerHTML = '31<span>s</span>';
+    $("onairC").innerHTML = [
+      ["Diminta penonton", "16:24:11", "ok"],
+      ["Scene mulai", "+0,05 s", "ok"],
+      ["Produk di-pin", "+2,2 s", "ok"],
+      ["Balasan terkirim", "+1,6 s", "ok"],
+      ["Scene selesai", "sisa 31 s", "wait"],
+      ["Jeda sesudahnya", "120 s", "wait"]
+    ].map(function (c) {
+      return '<div class="oc ' + c[2] + '"><span>' + c[0] + '</span><b>' + c[1] + '</b></div>';
+    }).join("");
+  }
+
+  function renderAll() { renderChecks(); renderStatus(); renderRules(); renderQuick(); renderFeed(); renderOnAir(); renderSavebar(); }
 
   /* ---------- Tabs ---------- */
   function setTab(name) {
@@ -839,7 +916,7 @@ h1, h2 { text-wrap: balance; }
   $("sPw").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); if ($("sPw").value) { $("sPw").value = ""; $("pwView").hidden = false; $("pwEdit").hidden = true; toast("Password OBS diganti."); } } });
   $("relogin").addEventListener("click", function () {
     var b = $("relogin"); b.disabled = true; b.innerHTML = '<span class="spin"></span> Membuka TikTok…';
-    setTimeout(function () { b.disabled = false; b.textContent = "Masuk ulang"; test.login = true; $("tLogin").checked = true; renderAll(); toast("Masuk sebagai @" + saved.settings.username + "."); }, 1200);
+    setTimeout(function () { b.disabled = false; b.textContent = "Masuk ulang"; test.login = true; renderAll(); toast("Masuk sebagai @" + saved.settings.username + "."); }, 1200);
   });
 
   /* ---------- Save / discard ---------- */
@@ -857,15 +934,6 @@ h1, h2 { text-wrap: balance; }
   });
 
   /* ---------- Activity ---------- */
-  $("simForm").addEventListener("submit", function (e) {
-    e.preventDefault();
-    var t = $("simText").value.trim(); if (!t) { $("simText").focus(); return; }
-    var before = feed.length;
-    processComment($("simUser").value, t);
-    if (feed.length === before) log({ kind: "info", icon: I.alert, main: "<b>@" + esc($("simUser").value.replace(/^@+/, "") || "penonton") + "</b> ketik <span class=\"mono\">" + esc(t) + "</span>", steps: [{ c: "wait", t: "Tidak cocok dengan aturan mana pun, jadi bot diam" }] });
-    $("simText").value = ""; $("simText").focus();
-  });
-  $("quick").addEventListener("click", function (e) { var b = e.target.closest("[data-quick]"); if (!b) return; $("simText").value = b.dataset.quick; $("simForm").requestSubmit(); });
   document.querySelectorAll("[data-filter]").forEach(function (b) {
     b.addEventListener("click", function () {
       ui.filter = b.dataset.filter;
@@ -884,10 +952,69 @@ h1, h2 { text-wrap: balance; }
     document.documentElement.setAttribute("data-theme", next); store.set("theme", next); renderTheme();
   });
 
+  /* ---------- Tiga keadaan, untuk ditinjau ----------
+     Keadaan tidak dikarang ulang: ia memutar tuas yang SUDAH dipakai dashboard
+     ini (test.* dan run.*), jadi yang Anda lihat adalah reaksi logikanya
+     sendiri, bukan tiga layar yang digambar terpisah.
+       berhenti = mati DAN ada syarat yang belum terpenuhi
+       siap     = mati, semua syarat terpenuhi
+       tayang   = mengudara, etalase 1 jalan, sisa 31 detik                */
+  function setState(st) {
+    clearInterval(run.timer);
+    run.timer = null;
+    run.paused = false;
+    run.hit = null;
+    ui.editing = null;
+    ui.confirmDel = null;
+
+    if (st === "stopped") {
+      test.live = false; test.shelf = false;
+      run.on = false; run.stats = { t: 0, p: 0, r: 0, f: 0 };
+      feed = [];
+    } else if (st === "ready") {
+      test.live = true; test.shelf = true;
+      run.on = false; run.stats = { t: 0, p: 0, r: 0, f: 0 };
+      feed = [];
+    } else {
+      test.live = true; test.shelf = true;
+      run.on = true; run.hit = "r1";
+      run.stats = { t: 2, p: 2, r: 2, f: 0 };
+      feed = [
+        { id: ++seq, time: "16:24:11", kind: "pending", steps: [
+            { c: "ok", t: "Scene PAX-1 +0,05 s" }, { c: "ok", t: "Pin +2,2 s" },
+            { c: "ok", t: "Balasan +1,6 s" }, { c: "wait", t: "Scene jalan, sisa 31 s" }],
+          main: '<b>@penonton</b> ketik <span class="mono">spill etalase 1</span> — Etalase 1' },
+        { id: ++seq, time: "16:09:59", kind: "ok", steps: [
+            { c: "ok", t: "Scene PAX-1 +0,05 s" }, { c: "ok", t: "Pin +2,2 s" },
+            { c: "ok", t: "Balasan +1,6 s" }, { c: "ok", t: "Selesai 36,4 s, video habis" }],
+          main: '<b>@penonton</b> ketik <span class="mono">spill etalase 1</span> — Etalase 1' },
+        { id: ++seq, time: "16:08:14", kind: "info", icon: I.check, steps: [], main: "Tersambung ke OBS dan LIVE TikTok" },
+        { id: ++seq, time: "16:08:13", kind: "info", icon: I.play, steps: [{ c: "wait", t: "5 aturan aktif · LIVE @" + saved.settings.username }], main: "Bot mulai jalan" }
+      ];
+    }
+    document.documentElement.setAttribute("data-state", st);
+    document.querySelectorAll("[data-st]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.st === st));
+    });
+    setTab(st === "running" ? "activity" : "rules");
+    renderAll();
+  }
+
+  $("stateGroup").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-st]");
+    if (b) setState(b.dataset.st);
+  });
+  $("dockX").addEventListener("click", function () { $("dock").hidden = true; });
+  document.addEventListener("keydown", function (e) {
+    if (e.target.matches("input, select, textarea")) return;
+    var map = { "1": "stopped", "2": "ready", "3": "running" };
+    if (map[e.key]) setState(map[e.key]);
+  });
+
   /* ---------- Boot ---------- */
   var startTab = (location.hash || "").slice(1);
   setTab(["rules", "activity", "settings"].indexOf(startTab) !== -1 ? startTab : (store.get("tab") || "rules"));
-  renderTheme(); renderSettingsValues(); renderAll();
+  renderTheme(); renderSettingsValues(); setState("stopped");
 })();
 </script>
 
