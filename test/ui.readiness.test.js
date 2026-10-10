@@ -402,3 +402,111 @@ test("KONTRAK: setiap U.<fungsi> yang dipakai app.js memang diekspor", () => {
     assert.equal(typeof U[name], "function");
   }
 });
+
+
+// ===========================================================================
+// STOP: layar harus jujur SEBELUM discovery, bukan sesudahnya
+// ===========================================================================
+//
+// Dari LIVE 2026-10-10 pada aplikasi TERPASANG. Server melaporkan STOPPED
+// dalam 1,0 detik; layar tetap berbunyi "SEDANG TAYANG" dan "Bot mendengarkan
+// chat LIVE Anda" selama puluhan detik sesudahnya.
+//
+// Sebabnya urutan, bukan logika: onStop dulu merender HANYA setelah
+// loadDiscovery selesai — dan loadDiscovery membuka Chrome. Sepanjang rantai
+// itu withBusy menahan polling (state.busy), jadi tidak ada satu pun yang
+// memperbarui layar. Hasilnya satu layar yang berkata DUA hal sekaligus:
+// spanduk "Otomasi berhenti" di atas tally merah "SEDANG TAYANG".
+//
+// Ini keluarga bug yang sama dengan yang memulai seluruh kartu kesiapan ini,
+// dan yang paling berbahaya bentuknya: customer menyimpulkan STOP gagal, lalu
+// menutup paksa aplikasinya — penutupan paksa yang dulu meninggalkan .bot.lock
+// dan Chrome yatim.
+
+// Badan onStop dari SUMBER produksi.
+function onStopBody() {
+  const app = readPublic("app.js");
+  const at = app.indexOf("function onStop()");
+  assert.ok(at > -1, "onStop harus ada di app.js");
+  const end = app.indexOf('}, null, "stop");', at);
+  assert.ok(end > at, "akhir onStop harus bisa ditemukan");
+  // Komentar dibuang: badan onStop MENJELASKAN kenapa urutannya begini, dan
+  // penjelasan itu menyebut loadDiscovery. Tes yang mencari di dalam prosa akan
+  // menemukan kata yang salah dan merah karena alasan yang salah - persis yang
+  // terjadi saat tes ini pertama ditulis.
+  return app
+    .slice(at, end)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
+test("REGRESI: onStop merender SEBELUM loadDiscovery, bukan sesudahnya", () => {
+  const body = onStopBody();
+
+  const iStop = body.indexOf('api("/api/stop"');
+  const iStatus = body.indexOf("loadStatus", iStop);
+  const iRender = body.indexOf("renderAll()", iStatus);
+  const iDiscovery = body.indexOf("loadDiscovery", iStatus);
+  const iValidation = body.indexOf("loadValidation", iDiscovery);
+  const iFinalRender = body.indexOf("renderAll()", iValidation);
+
+  assert.ok(iStop > -1, "onStop harus memanggil /api/stop");
+  assert.ok(iStatus > iStop, "loadStatus sesudah /api/stop");
+  // INI inti tes ini.
+  assert.ok(iRender > iStatus, "render sesudah loadStatus: kebenaran dulu, baru dicat");
+  assert.ok(iRender < iDiscovery, "render SEBELUM loadDiscovery — ini yang dulu salah");
+  assert.ok(iValidation > iDiscovery, "validasi sesudah discovery");
+  assert.ok(iFinalRender > iValidation, "render terakhir sesudah validasi");
+});
+
+test("REGRESI: begitu status STOPPED terbaca, yang terlihat BUKAN lagi sedang tayang", async () => {
+  // Urutan produksi dijalankan di sini dengan stub, dan yang ditanya adalah
+  // fungsi tampilan yang SUNGGUHAN: apa yang akan terbaca customer pada setiap
+  // titik di rantai itu.
+  const state = {
+    status: { automation: "RUNNING", config: { present: true }, mode: { ok: true }, login: {} },
+    obs: { ok: true },
+    tiktok: { ok: true, live: true, productCount: 3, identityOk: true, identity: "akun" },
+    validation: { ok: true, mappings: [{ ok: true }] },
+    rows: [{}],
+    activity: [],
+    busy: true, // withBusy menahan polling sepanjang rantai
+  };
+
+  const seen = [];
+  const peek = (at) =>
+    seen.push({ at, tally: U.tallyView(state, "id").label, tone: U.tallyView(state, "id").tone, hero: U.heroView(state, "id").title });
+
+  const loadStatus = async () => {
+    state.status = { automation: "STOPPED", config: { present: true }, mode: { ok: true }, login: {} };
+  };
+  const renderAll = () => peek("render");
+  // Discovery LAMBAT, dan itu memang wajar: ia membuka Chrome.
+  const loadDiscovery = async () => {
+    peek("discovery-mulai");
+    await new Promise((r) => setTimeout(r, 30));
+  };
+  const loadValidation = async () => {};
+
+  // Rantai dengan urutan yang SAMA seperti produksi.
+  await Promise.resolve()
+    .then(loadStatus)
+    .then(() => renderAll())
+    .then(loadDiscovery)
+    .then(loadValidation)
+    .then(() => renderAll());
+
+  const first = seen[0];
+  const discovery = seen.find((x) => x.at === "discovery-mulai");
+
+  assert.equal(first.at, "render", "render harus terjadi sebelum apa pun yang lambat");
+  assert.ok(seen.indexOf(first) < seen.indexOf(discovery), "layar dicat sebelum discovery mulai");
+
+  // Dan yang tercat memang keadaan BERHENTI.
+  assert.notEqual(first.tally, T("ui.pill.onair"), "tidak boleh masih berbunyi sedang tayang");
+  assert.notEqual(first.tone, "running", "tidak boleh masih memakai warna siaran");
+  assert.notEqual(first.hero, T("ui.hero.running.title"), "tidak boleh masih mengaku mendengarkan chat");
+
+  // Saat discovery berjalan pun, yang terlihat tetap keadaan berhenti.
+  assert.notEqual(discovery.tone, "running");
+});

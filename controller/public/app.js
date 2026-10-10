@@ -1052,8 +1052,24 @@
           else showBanner(U.messageOf(L(), r.body, "err.unknown"), "error");
         })
         .then(loadStatus)
+        // LANGSUNG dirender, SEBELUM discovery. Urutan ini tidak boleh diubah.
+        //
+        // Terbukti dari LIVE 2026-10-10: server melaporkan STOPPED dalam 1,0
+        // detik, lalu layar TETAP berbunyi "SEDANG TAYANG" dan "Bot
+        // mendengarkan chat LIVE Anda" selama puluhan detik — karena render
+        // dulu menunggu loadDiscovery (yang membuka Chrome), sementara
+        // withBusy menahan polling sepanjang rantai ini. Spanduk berkata
+        // berhenti dan semua yang lain berkata berjalan, di layar yang sama.
+        //
+        // Customer yang membacanya menyimpulkan STOP gagal, lalu menutup paksa
+        // aplikasinya — dan penutupan paksa itulah yang dulu meninggalkan
+        // .bot.lock dan Chrome yatim.
+        .then(function () {
+          renderAll();
+        })
         // Katalog produk hanya bisa dibaca saat berhenti, jadi inilah saat yang
-        // tepat untuk mengisinya kembali.
+        // tepat untuk mengisinya kembali. Lambat, dan boleh lambat: layar sudah
+        // jujur sejak baris di atas.
         .then(loadDiscovery)
         .then(loadValidation)
         .then(function () {
