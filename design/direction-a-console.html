@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<!--
+  AI LIVE HOST - Direction A, "Console".
+
+  ORGANIZING IDEA
+  One continuous white surface. There is not a single panel, card, tile or box in
+  this file: no element in the dashboard has a full border, and nothing has a
+  radius larger than 2px. Grouping is done by three things only - horizontal
+  rules, a shared alignment grid, and decided vertical space.
+
+  TWO-TIER RULE SYSTEM (this is what replaces cards)
+    1px solid ink      = structural. Under the top line, under every section
+                         heading. The only loud lines in the design.
+    1px solid #D6DAE0  = hairline. Rungs of the etalase ladder, rows of the
+                         requirement list, rows of the log.
+  Nothing else draws a line. No vertical rules inside data rows, because the
+  alignment grid already does that job and verticals double the ink.
+
+  IDENTITY DEVICE 1 - the state rail
+  7px, fixed, full window height, left edge. The three states differ in SHAPE,
+  not in hue: empty = nothing is running, one amber block at the top = one thing
+  is waiting for a human, solid green with a slow travelling highlight = on air.
+  Hue alone was not enough - the grey and the green of the first version were
+  1.06:1 apart in luminance, so from working distance both were just a dark bar.
+  It is the only pure block of colour in the product UI:
+  there are no filled buttons, no coloured chips, no tinted banners anywhere, so
+  the rail never has to compete to be read. Legible from across the room while
+  the operator is on camera and cannot look properly.
+
+  IDENTITY DEVICE 2 - one shared numeric column
+  --num (112px) is the last column of the top line, of every section heading, of
+  every etalase rung, every requirement, every log row, and the width of both
+  headless strips right-hand block. Every value in the interface - results,
+  countdowns, durations, counts - is right-aligned inside it, against the same
+  right edge. Scanning this product means reading straight down that column.
+
+  COLOUR SEMANTICS (a product rule, from a real shipped bug)
+  Green #116B3C is produced by two CSS rules only - the rail, and .on - and both
+  are reachable only when data-state=running. It is therefore on the words that
+  say something is tayang and on the seconds remaining, and nowhere else. Saved,
+  connected, found, available are all ink - never green. A stopped automation
+  cannot read as a running one, whichever green is glanced at.
+  Amber #8A5600 = a human must act. Red #A82A20 = the stop control only.
+
+  THREE STATES
+  CSS does the work from data-state on <html>. The states are not one word
+  apart: the section ORDER changes (order:), a whole region appears and
+  disappears (the problem strip in stopped, the live strip in running), the rail
+  changes species, the top-line sentence and the four facts change, every rung
+  status and figure changes, and the log flips between an empty line and a chain
+  of real measured timings.
+-->
+<html lang="id" data-state="stopped">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI LIVE HOST</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------- tokens --- */
+:root{
+  --ink:#191D22;      /* 16.9:1 on paper, 15.7:1 on surface */
+  --paper:#FFFFFF;
+  --surface:#F5F6F8;  /* used twice only: the playing rung, the unavailable button */
+  --rule:#D6DAE0;     /* hairline, never text */
+  --muted:#5A6269;    /* 6.2:1 on paper, 5.7:1 on surface */
+  --live:#116B3C;     /* 6.6:1 on paper - RUNNING / ON AIR only */
+  --warn:#8A5600;     /* 6.2:1 on paper - a human must act */
+  --halt:#A82A20;     /* 7.0:1 on paper - stop */
+  --num:112px;        /* the shared numeric column */
+  --gap:18px;
+  --row:35px;         /* etalase rung */
+  --reqrow:21px;      /* requirement line */
+}
+/* the interface compacts when there is something live to watch and relaxes
+   when there is not: in ready the ladder and the checklist - the two things
+   the operator actually works on between sessions - get their air back. */
+html[data-state="ready"]{--row:44px;--reqrow:25px}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:Archivo,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:13px;
+  line-height:1.3;
+  /* tabular lining figures across the whole interface: every column of numbers
+     in here changes while the operator is watching it */
+  font-variant-numeric:tabular-nums lining-nums;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,p{margin:0}
+
+/* ------------------------------------------------- type scale (decided) ---
+   text:    11 / 11.5 / 12.5 / 13 / 13.5 / 15 / 19 / 20 / 21
+   figures: 34 for the two numbers that must carry across a room.
+   negative tracking only above 18px; no tracked-out small caps anywhere. */
+
+/* ------------------------------------------------------------ the rail --- */
+/* Tiga keadaan dibedakan BENTUK, bukan rona.
+   Versi pertama memakai abu penuh untuk siap dan hijau penuh untuk tayang:
+   #5A6269 dan #116B3C hanya berbeda 1,06:1 dalam luminans, jadi dari jarak
+   kerja keduanya sama saja — satu batang gelap. Sekarang:
+     kosong      tidak ada yang berjalan
+     satu blok   satu hal menunggu Anda, dan ia ada di puncak daftar
+     penuh       sedang tayang
+   Lebarnya 7px, bukan 4: pada 4px ini terbaca sebagai garis tepi halaman. */
+.rail{position:fixed;left:0;top:0;bottom:0;width:7px;background:var(--rule);z-index:4}
+.rail-seg{position:absolute;left:0;right:0;display:none}
+[data-state="stopped"] .rail-seg{display:block;top:0;height:132px;background:var(--warn)}
+[data-state="running"] .rail{background:var(--live)}
+[data-state="running"] .rail-seg{
+  display:block;top:0;height:30%;
+  background:rgba(255,255,255,.34);                        /* a solid, not a gradient */
+  animation:railtravel 7s linear infinite;
+}
+@keyframes railtravel{from{transform:translateY(-100%)}to{transform:translateY(333%)}}
+
+/* ----------------------------------------------------------- the shell --- */
+.console{
+  margin-left:4px;
+  padding:0 32px 10px 28px;
+  display:flex;flex-direction:column;
+  min-height:100vh;
+}
+/* section order per state. the operator reads top-down, so whatever they can
+   act on is physically first. in stopped the checklist climbs to sit directly
+   under the fault; elsewhere it drops below the ladder. the log is always
+   last because it is the region that grows and scrolls. */
+.strip-problem{order:1}
+.strip-live{order:1}
+#secEtalase{order:3}
+#secSyarat{order:4}
+#secLog{order:5}
+html[data-state="stopped"] #secSyarat{order:2}
+
+/* ---------------------------------------------------- state variants ----- */
+[data-s]{display:none}
+html[data-state="stopped"] [data-s~="stopped"],
+html[data-state="ready"]   [data-s~="ready"],
+html[data-state="running"] [data-s~="running"]{display:inline}
+html[data-state="stopped"] [data-s~="stopped"].blk,
+html[data-state="ready"]   [data-s~="ready"].blk,
+html[data-state="running"] [data-s~="running"].blk{display:block}
+
+/* ------------------------------------------------------- shared atoms --- */
+.lbl{font-size:11px;font-weight:500;color:var(--muted)}
+.val{font-size:12.5px;font-weight:500;color:var(--ink)}
+.col-num{width:var(--num);flex:0 0 var(--num);text-align:right}
+.on{color:var(--live);font-weight:600}
+.t-warn{color:var(--warn)}
+.t-mute{color:var(--muted)}
+.big{display:block;font-size:34px;font-weight:600;letter-spacing:-.03em;line-height:1.05}
+.sub{display:block;font-size:11.5px;color:var(--muted);line-height:1.35}
+
+/* the chain of one request: labelled pairs, left to right in the real
+   sequence. no dots, no arrows, no icons - the label carries the meaning. */
+.chain{display:flex;flex-wrap:wrap;gap:3px 24px;align-items:baseline}
+.ch{display:flex;gap:6px;align-items:baseline;white-space:nowrap}
+
+/* ------------------------------------------------------------ controls --- */
+.btn{
+  font:inherit;font-size:12.5px;font-weight:600;line-height:1;
+  padding:9px 15px;border-radius:2px;cursor:pointer;
+  background:var(--paper);color:var(--ink);border:1px solid var(--ink);
+}
+.btn:hover{background:var(--ink);color:var(--paper)}
+.btn:active{transform:translateY(1px)}
+.btn[aria-disabled="true"]{
+  background:var(--surface);color:var(--muted);border-color:var(--rule);
+  cursor:default;transform:none;
+}
+.btn[aria-disabled="true"]:hover{background:var(--surface);color:var(--muted)}
+.btn-stop{border-color:var(--halt);color:var(--halt)}
+.btn-stop:hover{background:var(--halt);color:var(--paper)}
+.link{
+  font:inherit;font-size:12.5px;font-weight:500;color:var(--ink);
+  background:none;border:0;border-bottom:1px solid var(--rule);
+  padding:1px 0;cursor:pointer;
+}
+.link:hover{border-bottom-color:var(--ink)}
+.link[aria-disabled="true"]{color:var(--muted);border-bottom-style:dotted;cursor:default}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+/* -------------------------------------------------------- the top line --- */
+.top{
+  order:0;
+  display:flex;align-items:center;gap:var(--gap);
+  padding:14px 0;border-bottom:1px solid var(--ink);
+}
+.brand{font-size:15px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.state-line{
+  font-size:20px;font-weight:600;letter-spacing:-.015em;line-height:1.2;
+  border-left:1px solid var(--rule);padding-left:var(--gap);
+}
+.facts{display:flex;gap:26px;margin-left:auto}
+.fact{display:flex;flex-direction:column;gap:2px;text-align:right}
+.fact:last-child{width:var(--num)}   /* lands on the shared numeric column */
+
+/* ------------------------------------------------- the headless strips --- */
+/* each state has one region that answers the first question immediately.
+   no heading on either, because a heading would delay the answer. */
+.strip{
+  display:none;gap:24px;align-items:flex-start;justify-content:space-between;
+  padding:13px 0;border-bottom:1px solid var(--rule);
+}
+html[data-state="running"] .strip-live{display:flex}
+html[data-state="stopped"] .strip-problem{display:flex}
+/* the strip side block is wider than --num so its caption can breathe, but it
+   is right-aligned, so its figures still land on the same vertical as every
+   other value in the interface */
+.strip-side{width:200px;flex:0 0 200px;text-align:right}
+.live-title{font-size:21px;font-weight:600;letter-spacing:-.02em;line-height:1.25}
+.live-prod{display:flex;flex-wrap:wrap;gap:4px var(--gap);align-items:baseline;margin:4px 0 7px}
+.live-prod > .val{font-weight:400}
+.prob-title{font-size:19px;font-weight:600;letter-spacing:-.015em;color:var(--warn);line-height:1.25}
+.prob-cons{font-size:12.5px;color:var(--muted);margin-top:3px}
+.prob-act{display:flex;flex-wrap:wrap;gap:12px var(--gap);align-items:center;margin-top:10px}
+.prob-fix{font-size:13.5px;font-weight:500}
+
+/* ------------------------------------------------------------ sections --- */
+.sec{padding-top:14px}
+.sec-head{
+  display:flex;align-items:baseline;gap:var(--gap);
+  padding-bottom:7px;border-bottom:1px solid var(--ink);
+}
+.sec-h{font-size:13px;font-weight:600;flex:1 1 auto}
+
+/* etalase ladder ---------------------------------------------------------- */
+.rung,.cols{
+  display:grid;
+  grid-template-columns:26px 158px minmax(0,1.3fr) minmax(0,1fr) 62px 118px var(--num);
+  gap:var(--gap);align-items:center;
+  border-bottom:1px solid var(--rule);
+}
+.cols{padding:6px 0 4px}
+.cols span{font-size:11px;font-weight:500;color:var(--muted)}
+.cols span:last-child{text-align:right}
+.rung{height:var(--row)}
+html[data-state="running"] .rung-now{background:var(--surface)}
+.c-no{font-size:13px;font-weight:600}
+.c-trig{font-size:12.5px;font-weight:500}
+.c-prod{font-size:13.5px;font-weight:500;overflow-wrap:anywhere}
+.c-reply,.c-scene{font-size:12.5px;color:var(--muted)}
+.c-stat{font-size:12.5px;font-weight:500}
+.c-num{font-size:13px;font-weight:500;text-align:right}
+
+/* requirements ------------------------------------------------------------ */
+.req{
+  display:grid;grid-template-columns:280px minmax(0,1fr) var(--num);
+  gap:var(--gap);align-items:center;height:var(--reqrow);
+  border-bottom:1px solid var(--rule);
+}
+.req-l{font-size:12.5px;font-weight:500}
+.req-n{font-size:11.5px;color:var(--muted)}
+.req-n:empty{display:none}  /* six of the eight carry no note; do not reserve a box for nothing */
+.req-v{font-size:12.5px;font-weight:500;text-align:right;grid-column:3}
+
+/* log --------------------------------------------------------------------- */
+.log{display:flex;flex-direction:column;flex:1 1 auto;min-height:64px}
+.log-list{flex:1 1 auto;min-height:0}
+.log-rows{display:none}
+html[data-state="running"] .log-rows{display:block}
+.log-row{
+  display:grid;
+  grid-template-columns:72px 92px minmax(0,1.1fr) minmax(0,1fr) 62px var(--num);
+  gap:4px var(--gap);align-items:baseline;
+  padding:4px 0;border-bottom:1px solid var(--rule);
+}
+.l-time,.l-eta{font-size:12.5px;font-weight:500}
+.l-trig,.l-scene{font-size:12.5px;color:var(--muted)}
+.l-out{font-size:12.5px}
+.l-num{font-size:13px;font-weight:500;text-align:right}
+.l-chain{grid-column:2/-1;padding-bottom:2px}
+.l-span{grid-column:1/-1;font-size:12.5px;color:var(--muted)}
+.empty{padding:9px 0;font-size:12.5px;color:var(--muted)}
+
+/* ------------------------------------------------- review dock (tooling) -
+   deliberately not product UI: indigo, rounded, one drop shadow. lives
+   outside .console so it can never be read as part of the dashboard. */
+.dock{
+  position:fixed;right:18px;bottom:18px;z-index:9;
+  display:flex;align-items:center;gap:8px;
+  padding:8px 10px;border-radius:8px;
+  background:#1B1F3B;box-shadow:0 6px 22px rgba(10,12,30,.34);
+}
+.dock[hidden]{display:none}
+.dock-label{font-size:11px;font-weight:600;color:#C9CCF2;letter-spacing:.04em}
+.dock button{
+  font:inherit;font-size:11.5px;font-weight:600;line-height:1;
+  padding:7px 10px;border-radius:5px;cursor:pointer;
+  background:transparent;color:#EDEEFF;border:1px solid rgba(237,238,255,.45);
+}
+.dock button:hover{border-color:#EDEEFF}
+.dock button[aria-pressed="true"]{background:#4C5BD4;border-color:#4C5BD4;color:#FFFFFF}
+.dock .dock-x{padding:7px 9px;border-color:transparent;font-size:13px}
+.dock :focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
+
+/* ---------------------------------------------------------- 1280 x 800 ---
+   the fixed regions total roughly 560-700px depending on state. the shell is
+   exactly one viewport tall, the log takes whatever is left and scrolls inside
+   itself, so the page itself never scrolls: run state, all five etalase, all
+   eight requirements and the history are on screen at once. */
+@media (min-width:900px){
+  .console{height:100vh}
+  .log{overflow:hidden}
+  .log-list{overflow-y:auto}
+}
+
+/* ------------------------------------------------------- narrow (480px) ---
+   the grids reflow into stacks. nothing carries a min-width, so there is no
+   horizontal scroll at 480px or below. */
+@media (max-width:899px){
+  .console{padding:0 16px 14px 16px;min-height:0}
+  .top{flex-wrap:wrap;align-items:flex-start;gap:12px}
+  .state-line{border-left:0;padding-left:0;flex:1 1 100%;font-size:18px}
+  .facts{margin-left:0;flex:1 1 100%;flex-wrap:wrap;gap:12px 22px}
+  .fact{text-align:left}
+  .fact:last-child{width:auto}
+  .strip{flex-wrap:wrap}
+  .strip-side{text-align:left;width:auto;flex:1 1 100%}
+  .strip-side .sub{max-width:none}
+  /* heading keeps the count beside it; the controls drop to a second line */
+  .sec-head{flex-wrap:wrap;row-gap:8px}
+  .sec-h{order:1}
+  .sec-head .col-num{order:2}
+  .sec-head .link{order:3}
+  .sec-head .lbl:not(.col-num){order:4}
+  .cols{display:none}
+  .rung{
+    grid-template-columns:26px minmax(0,1fr) var(--num);
+    grid-template-areas:"no stat num" "prod prod prod" "trig trig trig" "reply reply scene";
+    height:auto;gap:3px var(--gap);padding:9px 0;align-items:baseline;
+  }
+  .c-no{grid-area:no}.c-stat{grid-area:stat}.c-num{grid-area:num}
+  .c-prod{grid-area:prod}.c-trig{grid-area:trig}.c-reply{grid-area:reply}
+  .c-scene{grid-area:scene;text-align:right}
+  .req{grid-template-columns:minmax(0,1fr) var(--num);height:auto;padding:7px 0}
+  .req-l{grid-column:1;grid-row:1}
+  .req-v{grid-column:2;grid-row:1}
+  .req-n{grid-column:1/-1}
+  .log-row{
+    grid-template-columns:minmax(0,1fr) var(--num);
+    grid-template-areas:"time num" "eta eta" "trig trig" "out scene" "chain chain";
+    padding:8px 0;
+  }
+  .l-time{grid-area:time}.l-num{grid-area:num}.l-eta{grid-area:eta}
+  .l-trig{grid-area:trig}.l-out{grid-area:out}
+  .l-scene{grid-area:scene;text-align:right}
+  .l-chain{grid-area:chain;grid-column:auto}
+  .dock{right:10px;bottom:10px;flex-wrap:wrap;max-width:calc(100vw - 20px)}
+}
+
+@media (prefers-reduced-motion:reduce){
+  /* the rail stays solid green; the one moving thing in the product stops */
+  [data-state="running"] .rail-seg{animation:none;display:none}
+  .btn:active{transform:none}
+}
+</style>
+</head>
+<body>
+
+<!-- identity device 1 -->
+<div class="rail" aria-hidden="true"><span class="rail-seg"></span></div>
+
+<main class="console">
+
+  <!-- ============================================================ top line
+       wordmark, run state as a sentence, the one control, then the connection
+       facts right-aligned - the last pair sits on the shared numeric column.
+       no greeting, no avatar, no nav to pages that do not exist. -->
+  <header class="top">
+    <h1 class="brand">AI LIVE HOST</h1>
+
+    <p class="state-line blk" data-s="stopped">Otomasi mati. LIVE TikTok Anda belum tayang.</p>
+    <p class="state-line blk" data-s="ready">Otomasi mati. Semua syarat sudah terpenuhi.</p>
+    <p class="state-line blk" data-s="running"><span class="on">Otomasi jalan.</span> Sudah 16 menit, 2 permintaan penonton.</p>
+
+    <!-- start is ink-outlined, never green: a green start button would mean
+         the thing it starts is already running -->
+    <button class="btn" id="btnStart" type="button" aria-describedby="whyBlocked" data-s="stopped ready">Mulai</button>
+    <button class="btn btn-stop" id="btnStop" type="button" data-s="running">Hentikan</button>
+
+    <div class="facts">
+      <div class="fact"><span class="lbl">Akun</span><span class="val">tokosnackku</span></div>
+      <div class="fact"><span class="lbl">OBS</span><span class="val">Tersambung</span></div>
+      <div class="fact">
+        <span class="lbl">LIVE TikTok Anda</span>
+        <span class="val t-warn" data-s="stopped">Belum tayang</span>
+        <span class="val" data-s="ready running">Sedang tayang</span>
+      </div>
+      <div class="fact">
+        <span class="lbl">Produk di LIVE Anda</span>
+        <span class="val t-mute" data-s="stopped">Belum terbaca</span>
+        <span class="val" data-s="ready running">5</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================= live strip
+       running only. answers which etalase, how long is left, did the pin
+       land, did the reply post - in one glance. carries the only big green
+       figure in the product. -->
+  <section class="strip strip-live" aria-label="Yang sedang tayang">
+    <div>
+      <h2 class="live-title">Etalase 1 <span class="on">sedang tayang</span></h2>
+      <p class="live-prod">
+        <span class="val">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</span>
+        <span class="ch"><span class="lbl">Scene</span><span class="val">PAX-1</span></span>
+        <span class="ch"><span class="lbl">Pemicu</span><span class="val">&ldquo;spill etalase 1&rdquo;</span></span>
+      </p>
+      <div class="chain">
+        <span class="ch"><span class="lbl">Diminta</span><span class="val">16:24:11</span></span>
+        <span class="ch"><span class="lbl">Scene mulai</span><span class="val">+0,05s</span></span>
+        <span class="ch"><span class="lbl">Produk di-pin</span><span class="val">+2,2s</span></span>
+        <span class="ch"><span class="lbl">Balasan terkirim</span><span class="val">+1,6s</span></span>
+      </div>
+    </div>
+    <div class="strip-side">
+      <span class="lbl">Sisa</span>
+      <span class="big on">31s</span>
+      <span class="sub">dari 46s. Jeda 120s setelah selesai.</span>
+    </div>
+  </section>
+
+  <!-- ====================================================== problem strip
+       stopped only, and placed above everything else because it is the only
+       thing the operator can usefully do. ONE cause, stated once. the second
+       reading sits under it in muted type as a consequence, so a single cause
+       can never be counted as two problems. -->
+  <section class="strip strip-problem" aria-label="Yang perlu Anda perbaiki">
+    <div>
+      <h2 class="prob-title">LIVE TikTok Anda belum tayang</h2>
+      <p class="prob-cons">Produk di LIVE Anda belum terbaca selama siaran belum mulai.</p>
+      <div class="prob-act">
+        <p class="prob-fix" id="whyBlocked">Mulai siaran di TikTok, masukkan produk ke etalase LIVE, lalu tekan Periksa ulang.</p>
+        <button class="btn" id="btnRecheck" type="button">Periksa ulang</button>
+      </div>
+    </div>
+    <div class="strip-side">
+      <span class="lbl">Perlu tindakan</span>
+      <span class="big t-warn">1</span>
+      <span class="sub">dari 8 syarat</span>
+    </div>
+  </section>
+
+  <!-- ====================================================== etalase ladder
+       1..5 is the shop numbering, so the numbers are content, not decoration.
+       rungs, not rows in a box: a hairline under each one, nothing around. -->
+  <section class="sec" id="secEtalase">
+    <div class="sec-head">
+      <h2 class="sec-h">Etalase</h2>
+      <button class="link" id="btnEdit" type="button">Ubah etalase</button>
+      <span class="lbl" data-s="running">Bisa diubah setelah otomasi berhenti</span>
+      <span class="lbl col-num">5 etalase</span>
+    </div>
+
+    <div class="cols">
+      <span>No</span><span>Pemicu</span><span>Produk</span><span>Balasan</span><span>Scene</span><span>Status</span><span>Panjang</span>
+    </div>
+
+    <!-- etalase 1 -->
+    <div class="rung rung-now">
+      <span class="c-no">1</span>
+      <span class="c-trig">&ldquo;spill etalase 1&rdquo;</span>
+      <span class="c-prod">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</span>
+      <span class="c-reply">Etalase 1 sudah aku pin ya kak</span>
+      <span class="c-scene">PAX-1</span>
+      <span class="c-stat">
+        <span class="t-mute" data-s="stopped">Belum aktif</span>
+        <span data-s="ready">Siap</span>
+        <span class="on" data-s="running">Sedang tayang</span>
+      </span>
+      <span class="c-num">
+        <span class="t-mute" data-s="stopped">46s</span>
+        <span data-s="ready">46s</span>
+        <span data-s="running"><span class="lbl">sisa</span> <span class="on">31s</span></span>
+      </span>
+    </div>
+
+    <!-- etalase 2 -->
+    <div class="rung">
+      <span class="c-no">2</span>
+      <span class="c-trig">&ldquo;no 2&rdquo;</span>
+      <span class="c-prod">Gery Saluut Malkist Family Pack 100gr</span>
+      <span class="c-reply">Etalase 2 sudah aku pin ya kak</span>
+      <span class="c-scene">PAX-2</span>
+      <span class="c-stat">
+        <span class="t-mute" data-s="stopped">Belum aktif</span>
+        <span data-s="ready running">Siap</span>
+      </span>
+      <span class="c-num">
+        <span class="t-mute" data-s="stopped">46s</span>
+        <span data-s="ready running">46s</span>
+      </span>
+    </div>
+
+    <!-- etalase 3 -->
+    <div class="rung">
+      <span class="c-no">3</span>
+      <span class="c-trig">&ldquo;et 3&rdquo;</span>
+      <span class="c-prod">Gery Saluut Malkist renceng, 10 bungkus × 18gr</span>
+      <span class="c-reply">Etalase 3 sudah aku pin ya kak</span>
+      <span class="c-scene">PAX-3</span>
+      <span class="c-stat">
+        <span class="t-mute" data-s="stopped">Belum aktif</span>
+        <span data-s="ready">Siap</span>
+        <span data-s="running">Siap</span>
+      </span>
+      <span class="c-num">
+        <span class="t-mute" data-s="stopped">52s</span>
+        <span data-s="ready running">52s</span>
+      </span>
+    </div>
+
+    <!-- etalase 4 -->
+    <div class="rung">
+      <span class="c-no">4</span>
+      <span class="c-trig">&ldquo;et 4&rdquo;</span>
+      <span class="c-prod">Dilan Cookies Choco Chip 12gr, pack isi 23</span>
+      <span class="c-reply">Etalase 4 sudah aku pin ya kak</span>
+      <span class="c-scene">PAX-4</span>
+      <span class="c-stat">
+        <span class="t-mute" data-s="stopped">Belum aktif</span>
+        <span data-s="ready running">Siap</span>
+      </span>
+      <span class="c-num">
+        <span class="t-mute" data-s="stopped">69s</span>
+        <span data-s="ready running">69s</span>
+      </span>
+    </div>
+
+    <!-- etalase 5 -->
+    <div class="rung">
+      <span class="c-no">5</span>
+      <span class="c-trig">&ldquo;spill etalase 5&rdquo;</span>
+      <span class="c-prod">Dilan Waffle, 1 box kue coklat 16gr</span>
+      <span class="c-reply">Etalase 5 sudah aku pin ya kak</span>
+      <span class="c-scene">PAX-5</span>
+      <span class="c-stat">
+        <span class="t-mute" data-s="stopped">Belum aktif</span>
+        <span data-s="ready running">Siap</span>
+      </span>
+      <span class="c-num">
+        <span class="t-mute" data-s="stopped">46s</span>
+        <span data-s="ready running">46s</span>
+      </span>
+    </div>
+  </section>
+
+  <!-- ======================================================= requirements
+       eight rows, one line each, results right-aligned on the numeric column.
+       every passing result is INK, never green - connected is not running. -->
+  <section class="sec" id="secSyarat">
+    <div class="sec-head">
+      <h2 class="sec-h">Syarat sebelum mulai</h2>
+      <span class="lbl col-num"><span data-s="stopped">7 dari 8 aman</span><span data-s="ready running">8 dari 8 aman</span></span>
+    </div>
+
+    <div class="req"><span class="req-l">Pengaturan</span><span class="req-n"></span><span class="req-v">Tersimpan</span></div>
+    <div class="req"><span class="req-l">Bot lain yang jalan</span><span class="req-n"></span><span class="req-v">Tidak ada</span></div>
+    <div class="req"><span class="req-l">Port yang dipakai aplikasi</span><span class="req-n"></span><span class="req-v">Tersedia</span></div>
+    <div class="req"><span class="req-l">OBS</span><span class="req-n"></span><span class="req-v">Tersambung</span></div>
+    <div class="req"><span class="req-l">Scene OBS</span><span class="req-n"></span><span class="req-v">Ditemukan</span></div>
+    <div class="req"><span class="req-l">Profil browser</span><span class="req-n"></span><span class="req-v">Tersedia</span></div>
+    <div class="req">
+      <span class="req-l">LIVE TikTok Anda</span>
+      <span class="req-n"><span data-s="stopped">Satu-satunya yang menahan tombol Mulai</span></span>
+      <span class="req-v"><span class="t-warn" data-s="stopped">Belum tayang</span><span data-s="ready running">Sedang tayang</span></span>
+    </div>
+    <!-- consequence row: muted label AND muted value plus the reason, so it
+         reads as downstream of the row above, not as a second fault -->
+    <div class="req">
+      <span class="req-l"><span class="t-mute" data-s="stopped">Produk di LIVE Anda</span><span data-s="ready running">Produk di LIVE Anda</span></span>
+      <span class="req-n"><span data-s="stopped">Terbaca setelah LIVE tayang</span></span>
+      <span class="req-v"><span class="t-mute" data-s="stopped">Belum terbaca</span><span data-s="ready running">5 tersedia</span></span>
+    </div>
+  </section>
+
+  <!-- ========================================================= request log
+       the real chain with the measured timings. detail decays with age: the
+       newest finished request carries its whole chain, older lines compress
+       to one line. this region is the one that scrolls. -->
+  <section class="sec log" id="secLog">
+    <div class="sec-head">
+      <h2 class="sec-h">Permintaan penonton</h2>
+      <span class="lbl col-num"><span data-s="stopped ready">0 sesi ini</span><span data-s="running">1 selesai, 1 tayang</span></span>
+    </div>
+
+    <div class="log-list" tabindex="0" role="group" aria-label="Riwayat permintaan penonton">
+      <p class="empty blk" data-s="stopped">Belum ada permintaan. Riwayat muncul setelah otomasi jalan.</p>
+      <p class="empty blk" data-s="ready">Belum ada permintaan di sesi ini.</p>
+
+      <div class="log-rows">
+        <div class="log-row">
+          <span class="l-time">16:09:59</span>
+          <span class="l-eta">Etalase 1</span>
+          <span class="l-trig">&ldquo;spill etalase 1&rdquo;</span>
+          <span class="l-out">Produk di-pin, balasan terkirim</span>
+          <span class="l-scene">PAX-1</span>
+          <span class="l-num">36,4s</span>
+          <div class="l-chain chain">
+            <span class="ch"><span class="lbl">Scene mulai</span><span class="val">+0,05s</span></span>
+            <span class="ch"><span class="lbl">Produk di-pin</span><span class="val">+2,2s</span></span>
+            <span class="ch"><span class="lbl">Balasan terkirim</span><span class="val">+1,6s</span></span>
+            <span class="lbl">Berhenti karena video habis, bukan batas 46s</span>
+          </div>
+        </div>
+
+        <div class="log-row">
+          <span class="l-span">16:08:14 &nbsp; Tersambung ke OBS dan LIVE TikTok</span>
+        </div>
+
+        <div class="log-row">
+          <span class="l-span">16:08:13 &nbsp; Otomasi dimulai</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- review dock: tooling, not product. outside every bit of dashboard markup. -->
+<div class="dock" id="dock" role="group" aria-label="Pratinjau status">
+  <span class="dock-label">Pratinjau</span>
+  <button type="button" data-set="stopped">Berhenti</button>
+  <button type="button" data-set="ready">Siap</button>
+  <button type="button" data-set="running">Tayang</button>
+  <button type="button" class="dock-x" id="dockClose" aria-label="Tutup pratinjau">&times;</button>
+</div>
+
+<script>
+(function(){
+  var root = document.documentElement;
+  var dock = document.getElementById('dock');
+  var btnStart = document.getElementById('btnStart');
+  var btnEdit = document.getElementById('btnEdit');
+  var setters = dock.querySelectorAll('[data-set]');
+  var i;
+
+  // CSS owns the look of every state. JS only moves data-state and the two
+  // attributes CSS cannot set: availability of the two real controls.
+  function apply(s){
+    root.setAttribute('data-state', s);
+    btnStart.setAttribute('aria-disabled', s === 'stopped' ? 'true' : 'false');
+    btnEdit.setAttribute('aria-disabled', s === 'running' ? 'true' : 'false');
+    for (var k = 0; k < setters.length; k++){
+      setters[k].setAttribute('aria-pressed', setters[k].getAttribute('data-set') === s ? 'true' : 'false');
+    }
+  }
+
+  for (i = 0; i < setters.length; i++){
+    setters[i].addEventListener('click', function(){ apply(this.getAttribute('data-set')); });
+  }
+  document.getElementById('dockClose').addEventListener('click', function(){ dock.hidden = true; });
+
+  // the product controls behave, so every state is reachable without the dock
+  btnStart.addEventListener('click', function(){
+    if (this.getAttribute('aria-disabled') === 'true') return;
+    apply('running');
+  });
+  document.getElementById('btnStop').addEventListener('click', function(){ apply('ready'); });
+  document.getElementById('btnRecheck').addEventListener('click', function(){ apply('ready'); });
+
+  // 1 / 2 / 3 keep working after the dock is dismissed
+  document.addEventListener('keydown', function(e){
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var map = {'1':'stopped','2':'ready','3':'running'};
+    if (map[e.key]){ apply(map[e.key]); e.preventDefault(); }
+  });
+
+  apply('stopped');
+})();
+</script>
+</body>
+</html>

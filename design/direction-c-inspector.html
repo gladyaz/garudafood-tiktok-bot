@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="id" data-state="stopped">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI LIVE HOST</title>
+
+<!--
+  ===========================================================================
+  DIRECTION C  -  "INSPECTOR"
+  ===========================================================================
+
+  ORGANIZING IDEA
+  Master/detail, the way a video editor or a DAW does it. Lima etalase adalah
+  satu daftar di kiri; memilih satu mengisi panel kanan dengan SEMUA hal
+  tentang etalase itu - pemicu, produk, balasan, scene, panjang scene, lalu
+  riwayat permintaannya sendiri dengan waktu terukur. Konfigurasi dan
+  pemantauan untuk satu benda hidup di satu tempat.
+
+  Dua perangkat identitas:
+  1. Status bar gelap 32px, lima fakta di posisi yang SELALU sama (kolom grid
+     dengan lebar tetap, bukan auto), jadi operator menghafal tempat melihat.
+     Tingginya dijaga: begitu terasa seperti banner, ia gagal.
+  2. Aksen seleksi 3px di tepi kiri baris terpilih, dilanjutkan ke tepi kiri
+     header panel detail. Baris terpilih juga berubah dari panel (#F4F5F7) ke
+     paper (#FFFFFF) sehingga secara visual menyambung ke panel detail -
+     mata tidak pernah kehilangan etalase mana yang sedang dibaca.
+     Aksen biru #2A5D8F, tidak pernah hijau.
+
+  COLOUR SEMANTICS (aturan produk, bukan selera)
+  Hijau HANYA berarti sedang berjalan / sedang tayang. Tidak pernah
+  "tersimpan", tidak pernah "tersambung", tidak pernah "tersedia".
+  - Otomasi "Tayang"                 -> hijau
+  - Etalase yang sedang tayang       -> hijau
+  - LIVE TikTok "Sedang tayang"      -> hijau (ini benar-benar on air)
+  - OBS "Tersambung"                 -> putih/tinta, BUKAN hijau
+  - "Tersimpan", "Tersedia", "Ditemukan", "Berhasil" -> tinta, BUKAN hijau
+  - Syarat yang perlu tindakan manusia -> amber #8A5600
+  - Hentikan / gagal                   -> #A4291F
+  Catatan: satu fakta ("LIVE sedang tayang") sengaja memakai dua perlakuan.
+  Di status bar ia hijau karena di sana ia melaporkan keadaan siaran yang
+  memang on air. Di daftar syarat ia tinta, karena di sana ia melaporkan
+  "syarat terpenuhi", dan syarat terpenuhi bukan arti hijau.
+
+  SATU PENYEBAB TIDAK BOLEH TERLIHAT DUA
+  Di state stopped hanya "LIVE TikTok Anda" yang amber. "Produk di LIVE Anda"
+  ditarik masuk (indent + garis penghubung 1px) dan dimute: ia akibat, bukan
+  masalah kedua.
+
+  AVOID-LIST - diperiksa ulang terhadap hasil akhir:
+  tidak ada grid kartu (hanya dua region dipisah satu garis vertikal),
+  tidak ada hero, tidak ada gradient/glassmorphism/blur/shadow (kecuali dock
+  pratinjau), tidak ada ikon sama sekali - hanya tipe, garis, ruang;
+  tidak ada baris KPI, tidak ada sparkline, tidak ada "Welcome back",
+  tidak ada avatar, tidak ada sidebar navigasi; tidak ada label ALL-CAPS
+  ter-tracking di atas heading; tidak ada meta string "A · B · C"; tidak ada
+  pola "WORD — fragment"; tidak ada monospace dekoratif; tidak ada panah pada
+  teks tombol; nomor 1..5 dipakai karena itu penomoran milik toko sendiri, dan
+  rantai permintaan->scene->pin->balasan->selesai dipakai karena itu urutan
+  nyata.
+  ===========================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+/* ---------------------------------------------------------------------------
+   TOKENS
+   Kontras diukur terhadap latar yang benar-benar dipakai (lihat laporan):
+   muted #596069 on #FFFFFF 6.36:1 | on #F4F5F7 5.83:1
+   sel   #2A5D8F on #FFFFFF 6.87:1 | live #0F7340 on #FFFFFF 5.92:1
+   warn  #8A5600 on #F4F5F7 5.64:1 | on #FBF3E3 5.58:1
+   halt  #A4291F on #FFFFFF 7.20:1
+   nonaktif #585E64 on #E4E6E9 5.25:1
+   on dark #1C2024: #FFFFFF 16.4:1 | #9BA3AC 6.42:1 | #35A86B 5.43:1
+                    #D9A24A 7.17:1
+--------------------------------------------------------------------------- */
+:root{
+  --chrome:#1C2024;
+  --paper:#FFFFFF;
+  --panel:#F4F5F7;
+  --rule:#DFE2E6;
+  --rule-soft:#E8EAED;
+  --ink:#1C2024;
+  --muted:#596069;
+  --sel:#2A5D8F;
+  --live:#0F7340;
+  --warn:#8A5600;
+  --halt:#A4291F;
+  --warn-wash:#FBF3E3;
+
+  --on-dark:#9BA3AC;
+  --live-dark:#35A86B;
+  --warn-dark:#D9A24A;
+
+  --row-hover:#E9EBEE;
+
+  /* type scale: 11 / 12 / 13 / 15 / 20 / 30  - dipilih, bukan default */
+  --t11:11px; --t12:12px; --t13:13px; --t15:15px; --t20:20px; --t30:30px;
+
+  --bar-h:32px;
+  --col-master:384px;
+  --pad:16px;
+  /* ukuran baca panel detail: isi tidak melebar sampai tepi layar,
+     supaya langkah dan waktunya tetap satu kelompok untuk mata */
+  --measure:716px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Instrument Sans','Segoe UI',system-ui,sans-serif;
+  font-size:var(--t13);
+  line-height:1.38;
+  -webkit-font-smoothing:antialiased;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+input,select,button{font:inherit;color:inherit;font-variant-numeric:inherit}
+
+/* fokus terlihat di setiap kontrol */
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--sel);
+  outline-offset:1px;
+}
+.bar button:focus-visible{outline-color:#C8D0D8}
+
+/* ---------------------------------------------------------------------------
+   STATE SWITCHING - CSS yang bekerja, bukan JS
+--------------------------------------------------------------------------- */
+.s-stopped,.s-ready,.s-running,.s-idle{display:none}
+html[data-state="stopped"] .s-stopped,
+html[data-state="ready"]   .s-ready,
+html[data-state="running"] .s-running,
+html[data-state="stopped"] .s-idle,
+html[data-state="ready"]   .s-idle{display:revert}
+
+/* ---------------------------------------------------------------------------
+   1. STATUS BAR - chrome, bukan hero. Lima fakta, posisi tetap.
+--------------------------------------------------------------------------- */
+.bar{
+  position:relative;
+  flex:0 0 auto;
+  height:var(--bar-h);
+  background:var(--chrome);
+  color:#FFFFFF;
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  align-items:stretch;
+  border-bottom:1px solid #000;
+}
+/* satu-satunya indikator hidup di seluruh halaman: garis 2px di dasar bar.
+   Hijau dan bernapas hanya saat benar-benar tayang. */
+.bar::after{
+  content:"";
+  position:absolute;left:0;right:0;bottom:-1px;height:2px;
+  background:#2B3137;
+}
+html[data-state="running"] .bar::after{
+  background:var(--live-dark);
+  animation:air 2.6s ease-in-out infinite;
+}
+@keyframes air{0%,100%{opacity:1}50%{opacity:.46}}
+
+.mark{
+  margin:0;
+  align-self:center;
+  padding:0 14px 0 var(--pad);
+  font-size:var(--t11);
+  font-weight:600;
+  letter-spacing:.06em;
+  color:#FFFFFF;
+  border-right:1px solid #343A40;
+  line-height:var(--bar-h);
+}
+.bar-fields{
+  display:grid;
+  grid-template-columns:132px 196px 142px 162px minmax(0,1fr);
+  min-width:0;
+}
+.f{
+  display:flex;align-items:center;gap:7px;
+  padding:0 13px;
+  min-width:0;
+  border-right:1px solid #2B3137;
+  white-space:nowrap;
+}
+/* LIVE dijangkarkan ke tepi kanan: bar punya dua jangkar, bukan satu
+   kelompok di kiri dengan sisa gelap yang menganggur. */
+.f:last-child{border-right:0;justify-content:flex-end;padding-right:var(--pad)}
+.f:nth-child(4){border-right:0}
+.f-l{font-size:var(--t11);color:var(--on-dark);flex:0 0 auto}
+.f-v{font-size:var(--t12);font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.f-v.off{color:var(--on-dark);font-weight:400}
+.f-v.on{color:#FFFFFF}
+.f-v.air{color:var(--live-dark);font-weight:600}
+.f-v.act{color:var(--warn-dark);font-weight:500}
+.f-run .f-v{font-weight:600}
+#barCount{margin-left:3px;font-weight:600}
+
+/* ---------------------------------------------------------------------------
+   LAYOUT - dua region, satu garis vertikal, tanpa gap dan tanpa kartu
+--------------------------------------------------------------------------- */
+.work{
+  flex:1 1 auto;
+  display:grid;
+  grid-template-columns:var(--col-master) minmax(0,1fr);
+  min-height:0;
+}
+.master{
+  background:var(--panel);
+  border-right:1px solid var(--rule);
+  display:grid;
+  grid-template-rows:auto auto minmax(0,1fr) auto;
+  min-height:0;
+  min-width:0;
+}
+.detail{
+  background:var(--paper);
+  display:grid;
+  grid-template-rows:auto auto minmax(0,1fr);
+  min-height:0;
+  min-width:0;
+}
+
+/* ---------------------------------------------------------------------------
+   MASTER LIST
+--------------------------------------------------------------------------- */
+.lhead{
+  display:grid;
+  grid-template-columns:24px minmax(0,1fr) 112px;
+  gap:0 12px;
+  padding:9px var(--pad) 7px;
+  font-size:var(--t11);
+  color:var(--muted);
+  border-bottom:1px solid var(--rule);
+}
+.lhead span:last-child{text-align:right}
+
+.list{list-style:none;margin:0;padding:0}
+.row{
+  display:grid;
+  grid-template-columns:24px minmax(0,1fr) 112px;
+  gap:1px 12px;
+  width:100%;
+  text-align:left;
+  background:transparent;
+  border:0;
+  border-bottom:1px solid var(--rule-soft);
+  border-left:3px solid transparent;
+  padding:8px 13px 9px calc(var(--pad) - 3px);
+  cursor:pointer;
+}
+.row:hover{background:var(--row-hover)}
+.row[aria-current="true"]{
+  background:var(--paper);
+  border-left-color:var(--sel);
+  border-bottom-color:var(--rule);
+}
+.r-n{
+  grid-row:1 / span 2;
+  font-size:var(--t15);
+  font-weight:600;
+  color:var(--muted);
+  padding-top:1px;
+}
+.row[aria-current="true"] .r-n{color:var(--sel)}
+.r-trig{
+  font-size:var(--t13);
+  font-weight:500;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.r-st{grid-column:3;grid-row:1;text-align:right;font-size:var(--t12);font-weight:500}
+.r-prod{
+  grid-column:2;grid-row:2;
+  font-size:var(--t11);color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.r-last{grid-column:3;grid-row:2;text-align:right;font-size:var(--t11);color:var(--muted)}
+.v.off{color:var(--muted);font-weight:400}
+.v.air{color:var(--live);font-weight:600}
+.v.rdy{color:var(--ink)}
+
+/* ---------------------------------------------------------------------------
+   SYARAT SEBELUM MULAI - di region kiri, di bawah daftar.
+   Saat tayang ia menyusut jadi satu baris terkonfirmasi.
+--------------------------------------------------------------------------- */
+.req{
+  border-top:1px solid var(--rule);
+  padding:11px var(--pad) 0;
+  overflow:auto;
+  min-height:0;
+}
+.req-top{
+  display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  margin-bottom:9px;
+}
+.req-top h2{
+  margin:0;
+  font-size:var(--t12);
+  font-weight:600;
+}
+.req-flag{font-size:var(--t11);font-weight:500}
+.req-flag.act{color:var(--warn)}
+.req-flag.ok{color:var(--muted);font-weight:400}
+
+.reqs{margin:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0}
+.reqs dt,.reqs dd{
+  margin:0;
+  padding:4px 0;
+  font-size:var(--t12);
+  border-bottom:1px solid var(--rule-soft);
+}
+.reqs dt{color:var(--muted)}
+.reqs dd{text-align:right;font-weight:500}
+.reqs dd.pass{color:var(--ink)}
+.reqs dd.act{color:var(--warn);font-weight:600}
+/* akibat, bukan masalah kedua: ditarik masuk, dimute, diberi penghubung */
+.reqs dt.dep{padding-left:13px;position:relative;color:var(--muted)}
+.reqs dt.dep::before{
+  content:"";position:absolute;left:2px;top:-4px;bottom:11px;
+  border-left:1px solid var(--rule);
+  border-bottom:1px solid var(--rule);
+  width:7px;
+}
+.reqs dd.dep{color:var(--muted);font-weight:400}
+.reqs dd.dep-note{
+  grid-column:1 / -1;
+  text-align:left;
+  font-weight:400;
+  border-bottom:0;
+  padding:4px 0 0 13px;
+  font-size:var(--t11);
+  color:var(--muted);
+}
+.fix{
+  margin:9px 0 0;
+  padding:9px 10px;
+  background:var(--warn-wash);
+  border-left:3px solid var(--warn);
+  font-size:var(--t12);
+  color:var(--ink);
+  max-width:34em;
+}
+.req-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 10px}
+.recheck-note{font-size:var(--t11);color:var(--muted)}
+
+/* Saat tayang, blok syarat menyusut jadi satu baris dan ruang yang terbebas
+   dipakai log sesi: pertanyaan "pin-nya masuk tidak?" terjawab tanpa harus
+   memilih etalase mana pun. */
+/* selektor dilengkapi karena .s-running memakai display:revert */
+html[data-state="running"] .live-left{
+  display:grid;
+  grid-template-rows:auto auto minmax(0,1fr);
+  min-height:0;
+}
+.req-ok{
+  border-top:1px solid var(--rule);
+  padding:11px var(--pad);
+  font-size:var(--t12);
+  color:var(--muted);
+}
+.req-ok b{color:var(--ink);font-weight:600}
+
+.slog-top{
+  display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  border-top:1px solid var(--rule);
+  padding:11px var(--pad) 7px;
+}
+.slog-top h2{margin:0;font-size:var(--t12);font-weight:600}
+.slog-n{font-size:var(--t11);color:var(--muted)}
+.slog{overflow:auto;min-height:0;padding:0 var(--pad)}
+.slog-row{
+  display:grid;
+  grid-template-columns:62px minmax(0,1fr);
+  gap:1px 11px;
+  padding:7px 0;
+  border-bottom:1px solid var(--rule-soft);
+}
+.slog-t{grid-row:1 / span 2;font-size:var(--t12);color:var(--muted);padding-top:1px}
+.slog-w{font-size:var(--t12);font-weight:500}
+.slog-w.air{color:var(--live);font-weight:600}
+.slog-d{grid-column:2;font-size:var(--t11);color:var(--muted)}
+
+/* ---------------------------------------------------------------------------
+   KONTROL JALAN - satu aksi utama, di bawah region kiri
+--------------------------------------------------------------------------- */
+.run{
+  border-top:1px solid var(--rule);
+  background:var(--panel);
+  padding:12px var(--pad) 13px;
+  display:grid;
+  gap:7px;
+}
+.btn{
+  border:1px solid var(--chrome);
+  background:var(--chrome);
+  color:#FFFFFF;
+  font-size:var(--t13);
+  font-weight:600;
+  padding:7px 16px;
+  border-radius:2px;
+  cursor:pointer;
+  justify-self:start;
+}
+.btn:hover{background:#2B3137}
+.btn:disabled{
+  background:#E4E6E9;
+  border-color:#D2D6DA;
+  color:#585E64;      /* 5.25:1 on #E4E6E9 - tetap lulus walau nonaktif */
+  cursor:not-allowed;
+}
+.btn-ghost{
+  border:1px solid var(--rule);
+  background:var(--paper);
+  color:var(--ink);
+  font-size:var(--t12);
+  font-weight:500;
+  padding:5px 11px;
+  border-radius:2px;
+  cursor:pointer;
+}
+.btn-ghost:hover{background:var(--row-hover)}
+.btn-halt{
+  border:1px solid var(--halt);
+  background:var(--paper);
+  color:var(--halt);
+  font-weight:600;
+}
+.btn-halt:hover{background:#FBEFEE}
+.run-meta{font-size:var(--t11);color:var(--muted);max-width:36em}
+.run-meta b{color:var(--ink);font-weight:600}
+.run-meta.act b{color:var(--warn)}
+
+/* ---------------------------------------------------------------------------
+   DETAIL PANEL  - aksen seleksi dilanjutkan ke header
+--------------------------------------------------------------------------- */
+.dhead{
+  border-left:3px solid var(--sel);
+  border-bottom:1px solid var(--rule);
+  padding:13px var(--pad) 14px;
+}
+/* garis pemisah tetap membentang penuh; hanya ISI yang dibatasi measure */
+.dhead-top,.d-prod,.facts,.prog,
+.cfg-top,.fr,.cfg-foot,
+.hist-top,.ev,.empty,.plan-h,.chain{max-width:var(--measure)}
+
+.dhead-top{
+  display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  margin-bottom:3px;
+}
+.d-et{font-size:var(--t12);font-weight:600;color:var(--sel)}
+.chip{
+  font-size:var(--t11);
+  font-weight:600;
+  padding:2px 7px;
+  border:1px solid currentColor;
+  border-radius:2px;
+  white-space:nowrap;
+}
+.chip.is-live{color:var(--live)}
+.chip.is-neutral{color:var(--muted);font-weight:500}
+.chip.is-off{color:var(--muted);font-weight:500}
+.d-prod{
+  margin:0;
+  font-size:var(--t20);
+  font-weight:500;
+  line-height:1.26;
+  letter-spacing:-.012em;
+}
+.facts{
+  margin-top:12px;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-end;
+  gap:0 26px;
+}
+.fact{min-width:0}
+.fact-l{font-size:var(--t11);color:var(--muted);margin-bottom:1px}
+.fact-v{font-size:var(--t13);font-weight:500}
+.fact-v .sub{font-weight:400;color:var(--muted);font-size:var(--t11)}
+.fact.big .fact-v{font-size:var(--t30);font-weight:600;line-height:1;color:var(--live);letter-spacing:-.02em}
+.fact.big .fact-v .sub{font-size:var(--t11);font-weight:400;color:var(--muted);margin-left:6px}
+/* Dua kepala fakta sebesar .big tetapi BUKAN hijau. Panel ini 896 dari 1280px:
+   kalau hanya keadaan tayang yang punya kepala besar, dua keadaan lain terbaca
+   sama di bagian layar yang paling besar. Hijau tetap hanya untuk yang sedang
+   tayang, jadi yang menuntut tindakan memakai amber dan yang siap memakai
+   tinta. */
+.fact.alert .fact-v,
+.fact.calm .fact-v{font-size:var(--t30);font-weight:600;line-height:1;letter-spacing:-.02em}
+.fact.alert .fact-v{color:var(--warn)}
+.fact.calm .fact-v{color:var(--ink)}
+.fact.alert .fact-v .sub,
+.fact.calm .fact-v .sub{font-size:var(--t11);font-weight:400;color:var(--muted);margin-left:6px}
+/* kalimat perbaikan boleh membungkus; sisanya tidak */
+.fact.wide{flex:1 1 320px;max-width:46ch}
+.fact.wide .fact-v{font-weight:400;line-height:1.4}
+/* rel waktu scene: bagian hijau adalah SISA, labelnya persis di atasnya */
+.prog{
+  flex:0 0 100%;
+  margin-top:13px;
+  height:2px;
+  background:var(--rule);
+}
+.prog span{display:block;height:2px;background:var(--live)}
+
+/* --- konfigurasi: form berlabel yang padat ------------------------------- */
+.cfg{
+  padding:12px var(--pad) 14px;
+  border-bottom:1px solid var(--rule);
+}
+.cfg-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px}
+.cfg-top h3{margin:0;font-size:var(--t12);font-weight:600}
+.cfg-note{font-size:var(--t11);color:var(--muted)}
+.fr{
+  display:grid;
+  grid-template-columns:186px minmax(0,1fr);
+  gap:0 14px;
+  align-items:center;
+  border-bottom:1px solid var(--rule-soft);
+  padding:3px 0;
+}
+.fr > label{font-size:var(--t12);color:var(--muted)}
+.fv{display:flex;align-items:center;gap:7px;min-width:0}
+.fv input,.fv select{
+  flex:1 1 auto;
+  min-width:0;
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:2px;
+  padding:4px 6px;
+  font-size:var(--t13);
+  font-weight:500;
+}
+.fv input.short{flex:0 0 66px}
+.fv select{flex:0 0 112px;cursor:pointer}
+.fv input:hover:not(:disabled),.fv select:hover:not(:disabled){border-color:var(--rule);background:var(--panel)}
+.fv input:focus,.fv select:focus{background:var(--paper);border-color:var(--sel)}
+.fv input:disabled,.fv select:disabled{
+  color:var(--ink);
+  opacity:1;
+  border-color:transparent;
+  background:transparent;
+}
+.unit{font-size:var(--t12);color:var(--muted);flex:0 0 auto}
+.hint{font-size:var(--t11);color:var(--muted);flex:1 1 auto}
+.cfg-foot{display:flex;align-items:center;gap:12px;margin-top:11px}
+html[data-state="running"] .cfg-foot{display:none}
+#saveNote{font-size:var(--t11);color:var(--muted)}
+
+/* --- riwayat: rantai dengan waktu nyata ---------------------------------- */
+.hist{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+.hist-top{
+  display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  padding:12px var(--pad) 9px;
+}
+.hist-top h3{margin:0;font-size:var(--t12);font-weight:600}
+.hist-count{font-size:var(--t11);color:var(--muted)}
+.hist-body{overflow:auto;min-height:0;padding:0 var(--pad) var(--pad)}
+.empty{font-size:var(--t12);color:var(--muted);margin:2px 0 0;max-width:38em}
+
+.ev{border-top:1px solid var(--rule);padding:9px 0 10px}
+.ev-top{display:flex;align-items:baseline;gap:10px;margin-bottom:7px}
+.ev-time{font-size:var(--t13);font-weight:600}
+.ev-tag{font-size:var(--t11);font-weight:600;color:var(--live)}
+.ev-tag.done{color:var(--muted);font-weight:500}
+.ev-sum{font-size:var(--t11);color:var(--muted);margin-left:auto;text-align:right}
+
+.chain{list-style:none;margin:0;padding:0}
+.chain li{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 88px 94px;
+  gap:0 10px;
+  align-items:baseline;
+  padding:2px 0 2px 15px;
+  margin-left:3px;
+  border-left:2px solid var(--rule);
+  position:relative;
+  font-size:var(--t12);
+}
+.chain li::before{
+  content:"";position:absolute;left:0;top:10px;width:8px;height:0;
+  border-top:1px solid var(--rule);
+}
+.chain li.done{border-left-color:#8E959C}
+.chain li.done::before{border-top-color:#8E959C}
+.chain li.now{border-left-color:var(--live)}
+.chain li.now::before{border-top-color:var(--live)}
+.chain li:last-child{padding-bottom:1px}
+.c-step{color:var(--ink)}
+.c-t{text-align:right;color:var(--muted)}
+.c-s{text-align:right;font-weight:500}
+.chain li.wait .c-step,.chain li.wait .c-s{color:var(--muted);font-weight:400}
+.chain li.now .c-t{color:var(--live);font-weight:600}
+.chain li.now .c-s{color:var(--live);font-weight:600}
+.chain li.done .c-s{color:var(--ink)}
+.ev-note{font-size:var(--t11);color:var(--muted);margin:7px 0 0 20px;max-width:38em}
+
+/* Sebelum sesi dimulai, panel ini menjelaskan APA yang akan terjadi.
+   Bukan data karangan: semuanya dibaca dari pengaturan etalase itu sendiri. */
+.plan-h{
+  font-size:var(--t11);
+  color:var(--muted);
+  border-top:1px solid var(--rule);
+  padding-top:9px;
+  margin-top:11px;
+  margin-bottom:5px;
+}
+.chain.plan li{grid-template-columns:minmax(0,1fr) 132px}
+.chain.plan .c-t{color:var(--muted)}
+
+/* ---------------------------------------------------------------------------
+   DOCK PRATINJAU - alat review, bukan UI produk. Warna tooling (violet).
+--------------------------------------------------------------------------- */
+#dock{
+  position:fixed;right:16px;bottom:16px;z-index:50;
+  display:flex;align-items:center;gap:10px;
+  background:#2E1065;
+  border:1px solid #7C3AED;
+  border-radius:3px;
+  padding:7px 9px 7px 11px;
+  box-shadow:0 6px 18px rgba(23,8,56,.42);
+  color:#F5F3FF;
+}
+#dock[hidden]{display:none}
+.dock-l{font-size:var(--t11);font-weight:600;letter-spacing:.04em;color:#E9D5FF}
+.dock-b{display:flex;gap:4px}
+#dock button{
+  background:#5B21B6;
+  border:1px solid #7C3AED;
+  color:#FFFFFF;
+  font-size:var(--t11);
+  font-weight:600;
+  padding:4px 9px;
+  border-radius:2px;
+  cursor:pointer;
+}
+#dock button[aria-pressed="true"]{background:#C4B5FD;border-color:#DDD6FE;color:#2E1065}
+#dock button:focus-visible{outline:2px solid #F0ABFC;outline-offset:2px}
+#dockX{background:transparent;border-color:transparent;font-size:14px;padding:2px 6px;line-height:1}
+#dockX:hover{background:#4C1D95}
+
+/* ---------------------------------------------------------------------------
+   RESPONSIVE - turun ke 480px tanpa scroll horizontal
+--------------------------------------------------------------------------- */
+@media (max-width:1060px){
+  :root{--col-master:328px}
+  .bar-fields{grid-template-columns:120px 184px 110px 136px minmax(0,1fr)}
+  .fr{grid-template-columns:150px minmax(0,1fr)}
+}
+@media (max-width:900px){
+  body{display:block;overflow:auto}
+  .bar{height:auto;position:sticky;top:0;z-index:20;grid-template-columns:1fr}
+  .mark{border-right:0;border-bottom:1px solid #343A40;line-height:28px;padding:0 var(--pad)}
+  .bar-fields{grid-template-columns:1fr 1fr}
+  .f{border-right:1px solid #2B3137;border-top:1px solid #2B3137;height:30px}
+  .f:nth-child(even){border-right:0}
+  .f:nth-child(4){border-right:0}
+  .f:last-child{justify-content:flex-start;padding:0 13px}
+  .work{display:block}
+  .master{display:block;border-right:0;border-bottom:1px solid var(--rule)}
+  .req{overflow:visible}
+  .detail{display:block}
+  .hist{display:block}
+  .hist-body{overflow:visible}
+}
+@media (max-width:620px){
+  .fr{grid-template-columns:1fr;gap:1px;padding:6px 0}
+  .fv input.short{flex:0 0 72px}
+  .fv select{flex:0 0 auto}
+  .chain li{grid-template-columns:minmax(0,1fr) 78px;row-gap:1px}
+  .chain li .c-s{grid-column:2;text-align:right}
+  .chain li .c-t{grid-column:2;grid-row:1}
+  .facts{gap:0 18px}
+  .d-prod{font-size:17px}
+  .ev-sum{margin-left:0;width:100%;text-align:left}
+  .ev-top{flex-wrap:wrap}
+}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+  html[data-state="running"] .bar::after{background:var(--live-dark);opacity:1}
+}
+</style>
+</head>
+
+<body>
+
+<!-- =====================================================================
+     IDENTITY DEVICE 1 - status bar yang tidak pernah bergerak.
+     Lima fakta, lima kolom grid berlebar tetap, urutan tetap:
+     otomasi | yang tayang + hitungan | OBS | akun | LIVE
+     ===================================================================== -->
+<header class="bar">
+  <h1 class="mark">AI LIVE HOST</h1>
+  <div class="bar-fields">
+
+    <div class="f f-run">
+      <span class="f-l">Otomasi</span>
+      <span class="f-v off s-stopped">Berhenti</span>
+      <span class="f-v on s-ready">Siap</span>
+      <span class="f-v air s-running">Tayang</span>
+    </div>
+
+    <div class="f f-air">
+      <span class="f-l">Tayang sekarang</span>
+      <span class="f-v off s-idle">Tidak ada</span>
+      <span class="f-v air s-running">Etalase 1 <b class="num" id="barCount">31 s</b></span>
+    </div>
+
+    <div class="f">
+      <span class="f-l">OBS</span>
+      <!-- tersambung = bukan hijau -->
+      <span class="f-v on">Tersambung</span>
+    </div>
+
+    <div class="f">
+      <span class="f-l">Akun</span>
+      <span class="f-v on">tokosnackku</span>
+    </div>
+
+    <div class="f">
+      <span class="f-l">LIVE</span>
+      <span class="f-v act s-stopped">Belum tayang</span>
+      <span class="f-v air s-ready">Sedang tayang</span>
+      <span class="f-v air s-running">Sedang tayang</span>
+    </div>
+
+  </div>
+</header>
+
+<div class="work">
+
+  <!-- ===================================================================
+       REGION KIRI - master list + syarat + kontrol
+       =================================================================== -->
+  <section class="master" aria-label="Daftar etalase">
+
+    <div class="lhead">
+      <span>No</span>
+      <span>Pemicu dan produk</span>
+      <span>Keadaan</span>
+    </div>
+
+    <ul class="list" id="list">
+      <!-- Keadaan per etalase: tiga varian ada di markup, CSS memilih.
+           Kolom kanan bawah: waktu terakhir diminta. Etalase 3 menyimpan
+           16:09 dari sesi sebelumnya, jadi ia tetap terisi di semua state. -->
+      <li>
+        <button class="row" type="button" data-n="1" aria-current="true">
+          <span class="r-n num">1</span>
+          <span class="r-trig">&ldquo;spill etalase 1&rdquo;</span>
+          <span class="r-st">
+            <span class="v off s-stopped">Nonaktif</span>
+            <span class="v rdy s-ready">Siap</span>
+            <span class="v air s-running">Sedang tayang</span>
+          </span>
+          <span class="r-prod">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</span>
+          <span class="r-last num">
+            <span class="s-idle">Belum pernah</span>
+            <span class="s-running">31 s tersisa</span>
+          </span>
+        </button>
+      </li>
+      <li>
+        <button class="row" type="button" data-n="2">
+          <span class="r-n num">2</span>
+          <span class="r-trig">&ldquo;no 2&rdquo;</span>
+          <span class="r-st">
+            <span class="v off s-stopped">Nonaktif</span>
+            <span class="v rdy s-ready">Siap</span>
+            <span class="v rdy s-running">Siap</span>
+          </span>
+          <span class="r-prod">Gery Saluut Malkist Family Pack 100gr</span>
+          <span class="r-last">Belum pernah</span>
+        </button>
+      </li>
+      <li>
+        <button class="row" type="button" data-n="3">
+          <span class="r-n num">3</span>
+          <span class="r-trig">&ldquo;et 3&rdquo;</span>
+          <span class="r-st">
+            <span class="v off s-stopped">Nonaktif</span>
+            <span class="v rdy s-ready">Siap</span>
+            <span class="v rdy s-running">Siap</span>
+          </span>
+          <span class="r-prod">Gery Saluut Malkist renceng, 10 bungkus × 18gr</span>
+          <span class="r-last num">16:09</span>
+        </button>
+      </li>
+      <li>
+        <button class="row" type="button" data-n="4">
+          <span class="r-n num">4</span>
+          <span class="r-trig">&ldquo;et 4&rdquo;</span>
+          <span class="r-st">
+            <span class="v off s-stopped">Nonaktif</span>
+            <span class="v rdy s-ready">Siap</span>
+            <span class="v rdy s-running">Siap</span>
+          </span>
+          <span class="r-prod">Dilan Cookies Choco Chip 12gr, pack isi 23</span>
+          <span class="r-last">Belum pernah</span>
+        </button>
+      </li>
+      <li>
+        <button class="row" type="button" data-n="5">
+          <span class="r-n num">5</span>
+          <span class="r-trig">&ldquo;spill etalase 5&rdquo;</span>
+          <span class="r-st">
+            <span class="v off s-stopped">Nonaktif</span>
+            <span class="v rdy s-ready">Siap</span>
+            <span class="v rdy s-running">Siap</span>
+          </span>
+          <span class="r-prod">Dilan Waffle, 1 box kue coklat 16gr</span>
+          <span class="r-last">Belum pernah</span>
+        </button>
+      </li>
+    </ul>
+
+    <!-- SYARAT: penuh saat berhenti/siap, satu baris saat tayang -->
+    <section class="req s-idle" aria-label="Syarat sebelum mulai">
+      <div class="req-top">
+        <h2>Syarat sebelum mulai</h2>
+        <span class="req-flag act s-stopped">1 perlu tindakan Anda</span>
+        <span class="req-flag ok s-ready">8 dari 8 terpenuhi</span>
+      </div>
+
+      <dl class="reqs">
+        <dt>Pengaturan</dt>
+        <dd class="pass">Tersimpan</dd>
+
+        <dt>Bot lain yang jalan</dt>
+        <dd class="pass">Tidak ada</dd>
+
+        <dt>Port yang dipakai aplikasi</dt>
+        <dd class="pass">Tersedia</dd>
+
+        <dt>OBS</dt>
+        <dd class="pass">Tersambung</dd>
+
+        <dt>Scene OBS</dt>
+        <dd class="pass">Ditemukan</dd>
+
+        <dt>Profil browser</dt>
+        <dd class="pass">Tersedia</dd>
+
+        <dt>LIVE TikTok Anda</dt>
+        <dd class="act s-stopped">Belum tayang</dd>
+        <dd class="pass s-ready">Sedang tayang</dd>
+
+        <!-- stopped: akibat dari baris di atas, bukan masalah kedua -->
+        <dt class="dep s-stopped">Produk di LIVE Anda</dt>
+        <dd class="dep s-stopped">Belum terbaca</dd>
+        <dd class="dep-note s-stopped">Akan terbaca sendiri setelah LIVE Anda tayang.</dd>
+
+        <dt class="s-ready">Produk di LIVE Anda</dt>
+        <dd class="pass s-ready">5 tersedia</dd>
+      </dl>
+
+      <p class="fix s-stopped">Mulai siaran di TikTok, masukkan produk ke etalase LIVE, lalu tekan Periksa ulang.</p>
+
+      <div class="req-act">
+        <button class="btn-ghost" type="button" id="btnRecheck">Periksa ulang</button>
+        <span class="recheck-note" id="recheckNote" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <div class="live-left s-running">
+      <div class="req-ok">
+        <b>8 syarat terpenuhi</b> saat mulai <span class="num">16:08:13</span>.
+        OBS tersambung <span class="num">16:08:14</span>.
+      </div>
+
+      <div class="slog-top">
+        <h2>Permintaan di sesi ini</h2>
+        <span class="slog-n num">2</span>
+      </div>
+      <div class="slog">
+        <div class="slog-row">
+          <span class="slog-t num">16:24:11</span>
+          <span class="slog-w air">Etalase 1 sedang tayang</span>
+          <span class="slog-d">Pin berhasil, balasan terkirim. Sisa <span class="num">31 s</span>.</span>
+        </div>
+        <div class="slog-row">
+          <span class="slog-t num">16:09:59</span>
+          <span class="slog-w">Etalase 1 selesai</span>
+          <span class="slog-d">Pin berhasil, balasan terkirim. Scene <span class="num">36,4 s</span>.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="run">
+      <button class="btn s-idle" type="button" id="btnStart">Mulai</button>
+      <button class="btn btn-halt s-running" type="button" id="btnStop">Hentikan</button>
+      <p class="run-meta act s-stopped">Belum bisa mulai. <b>LIVE TikTok Anda belum tayang.</b></p>
+      <p class="run-meta s-ready">Semua syarat terpenuhi. Bot akan menunggu pemicu dari penonton.</p>
+      <p class="run-meta s-running">Berjalan <b class="num">16 menit</b> sejak <span class="num">16:08:13</span>. <b class="num">2</b> permintaan penonton.</p>
+    </div>
+
+  </section>
+
+  <!-- ===================================================================
+       REGION KANAN - inspector untuk satu etalase.
+       Isi header, konfigurasi dan riwayat dirender dari data etalase,
+       karena ia bergantung pada seleksi DAN state.
+       =================================================================== -->
+  <section class="detail" aria-label="Rincian etalase">
+
+    <div class="dhead">
+      <div class="dhead-top">
+        <span class="d-et" id="dEt">Etalase 1</span>
+        <span class="chip is-off" id="dChip">Nonaktif</span>
+      </div>
+      <h2 class="d-prod" id="dProd">Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs</h2>
+      <div class="facts" id="dFacts"></div>
+    </div>
+
+    <div class="cfg">
+      <div class="cfg-top">
+        <h3>Pengaturan etalase ini</h3>
+        <span class="cfg-note s-running">Terkunci selama bot tayang.</span>
+      </div>
+
+      <div class="fr">
+        <label for="fTrig">Pemicu yang diketik penonton</label>
+        <span class="fv">
+          <input id="fTrig" type="text" value="spill etalase 1" autocomplete="off" spellcheck="false">
+        </span>
+      </div>
+
+      <div class="fr">
+        <label for="fProd">Produk yang di-pin</label>
+        <span class="fv">
+          <input id="fProd" type="text" value="Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs" autocomplete="off">
+        </span>
+      </div>
+
+      <div class="fr">
+        <label for="fReply">Balasan admin di chat</label>
+        <span class="fv">
+          <input id="fReply" type="text" value="Etalase 1 sudah aku pin ya kak" autocomplete="off">
+        </span>
+      </div>
+
+      <div class="fr">
+        <label for="fScene">Scene OBS</label>
+        <span class="fv">
+          <select id="fScene">
+            <option>PAX-1</option><option>PAX-2</option><option>PAX-3</option>
+            <option>PAX-4</option><option>PAX-5</option>
+          </select>
+          <span class="hint">Scene yang ditampilkan ke penonton.</span>
+        </span>
+      </div>
+
+      <div class="fr">
+        <label for="fLen">Panjang scene</label>
+        <span class="fv">
+          <input id="fLen" class="short num" type="text" inputmode="numeric" value="46">
+          <span class="unit">detik</span>
+          <span class="hint">Batas aman. Scene berhenti sendiri saat video selesai.</span>
+        </span>
+      </div>
+
+      <div class="fr">
+        <label for="fCool">Jeda setelah tayang</label>
+        <span class="fv">
+          <input id="fCool" class="short num" type="text" inputmode="numeric" value="120">
+          <span class="unit">detik</span>
+          <span class="hint">Etalase ini tidak bisa diminta lagi selama jeda.</span>
+        </span>
+      </div>
+
+      <div class="cfg-foot">
+        <button class="btn-ghost" type="button" id="btnSave" disabled>Simpan</button>
+        <span id="saveNote" aria-live="polite">Belum ada perubahan.</span>
+      </div>
+    </div>
+
+    <div class="hist">
+      <div class="hist-top">
+        <h3 id="histTitle">Riwayat permintaan etalase 1</h3>
+        <span class="hist-count" id="histCount">Sesi belum dimulai</span>
+      </div>
+      <div class="hist-body" id="histBody"></div>
+    </div>
+
+  </section>
+</div>
+
+<!-- =====================================================================
+     DI LUAR SELURUH MARKUP DASBOR. Alat review, bukan bagian produk.
+     ===================================================================== -->
+<div id="dock" role="group" aria-label="Pratinjau keadaan">
+  <span class="dock-l">Pratinjau</span>
+  <span class="dock-b">
+    <button type="button" data-s="stopped" aria-pressed="true">Berhenti</button>
+    <button type="button" data-s="ready" aria-pressed="false">Siap</button>
+    <button type="button" data-s="running" aria-pressed="false">Tayang</button>
+  </span>
+  <button type="button" id="dockX" aria-label="Tutup dock pratinjau">&times;</button>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  /* Data lima etalase - persis isi toko, tidak diterjemahkan. */
+  var EL = [
+    {n:1, trig:'spill etalase 1', prod:'Garuda Kacang Atom 16gr, 1 renceng isi 10 pcs', reply:'Etalase 1 sudah aku pin ya kak', scene:'PAX-1', len:46},
+    {n:2, trig:'no 2',            prod:'Gery Saluut Malkist Family Pack 100gr',          reply:'Etalase 2 sudah aku pin ya kak', scene:'PAX-2', len:46},
+    {n:3, trig:'et 3',            prod:'Gery Saluut Malkist renceng, 10 bungkus × 18gr', reply:'Etalase 3 sudah aku pin ya kak', scene:'PAX-3', len:52},
+    {n:4, trig:'et 4',            prod:'Dilan Cookies Choco Chip 12gr, pack isi 23',     reply:'Etalase 4 sudah aku pin ya kak', scene:'PAX-4', len:69},
+    {n:5, trig:'spill etalase 5', prod:'Dilan Waffle, 1 box kue coklat 16gr',            reply:'Etalase 5 sudah aku pin ya kak', scene:'PAX-5', len:46}
+  ];
+
+  var root = document.documentElement;
+  var list = document.getElementById('list');
+  var dEt = document.getElementById('dEt');
+  var dChip = document.getElementById('dChip');
+  var dProd = document.getElementById('dProd');
+  var dFacts = document.getElementById('dFacts');
+  var histTitle = document.getElementById('histTitle');
+  var histCount = document.getElementById('histCount');
+  var histBody = document.getElementById('histBody');
+  var btnSave = document.getElementById('btnSave');
+  var saveNote = document.getElementById('saveNote');
+  var btnStart = document.getElementById('btnStart');
+  var btnStop = document.getElementById('btnStop');
+  var btnRecheck = document.getElementById('btnRecheck');
+  var recheckNote = document.getElementById('recheckNote');
+  var dock = document.getElementById('dock');
+  var fields = ['fTrig','fProd','fReply','fScene','fLen','fCool'].map(function(id){
+    return document.getElementById(id);
+  });
+
+  var sel = 1;
+
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+  function state(){ return root.getAttribute('data-state'); }
+  function fact(label, value, cls){
+    return '<div class="fact' + (cls ? ' ' + cls : '') + '">' +
+           '<div class="fact-l">' + label + '</div>' +
+           '<div class="fact-v">' + value + '</div></div>';
+  }
+  /* spasi antar sel disengaja: tanpa itu textContent terbaca menyambung
+     oleh pembaca layar ("+2,2 sberhasil") */
+  function step(cls, name, time, status){
+    return '<li class="' + cls + '">' +
+           '<span class="c-step">' + name + '</span> ' +
+           '<span class="c-t num">' + time + '</span> ' +
+           '<span class="c-s">' + status + '</span></li>';
+  }
+
+  /* Rantai terukur dari run yang sudah divalidasi. Dipakai apa adanya. */
+  function chainDone(clock){
+    return '<ol class="chain">' +
+      step('done','Permintaan penonton di chat','<span class="num">' + clock + '</span>','diterima') +
+      step('done','Scene PAX-1 mulai','+0,05 s','mulai') +
+      step('done','Produk ter-pin di LIVE','+2,2 s','berhasil') +
+      step('done','Balasan admin terkirim','+1,6 s','berhasil') +
+      step('done','Scene selesai','36,4 s','akhir video') +
+      step('done','Jeda etalase 1','120 s','selesai') +
+      '</ol>';
+  }
+  function chainNow(){
+    return '<ol class="chain">' +
+      step('done','Permintaan penonton di chat','<span class="num">16:24:11</span>','diterima') +
+      step('done','Scene PAX-1 mulai','+0,05 s','mulai') +
+      step('done','Produk ter-pin di LIVE','+2,2 s','berhasil') +
+      step('done','Balasan admin terkirim','+1,6 s','berhasil') +
+      step('now','Scene berjalan','31 s sisa','tayang') +
+      step('wait','Jeda etalase 1','120 s','menunggu') +
+      '</ol>';
+  }
+
+  /* urutan yang AKAN berjalan, dibaca dari pengaturan etalase ini sendiri */
+  function plan(e){
+    var r = [
+      ['Penonton mengetik “' + esc(e.trig) + '”', ''],
+      ['Scene ' + esc(e.scene) + ' tampil di LIVE', ''],
+      ['Produk di-pin di etalase LIVE', ''],
+      ['Balasan terkirim: “' + esc(e.reply) + '”', ''],
+      ['Scene berhenti saat video selesai', 'paling lama ' + e.len + ' s'],
+      ['Etalase ini belum bisa diminta lagi', 'selama 120 s']
+    ];
+    var li = '';
+    for (var i = 0; i < r.length; i++){
+      li += '<li class="wait"><span class="c-step">' + r[i][0] + '</span> ' +
+            '<span class="c-t num">' + r[i][1] + '</span></li>';
+    }
+    return '<div class="plan-h">Urutan saat etalase ini diminta</div>' +
+           '<ol class="chain plan">' + li + '</ol>';
+  }
+
+  function events(n, st){
+    var out = '';
+
+    if (st === 'running' && n === 1){
+      out += '<article class="ev">' +
+        '<div class="ev-top">' +
+          '<span class="ev-time num">16:24:11</span> ' +
+          '<span class="ev-tag">Sedang tayang</span> ' +
+          '<span class="ev-sum">Pin berhasil <span class="num">16:24:13</span>, balasan terkirim <span class="num">16:24:15</span></span>' +
+        '</div>' + chainNow() + '</article>';
+
+      out += '<article class="ev">' +
+        '<div class="ev-top">' +
+          '<span class="ev-time num">16:09:59</span> ' +
+          '<span class="ev-tag done">Selesai</span> ' +
+          '<span class="ev-sum">Scene <span class="num">36,4 s</span>, berhenti pada akhir video</span>' +
+        '</div>' + chainDone('16:09:59') + '</article>';
+      return out;
+    }
+
+    /* Etalase 3 memegang satu permintaan dari sesi sebelumnya. Rinciannya
+       tidak tersimpan, jadi ditulis apa adanya - tidak dikarang. */
+    if (n === 3){
+      out += '<article class="ev">' +
+        '<div class="ev-top">' +
+          '<span class="ev-time num">16:09</span> ' +
+          '<span class="ev-tag done">Selesai</span> ' +
+          '<span class="ev-sum">Sesi sebelumnya</span>' +
+        '</div>' +
+        '<p class="ev-note">Rincian waktu tidak tersimpan untuk sesi sebelumnya.</p>' +
+        '</article>';
+      return out;
+    }
+
+    return '';
+  }
+
+  function render(){
+    var st = state();
+    var e = EL[sel - 1];
+    var playing = (st === 'running' && sel === 1);
+
+    /* header */
+    dEt.textContent = 'Etalase ' + e.n;
+    dProd.textContent = e.prod;
+    if (playing){
+      dChip.textContent = 'Sedang tayang';
+      dChip.className = 'chip is-live';
+    } else if (st === 'stopped'){
+      dChip.textContent = 'Nonaktif';
+      dChip.className = 'chip is-off';
+    } else if (st === 'ready'){
+      dChip.textContent = 'Siap';
+      dChip.className = 'chip is-neutral';
+    } else {
+      dChip.textContent = 'Siap, menunggu pemicu';
+      dChip.className = 'chip is-neutral';
+    }
+
+    /* fakta - pertanyaan operator dijawab di sini, terbesar yang paling mendesak */
+    var f = '';
+    if (playing){
+      f += fact('Sisa tayang','<span class="num">31 s</span><span class="sub">dari 36,4 s</span>','big');
+      f += fact('Produk ter-pin','Berhasil <span class="num">16:24:13</span>');
+      f += fact('Balasan di chat','Terkirim <span class="num">16:24:15</span>');
+      f += fact('Scene OBS', esc(e.scene));
+    } else {
+      /* sel===1 saat running selalu playing, jadi cabang ini hanya untuk
+         etalase yang tidak sedang tayang */
+      var last = (sel === 3)
+        ? '<span class="num">16:09</span> <span class="sub">sesi sebelumnya</span>'
+        : 'Belum pernah';
+
+      if (st === 'stopped'){
+        /* Yang menahan start dibawa KE SINI, bukan hanya ke kolom kiri.
+           Sebelumnya berhenti dan siap memakai cabang yang sama, sehingga dua
+           dari tiga keadaan praktis identik di panel terbesar. */
+        f += fact('Belum bisa dipakai', 'LIVE TikTok Anda belum tayang', 'alert');
+        f += fact('Agar bisa dipakai',
+          'Mulai siaran di TikTok, masukkan produk ke etalase LIVE, lalu tekan Periksa ulang.', 'wide');
+        f += fact('Permintaan terakhir', last);
+      } else if (st === 'ready'){
+        f += fact('Siap dipakai', 'Menunggu <span class="sub">tekan Mulai</span>', 'calm');
+        f += fact('Permintaan terakhir', last);
+        f += fact('Permintaan di sesi ini', 'Sesi belum dimulai');
+      } else {
+        f += fact('Permintaan terakhir', last);
+        f += fact('Permintaan di sesi ini', '<span class="num">0</span>');
+      }
+      /* scene dan jeda sengaja tidak diulang di sini: keduanya ada di form
+         tepat di bawahnya. Yang diulang hanya saat tayang, ketika operator
+         tidak sempat membaca form. */
+    }
+    dFacts.innerHTML = f + (playing ? '<div class="prog"><span style="width:85%"></span></div>' : '');
+
+    /* konfigurasi */
+    fields[0].value = e.trig;
+    fields[1].value = e.prod;
+    fields[2].value = e.reply;
+    fields[3].value = e.scene;
+    fields[4].value = String(e.len);
+    fields[5].value = '120';
+    var lock = (st === 'running');
+    fields.forEach(function(el){ el.disabled = lock; });
+    btnSave.disabled = true;
+    saveNote.textContent = 'Belum ada perubahan.';
+
+    /* riwayat, dan - sebelum sesi dimulai - urutan yang akan dijalankan */
+    histTitle.textContent = 'Riwayat permintaan etalase ' + e.n;
+    var ev = events(sel, st);
+    if (playing){
+      /* yang sedang tayang tidak perlu rencana: rantai nyatanya sudah ada */
+      histBody.innerHTML = ev;
+    } else {
+      histBody.innerHTML =
+        '<p class="empty">' + (st === 'running'
+          ? 'Etalase ' + e.n + ' belum diminta penonton di sesi ini.'
+          : 'Sesi belum dimulai. Riwayat muncul setelah Anda menekan Mulai.') +
+        '</p>' + ev + plan(e);
+    }
+    histCount.textContent = (st === 'running')
+      ? ((sel === 1) ? '2 permintaan di sesi ini' : '0 permintaan di sesi ini')
+      : 'Sesi belum dimulai';
+
+    /* tombol utama: hanya tersedia kalau semua syarat beres */
+    btnStart.disabled = (st === 'stopped');
+  }
+
+  function select(n){
+    sel = n;
+    var rows = list.querySelectorAll('.row');
+    for (var i = 0; i < rows.length; i++){
+      var on = (Number(rows[i].getAttribute('data-n')) === n);
+      if (on) rows[i].setAttribute('aria-current','true');
+      else rows[i].removeAttribute('aria-current');
+    }
+    render();
+  }
+
+  /* Satu pintu masuk: atribut data-state pada <html> adalah sumber kebenaran.
+     MutationObserver menyusul, jadi state tetap benar walau atribut diubah
+     dari luar (mis. reviewer mengubahnya di devtools). */
+  function setState(s){ root.setAttribute('data-state', s); }
+
+  function onStateChanged(){
+    var s = state();
+    var bs = dock.querySelectorAll('[data-s]');
+    for (var i = 0; i < bs.length; i++){
+      bs[i].setAttribute('aria-pressed', String(bs[i].getAttribute('data-s') === s));
+    }
+    recheckNote.textContent = '';
+    /* saat tayang, etalase yang sedang main memilih dirinya sendiri */
+    if (s === 'running') select(1);
+    else render();
+  }
+  new MutationObserver(onStateChanged).observe(root, {attributes:true, attributeFilter:['data-state']});
+
+  /* ---- seleksi ---- */
+  list.addEventListener('click', function(ev){
+    var row = ev.target.closest ? ev.target.closest('.row') : null;
+    if (row) select(Number(row.getAttribute('data-n')));
+  });
+  list.addEventListener('keydown', function(ev){
+    if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+    ev.preventDefault();
+    var next = Math.min(5, Math.max(1, sel + (ev.key === 'ArrowDown' ? 1 : -1)));
+    select(next);
+    var el = list.querySelector('.row[data-n="' + next + '"]');
+    if (el) el.focus();
+  });
+
+  /* ---- konfigurasi: dirty -> Simpan tersedia. "Tersimpan" TIDAK hijau. ---- */
+  fields.forEach(function(el){
+    el.addEventListener('input', function(){
+      if (el.disabled) return;
+      btnSave.disabled = false;
+      saveNote.textContent = 'Ada perubahan yang belum disimpan.';
+    });
+    el.addEventListener('change', function(){
+      if (el.disabled) return;
+      btnSave.disabled = false;
+      saveNote.textContent = 'Ada perubahan yang belum disimpan.';
+    });
+  });
+  btnSave.addEventListener('click', function(){
+    btnSave.disabled = true;
+    saveNote.textContent = 'Perubahan etalase ' + sel + ' tersimpan.';
+  });
+
+  /* ---- periksa ulang: jawaban jujur, tidak mengarang jam ---- */
+  btnRecheck.addEventListener('click', function(){
+    recheckNote.textContent = (state() === 'stopped')
+      ? 'Sudah diperiksa. LIVE TikTok Anda masih belum tayang.'
+      : 'Sudah diperiksa. Semua syarat masih terpenuhi.';
+  });
+
+  /* ---- mulai / hentikan ---- */
+  btnStart.addEventListener('click', function(){ if (!btnStart.disabled) setState('running'); });
+  btnStop.addEventListener('click', function(){ setState('ready'); });
+
+  /* ---- dock ---- */
+  dock.addEventListener('click', function(ev){
+    var b = ev.target.closest ? ev.target.closest('[data-s]') : null;
+    if (b) setState(b.getAttribute('data-s'));
+  });
+  document.getElementById('dockX').addEventListener('click', function(){ dock.hidden = true; });
+
+  /* tombol 1/2/3 tetap bekerja setelah dock ditutup, tapi tidak merebut
+     ketikan di dalam field konfigurasi */
+  document.addEventListener('keydown', function(ev){
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    var t = ev.target;
+    if (t && t.closest && t.closest('input,select,textarea')) return;
+    if (ev.key === '1') setState('stopped');
+    else if (ev.key === '2') setState('ready');
+    else if (ev.key === '3') setState('running');
+  });
+
+  select(1);
+  onStateChanged();
+})();
+</script>
+</body>
+</html>
