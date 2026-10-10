@@ -1,0 +1,894 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>AI Live Host</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: sticky control bar on top → status summary → checklist rail (left) + tabbed workspace (right); stacks to one column on phones. */
+:root {
+  --bg: #f5f4f0; --surface: #ffffff; --surface-2: #faf9f6; --border: #e4e1da; --border-strong: #8f8b82;
+  --ink: #17181c; --ink-muted: #5f5d57;
+  --brand: #ff5a1f; --brand-ink: #17181c; --brand-soft: #fff0e8;
+  --live: #d91f36; --live-ink: #ffffff;
+  --ok: #18794e; --ok-soft: #e7f5ee; --warn: #8a5600; --warn-soft: #fdf2dc; --danger: #c22a2a; --danger-soft: #fbe8e7;
+  --focus: #b93a0b;
+  --shadow-card: 0 1px 2px rgba(23,24,28,.06); --shadow-pop: 0 12px 32px rgba(23,24,28,.16);
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 16px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111214; --surface: #1a1b1f; --surface-2: #212227; --border: #2d2f35; --border-strong: #6a6d76;
+  --ink: #f2f1ee; --ink-muted: #a6a59f; --brand: #ff6a33; --brand-soft: #3a2218; --live: #ff4d5e; --live-ink: #17181c;
+  --ok: #4cc38a; --ok-soft: #15291f; --warn: #f0b84a; --warn-soft: #2e2512; --danger: #ff7b72; --danger-soft: #351a1a; --focus: #ff9a6b;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.4); --shadow-pop: 0 12px 32px rgba(0,0,0,.55); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #111214; --surface: #1a1b1f; --surface-2: #212227; --border: #2d2f35; --border-strong: #6a6d76;
+  --ink: #f2f1ee; --ink-muted: #a6a59f; --brand: #ff6a33; --brand-soft: #3a2218; --live: #ff4d5e; --live-ink: #17181c;
+  --ok: #4cc38a; --ok-soft: #15291f; --warn: #f0b84a; --warn-soft: #2e2512; --danger: #ff7b72; --danger-soft: #351a1a; --focus: #ff9a6b;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.4); --shadow-pop: 0 12px 32px rgba(0,0,0,.55); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 21px; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+h1, h2 { text-wrap: balance; }
+.mono { font-family: var(--font-mono); font-size: 13px; }
+.muted { color: var(--ink-muted); }
+.small { font-size: 12px; line-height: 17px; font-weight: 500; }
+.overline { font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+.title { font-size: 17px; line-height: 24px; font-weight: 700; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.between { justify-content: space-between; }
+
+/* Shell */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface); border-bottom: 1px solid var(--border); }
+.top-in { max-width: 1320px; margin: 0 auto; padding: 12px 24px; display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
+.mark { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 15px; }
+.mark i { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--ink); display: grid; place-items: center; }
+.mark i::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--brand); }
+.acct { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; border: 1px solid var(--border); font-size: 13px; font-weight: 600; max-width: 100%; }
+.acct b { width: 24px; height: 24px; border-radius: 50%; background: var(--brand-soft); display: grid; place-items: center; font-size: 10px; }
+.acct span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spacer { flex: 1; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 24px 24px 120px; display: flex; flex-direction: column; gap: 20px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-card); min-width: 0; }
+.pad { padding: 20px 24px; }
+
+/* Buttons */
+.btn { appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 16px; border-radius: var(--r-md); border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); font-size: 13px; line-height: 18px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: background .12s, transform .06s, filter .12s; }
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible, .tab:focus-visible, .tgl:focus-visible, .chip-x:focus-visible, .seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.btn svg { width: 16px; height: 16px; flex: none; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.live { background: var(--live); border-color: var(--live); color: var(--live-ink); }
+.btn.live:hover { filter: brightness(1.06); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--surface-2); }
+.btn.danger { background: transparent; border-color: transparent; color: var(--danger); }
+.btn.danger:hover { background: var(--danger-soft); }
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: var(--surface); }
+.btn.lg { font-size: 15px; padding: 11px 22px; }
+.btn.sm { font-size: 12px; padding: 5px 10px; }
+.btn[aria-disabled="true"], .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; filter: none; }
+.icon-btn { width: 38px; height: 38px; padding: 0; }
+
+/* Pills */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; line-height: 16px; font-weight: 700; background: var(--surface-2); color: var(--ink-muted); border: 1px solid var(--border); white-space: nowrap; }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.pill.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.pill.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.pill.live { background: var(--live); color: var(--live-ink); border-color: transparent; letter-spacing: .06em; }
+.pill.live::before { animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+
+/* Hero */
+.hero { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 24px; align-items: center; }
+.hero h1 { font-size: 26px; line-height: 32px; font-weight: 800; letter-spacing: -.02em; margin-top: 2px; }
+.hero p { margin-top: 6px; color: var(--ink-muted); }
+.stats { display: flex; gap: 28px; font-variant-numeric: tabular-nums; }
+.stat b { display: block; font-size: 26px; line-height: 30px; font-weight: 800; letter-spacing: -.02em; }
+.stat span { font-size: 12px; color: var(--ink-muted); font-weight: 600; }
+.stat.fail b { color: var(--danger); }
+.stats.dim { opacity: .4; }
+
+/* Grid */
+.grid { display: grid; grid-template-columns: 340px minmax(0,1fr); gap: 20px; align-items: start; }
+.rail { display: flex; flex-direction: column; gap: 20px; position: sticky; top: 84px; }
+
+/* Checklist */
+.progress { display: flex; gap: 4px; }
+.progress span { flex: 1; height: 6px; border-radius: 999px; background: var(--border); transition: background .2s; }
+.progress span.on { background: var(--ok); }
+.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.check { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 12px; align-items: start; padding: 12px; border-radius: var(--r-md); background: var(--surface-2); }
+.check.todo { background: var(--warn-soft); }
+.check.fail { background: var(--danger-soft); }
+.check-ic { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); }
+.check.todo .check-ic { background: var(--surface); color: var(--warn); }
+.check.fail .check-ic { background: var(--surface); color: var(--danger); }
+.check-ic svg { width: 16px; height: 16px; }
+.check b { display: block; font-size: 13px; line-height: 18px; }
+.check p { font-size: 12px; line-height: 17px; color: var(--ink-muted); margin-top: 2px; }
+.check.todo p { color: var(--warn); }
+.check.fail p { color: var(--danger); }
+.check a { color: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
+.spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rot .7s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* Test panel */
+.testrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; font-weight: 600; }
+.testrow:first-of-type { border-top: 0; }
+
+/* Toggle */
+.tgl { appearance: none; flex: none; width: 40px; height: 24px; border-radius: 999px; background: var(--border-strong); position: relative; cursor: pointer; margin: 0; transition: background .15s; }
+.tgl::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); transition: transform .15s; }
+.tgl:checked { background: var(--ok); }
+.tgl:checked::after { transform: translateX(16px); }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding: 0 16px; overflow-x: auto; }
+.tab { appearance: none; background: none; border: 0; padding: 14px 10px; font-size: 13px; font-weight: 700; color: var(--ink-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--brand); }
+.count { font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.count.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* Rules */
+.rule { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); transition: background .3s, border-color .3s; }
+.rule.hit { background: var(--brand-soft); border-color: var(--brand); }
+.rule.off .rule-main { opacity: .5; }
+.rule.err { border-color: var(--danger); }
+.rule-main { display: grid; grid-template-columns: 32px minmax(0,1fr) auto; gap: 16px; align-items: start; padding: 16px; }
+.num { width: 32px; height: 32px; border-radius: var(--r-md); background: var(--surface-2); display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; line-height: 26px; }
+.word { color: var(--ink-muted); font-weight: 600; }
+.arrow { color: var(--ink-muted); font-weight: 700; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: var(--r-sm); font-size: 12px; line-height: 22px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.chip.trig { font-family: var(--font-mono); font-weight: 500; background: var(--surface); }
+.chip.scene::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--ink); flex: none; }
+.chip.prod::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); flex: none; }
+.chip.skip { text-decoration: line-through; color: var(--ink-muted); }
+.reply { margin-top: 6px; font-size: 13px; color: var(--ink-muted); display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.reply q { color: var(--ink); quotes: "“" "”"; overflow-wrap: anywhere; }
+.rule-err { margin-top: 6px; font-size: 12px; color: var(--danger); font-weight: 600; }
+.rule-actions { display: flex; align-items: center; gap: 6px; }
+.editor { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; border-top: 1px dashed var(--border); }
+.editor .full { grid-column: 1 / -1; }
+.confirm { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--danger-soft); color: var(--danger); font-weight: 600; font-size: 13px; border-top: 1px solid var(--border); border-radius: 0 0 var(--r-md) var(--r-md); }
+
+/* Fields */
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.label { font-size: 13px; line-height: 18px; font-weight: 600; }
+.help { font-size: 12px; line-height: 17px; color: var(--ink-muted); }
+.help.err { color: var(--danger); font-weight: 600; }
+.input, .select { width: 100%; font-size: 14px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-md); padding: 9px 12px; }
+.input:focus, .select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.input.bad { border-color: var(--danger); }
+.affix { display: flex; align-items: center; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface); }
+.affix:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.affix > span { padding-left: 12px; color: var(--ink-muted); font-weight: 700; }
+.affix .input { border: 0; outline: 0; }
+.chipbox { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface); min-height: 42px; }
+.chipbox:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.chipbox.bad { border-color: var(--danger); }
+.chipbox input { flex: 1; min-width: 120px; border: 0; outline: 0; background: transparent; font-family: var(--font-mono); font-size: 13px; padding: 4px; }
+.chip-x { appearance: none; border: 0; background: none; padding: 0 0 0 2px; cursor: pointer; color: var(--ink-muted); font-size: 14px; line-height: 1; }
+.chip-x:hover { color: var(--danger); }
+.group { display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 24px; padding: 24px 0; border-top: 1px solid var(--border); }
+.group:first-child { border-top: 0; padding-top: 4px; }
+.gfields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-width: 0; }
+.trow { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--r-md); }
+
+/* Activity */
+.sim { display: grid; grid-template-columns: 160px minmax(0,1fr) auto; gap: 8px; }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.quick button { appearance: none; cursor: pointer; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-md); padding: 2px; background: var(--surface-2); }
+.seg button { appearance: none; border: 0; background: none; padding: 5px 10px; font-size: 12px; font-weight: 700; color: var(--ink-muted); border-radius: 8px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-card); }
+.feed { list-style: none; margin: 0; padding: 0; }
+.fi { display: grid; grid-template-columns: 64px 20px minmax(0,1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); align-items: start; }
+.fi:last-child { border-bottom: 0; }
+.fi-t { font-family: var(--font-mono); font-size: 12px; line-height: 20px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.fi-d { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--ok); background: var(--ok-soft); }
+.fi-d svg { width: 12px; height: 12px; }
+.fi.fail .fi-d { color: var(--danger); background: var(--danger-soft); }
+.fi.info .fi-d, .fi.pending .fi-d { color: var(--ink-muted); background: var(--surface-2); }
+.fi.ignored .fi-d { color: var(--warn); background: var(--warn-soft); }
+.fi-m { font-size: 13px; line-height: 20px; min-width: 0; overflow-wrap: anywhere; }
+.steps { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 2px; font-size: 12px; line-height: 17px; color: var(--ink-muted); }
+.steps .ok { color: var(--ok); font-weight: 600; }
+.steps .fail { color: var(--danger); font-weight: 600; }
+.steps .wait { color: var(--ink-muted); }
+.empty { text-align: center; padding: 40px 20px; color: var(--ink-muted); }
+.empty strong { display: block; color: var(--ink); font-size: 15px; margin-bottom: 4px; }
+
+/* Save bar + toast */
+.savebar { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(660px, calc(100% - 32px)); z-index: 30; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 10px 10px 20px; background: var(--ink); color: var(--bg); border-radius: var(--r-lg); box-shadow: var(--shadow-pop); }
+.savebar .btn.ghost { color: var(--bg); }
+.savebar .btn.ghost:hover { background: transparent; text-decoration: underline; }
+.toasts { position: fixed; right: 20px; top: calc(80px + env(safe-area-inset-top, 0px)); z-index: 40; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-pop); border-radius: var(--r-md); padding: 10px 14px; font-size: 13px; font-weight: 600; max-width: 320px; animation: tin .2s ease-out; display: flex; gap: 8px; align-items: center; }
+.toast::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.toast.warn::before { background: var(--warn); }
+.toast.err::before { background: var(--danger); }
+@keyframes tin { from { opacity: 0; transform: translateY(-6px); } }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+@media (max-width: 960px) {
+  .grid { grid-template-columns: minmax(0,1fr); }
+  .rail { position: static; }
+  .group { grid-template-columns: minmax(0,1fr); gap: 12px; }
+}
+@media (max-width: 640px) {
+  .top-in { padding: 10px 16px; }
+  .wrap { padding: 16px 16px 140px; }
+  .pad { padding: 16px; }
+  .hero { grid-template-columns: minmax(0,1fr); }
+  .hero h1 { font-size: 21px; line-height: 27px; }
+  .stats { gap: 20px; }
+  .acct { display: none; }
+  .rule-main { grid-template-columns: minmax(0,1fr); gap: 10px; }
+  .rule-main .num { display: none; }
+  .editor, .gfields { grid-template-columns: minmax(0,1fr); }
+  .sim { grid-template-columns: minmax(0,1fr); }
+  .fi { grid-template-columns: 56px 20px minmax(0,1fr); gap: 8px; }
+  .toasts { left: 16px; right: 16px; }
+}
+</style>
+
+<header class="top">
+  <div class="top-in">
+    <div class="mark"><i></i>AI Live Host</div>
+    <span class="acct" id="acct"><b>AM</b><span id="acctName">@agen_mulia_abadi</span></span>
+    <div class="spacer"></div>
+    <button class="btn ghost icon-btn" id="themeBtn" aria-label="Ganti tema terang/gelap" title="Ganti tema"></button>
+    <span id="pill" class="pill">Mengecek…</span>
+    <button id="startBtn" class="btn primary lg"></button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card pad hero" aria-live="polite">
+    <div>
+      <div class="overline" id="heroOver">Status</div>
+      <h1 id="heroTitle">Mengecek koneksi…</h1>
+      <p id="heroText"></p>
+    </div>
+    <div class="stats" id="stats">
+      <div class="stat"><b id="sTrig">0</b><span>Pemicu masuk</span></div>
+      <div class="stat"><b id="sPin">0</b><span>Produk di-pin</span></div>
+      <div class="stat"><b id="sReply">0</b><span>Balasan</span></div>
+      <div class="stat fail"><b id="sFail">0</b><span>Gagal</span></div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <aside class="rail">
+      <section class="card pad stack" aria-label="Pengecekan sebelum mulai">
+        <div class="row between"><span class="overline">Sebelum mulai</span><span class="small muted" id="checkCount"></span></div>
+        <div class="progress" id="progress"></div>
+        <ul class="checks" id="checks"></ul>
+        <button class="btn" id="recheck">Cek ulang</button>
+      </section>
+
+      <section class="card pad" aria-label="Mode uji">
+        <div class="row between" style="margin-bottom:4px"><span class="overline">Mode uji</span><span class="small muted">khusus demo</span></div>
+        <p class="small muted" style="margin-bottom:8px">Pura-pura kondisi berubah, untuk melihat reaksi dashboard.</p>
+        <label class="testrow" for="tObs">OBS tersambung <input type="checkbox" class="tgl" id="tObs" data-test="obs" checked></label>
+        <label class="testrow" for="tLogin">Masuk akun TikTok <input type="checkbox" class="tgl" id="tLogin" data-test="login" checked></label>
+        <label class="testrow" for="tLive">Sedang LIVE di TikTok <input type="checkbox" class="tgl" id="tLive" data-test="live"></label>
+        <label class="testrow" for="tShelf">Etalase LIVE terisi <input type="checkbox" class="tgl" id="tShelf" data-test="shelf"></label>
+        <label class="testrow" for="tAuto">Penonton otomatis <input type="checkbox" class="tgl" id="tAuto" data-test="auto" checked></label>
+      </section>
+    </aside>
+
+    <section class="card">
+      <div class="tabs" role="tablist" aria-label="Bagian dashboard">
+        <button class="tab" role="tab" id="tab-rules" data-tab="rules" aria-selected="true">Aturan otomatis <span class="count" id="ruleCount">0</span></button>
+        <button class="tab" role="tab" id="tab-activity" data-tab="activity" aria-selected="false">Aktivitas <span class="count" id="actCount">0</span></button>
+        <button class="tab" role="tab" id="tab-settings" data-tab="settings" aria-selected="false">Pengaturan</button>
+      </div>
+
+      <!-- RULES -->
+      <div class="pad stack" data-panel="rules" role="tabpanel" aria-labelledby="tab-rules">
+        <div class="row between">
+          <div style="min-width:0">
+            <h2 class="title">Kalau penonton ketik ini, bot melakukan itu</h2>
+            <p class="small muted">Satu aturan = kata pemicu → ganti scene OBS → pin produk → balas di chat.</p>
+          </div>
+          <button class="btn" id="addRule">+ Tambah aturan</button>
+        </div>
+        <div class="stack" id="rules"></div>
+      </div>
+
+      <!-- ACTIVITY -->
+      <div class="pad stack" data-panel="activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+        <form class="card pad stack" id="simForm" style="box-shadow:none;background:var(--surface-2)">
+          <div class="row between">
+            <div><h2 class="title" style="font-size:15px">Coba ketik komentar penonton</h2><p class="small muted">Komentar ini diproses seperti chat LIVE asli.</p></div>
+          </div>
+          <div class="sim">
+            <div class="affix"><span>@</span><input class="input" id="simUser" value="penonton_tes" aria-label="Nama penonton" autocomplete="off"></div>
+            <input class="input" id="simText" placeholder="contoh: spill etalase 3" aria-label="Komentar" autocomplete="off">
+            <button class="btn primary" type="submit">Kirim</button>
+          </div>
+          <div class="quick" id="quick"><span class="small muted">Coba cepat:</span></div>
+        </form>
+        <div class="row between">
+          <div class="seg" role="group" aria-label="Saring aktivitas">
+            <button type="button" data-filter="all" aria-pressed="true">Semua</button>
+            <button type="button" data-filter="ok" aria-pressed="false">Berhasil</button>
+            <button type="button" data-filter="fail" aria-pressed="false">Gagal</button>
+          </div>
+          <button class="btn ghost sm" id="clearFeed">Bersihkan log</button>
+        </div>
+        <ul class="feed" id="feed" aria-live="polite"></ul>
+        <div class="empty" id="feedEmpty"><strong>Belum ada aktivitas</strong>Setiap pemicu, pin, dan balasan akan muncul di sini, lengkap dengan alasannya kalau gagal. Coba ketik komentar di atas.</div>
+      </div>
+
+      <!-- SETTINGS -->
+      <form class="pad" data-panel="settings" role="tabpanel" aria-labelledby="tab-settings" id="settingsForm" hidden>
+        <div class="group">
+          <div><h3 class="title" style="font-size:15px">Akun TikTok</h3><p class="help">Ruang LIVE yang didengarkan bot.</p></div>
+          <div class="gfields">
+            <div class="field"><label class="label" for="sUser">Username yang LIVE</label><div class="affix"><span>@</span><input class="input" id="sUser" data-set="username" autocomplete="off"></div><span class="help" id="sUserHelp">Ketik tanpa @. Kalau ikut tertulis, otomatis dihapus.</span></div>
+            <div class="field"><label class="label" for="sShop">Nama toko di halaman LIVE</label><input class="input" id="sShop" data-set="shop" autocomplete="off"><span class="help" id="sShopHelp">Harus sama persis. Dicek sebelum pin.</span></div>
+            <div class="trow"><div><div class="label" id="loginLabel">Masuk sebagai @agen_mulia_abadi</div><div class="help" id="loginHelp">Sesi masih aktif.</div></div><button type="button" class="btn sm" id="relogin">Masuk ulang</button></div>
+          </div>
+        </div>
+        <div class="group">
+          <div><h3 class="title" style="font-size:15px">OBS</h3><p class="help">Di OBS: Tools → WebSocket Server Settings.</p></div>
+          <div class="gfields">
+            <div class="field"><label class="label" for="sHost">Host</label><input class="input mono" id="sHost" data-set="host" autocomplete="off"><span class="help">Biasanya 127.0.0.1 (komputer yang sama).</span></div>
+            <div class="field"><label class="label" for="sPort">Port WebSocket</label><input class="input mono" id="sPort" data-set="port" inputmode="numeric" autocomplete="off"><span class="help" id="sPortHelp">Bawaan OBS: 4455.</span></div>
+            <div class="field" style="grid-column:1/-1"><span class="label">Password</span>
+              <div class="row" id="pwView"><span class="muted">•••••••• tersimpan</span><button type="button" class="btn sm" id="pwChange">Ganti</button></div>
+              <div class="row" id="pwEdit" hidden><input class="input" type="password" id="sPw" placeholder="Password baru" style="max-width:280px" autocomplete="new-password"><button type="button" class="btn sm" id="pwShow">Lihat</button><button type="button" class="btn ghost sm" id="pwCancel">Batal</button></div>
+              <span class="help">Hanya perlu kalau OBS meminta password.</span></div>
+          </div>
+        </div>
+        <div class="group">
+          <div><h3 class="title" style="font-size:15px">Yang dilakukan bot</h3><p class="help">Berlaku untuk semua aturan selama LIVE.</p></div>
+          <div class="gfields">
+            <label class="trow" for="sScene"><div><div class="label">Ganti scene OBS otomatis</div><div class="help">Pindah ke scene dari aturan yang dipicu.</div></div><input type="checkbox" class="tgl" id="sScene" data-set="autoScene"></label>
+            <label class="trow" for="sPin"><div><div class="label">Pin produk otomatis</div><div class="help">Pin produk dari aturan saat penonton mengetik pemicunya.</div></div><input type="checkbox" class="tgl" id="sPin" data-set="autoPin"></label>
+            <label class="trow" for="sReply"><div><div class="label">Balas di chat setelah pin</div><div class="help">Satu balasan singkat, hanya setelah pin terkonfirmasi.</div></div><input type="checkbox" class="tgl" id="sReply" data-set="autoReply"></label>
+            <div class="field"><label class="label" for="sCool">Jeda antar pemicu yang sama</label><div class="affix"><input class="input" id="sCool" data-set="cooldown" inputmode="numeric" autocomplete="off"><span style="padding:0 12px 0 0">detik</span></div><span class="help" id="sCoolHelp">Supaya produk tidak di-pin berulang kalau banyak yang ketik bersamaan.</span></div>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+</main>
+
+<div class="savebar" id="savebar" hidden role="region" aria-label="Perubahan belum disimpan">
+  <span><b id="dirtyN">1 perubahan</b> belum disimpan</span>
+  <div class="row" style="gap:6px"><button class="btn ghost" id="discard">Buang</button><button class="btn primary" id="save">Simpan perubahan</button></div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+  var I = {
+    check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
+    alert: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 4v5"/><circle cx="8" cy="12" r=".6" fill="currentColor"/></svg>',
+    x: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>',
+    play: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.2v9.6c0 .4.4.6.7.4l7.3-4.8c.3-.2.3-.6 0-.8L5.7 2.8c-.3-.2-.7 0-.7.4z"/></svg>',
+    stop: '<svg viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>',
+    pause: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5.5 4v8M10.5 4v8"/></svg>',
+    sun: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/></svg>',
+    moon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg>'
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
+  var clone = function (o) { return JSON.parse(JSON.stringify(o)); };
+  var store = {
+    get: function (k) { try { return JSON.parse(localStorage.getItem("alh:" + k)); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem("alh:" + k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  /* ---------- Example data (contoh) ---------- */
+  var SCENES = ["Intro", "Standby", "PAX-1", "PAX-2", "PAX-3", "PAX-4", "PAX-5"];
+  var PRODUCTS = ["Dilan Cookies Original", "Dilan Cookies Matcha", "Dilan Brownies Box", "DILAN COOKIES COKLAT", "Dilan Waffle 1 BOX", "Dilan Nastar Premium"];
+  var VIEWERS = ["rina.cookies", "budi_88", "sari.snack", "dewi_ayu", "kak_tono", "mila.jkt", "andre.sby", "putri_lpg"];
+  var CHATTER = ["kak harganya berapa?", "ready kak?", "mantap", "ongkir ke medan berapa", "halo kak", "boleh cod?"];
+
+  var DEFAULT = {
+    settings: { username: "agen_mulia_abadi", shop: "agen_mulia_abadi", host: "127.0.0.1", port: "4455", autoScene: true, autoPin: true, autoReply: true, cooldown: "5" },
+    rules: [1, 2, 3, 4, 5].map(function (n) {
+      return { id: "r" + n, triggers: ["spill etalase " + n, "et " + n], scene: "PAX-" + n, product: PRODUCTS[n - 1], reply: "Etalase " + n + " sudah aku pin ya kak", on: true };
+    })
+  };
+
+  var saved = store.get("config") || clone(DEFAULT);
+  var draft = clone(saved);
+  var test = { obs: true, login: true, live: false, shelf: false, auto: true };
+  var ui = { tab: "rules", editing: null, confirmDel: null, filter: "all", checking: false };
+  var run = { on: false, paused: false, timer: null, last: {}, stats: { t: 0, p: 0, r: 0, f: 0 }, hit: null };
+  var feed = [];
+  var seq = 0;
+
+  /* ---------- Helpers ---------- */
+  var norm = function (s) { return String(s).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim(); };
+  function now() { var d = new Date(); return [d.getHours(), d.getMinutes(), d.getSeconds()].map(function (n) { return ("0" + n).slice(-2); }).join(":"); }
+  function toast(msg, kind) {
+    var t = document.createElement("div"); t.className = "toast " + (kind || ""); t.textContent = msg;
+    $("toasts").appendChild(t); setTimeout(function () { t.remove(); }, 2600);
+  }
+
+  function ruleIssues(cfg) {
+    var issues = {}, seen = {};
+    cfg.rules.forEach(function (r, i) {
+      if (!r.on) return;
+      if (!r.triggers.length) { issues[r.id] = "Belum ada kata pemicu. Aturan ini tidak akan pernah jalan."; return; }
+      r.triggers.forEach(function (t) {
+        var k = norm(t);
+        if (seen[k] !== undefined && seen[k] !== i) issues[r.id] = "Pemicu “" + t + "” juga dipakai di aturan " + (seen[k] + 1) + ". Yang dipakai hanya aturan " + (seen[k] + 1) + ".";
+        else seen[k] = i;
+      });
+    });
+    return issues;
+  }
+  function settingsIssues(s) {
+    var e = {};
+    if (!s.username.trim()) e.username = "Username wajib diisi.";
+    else if (!/^[A-Za-z0-9._]{2,24}$/.test(s.username)) e.username = "Hanya huruf, angka, titik, dan garis bawah.";
+    if (!s.shop.trim()) e.shop = "Nama toko wajib diisi.";
+    var p = Number(s.port);
+    if (!/^\d+$/.test(s.port) || p < 1 || p > 65535) e.port = "Port harus angka 1–65535.";
+    if (!/^\d+$/.test(s.cooldown) || Number(s.cooldown) > 120) e.cooldown = "Isi angka 0–120.";
+    return e;
+  }
+
+  function checks() {
+    var activeRules = saved.rules.filter(function (r) { return r.on; }).length;
+    var issues = Object.keys(ruleIssues(saved)).length;
+    return [
+      test.obs ? { ok: true, name: "OBS tersambung", d: saved.settings.host + ":" + saved.settings.port + " · " + SCENES.length + " scene ditemukan" }
+               : { ok: false, sev: "fail", name: "OBS tidak tersambung", d: "Buka OBS dan nyalakan WebSocket Server, lalu tekan Cek ulang.", fix: "settings" },
+      test.login ? { ok: true, name: "Akun TikTok", d: "Masuk sebagai @" + saved.settings.username }
+                 : { ok: false, sev: "fail", name: "Belum masuk TikTok", d: "Sesi habis. Buka Pengaturan lalu tekan Masuk ulang.", fix: "settings" },
+      !activeRules ? { ok: false, sev: "todo", name: "Tidak ada aturan aktif", d: "Nyalakan minimal satu aturan.", fix: "rules" }
+        : issues ? { ok: false, sev: "todo", name: issues + " aturan perlu diperbaiki", d: "Lihat tanda merah di tab Aturan.", fix: "rules" }
+        : { ok: true, name: activeRules + " aturan aktif", d: "Semua pemicu, scene, dan produk valid" },
+      test.live ? { ok: true, name: "Sedang LIVE", d: "Ruang @" + saved.settings.username + " ditemukan" }
+                : { ok: false, sev: "todo", name: "Belum LIVE", d: "Mulai LIVE di TikTok dulu, lalu tekan Cek ulang." },
+      test.shelf ? { ok: true, name: "Etalase LIVE terisi", d: PRODUCTS.length + " produk tersedia untuk di-pin" }
+                 : { ok: false, sev: "todo", name: "Etalase LIVE kosong", d: "Tambahkan produk ke keranjang LIVE agar bisa di-pin." }
+    ];
+  }
+  function blocking() { return checks().filter(function (c) { return !c.ok; }); }
+
+  function dirtyCount() {
+    var n = 0, a = saved, b = draft;
+    Object.keys(a.settings).forEach(function (k) { if (String(a.settings[k]) !== String(b.settings[k])) n++; });
+    var ids = {};
+    a.rules.forEach(function (r) { ids[r.id] = JSON.stringify(r); });
+    b.rules.forEach(function (r) { if (ids[r.id] === undefined) n++; else if (ids[r.id] !== JSON.stringify(r)) n++; delete ids[r.id]; });
+    n += Object.keys(ids).length;
+    if (a.rules.map(function (r) { return r.id; }).join() !== b.rules.map(function (r) { return r.id; }).join() && n === 0) n = 1;
+    return n;
+  }
+
+  /* ---------- Render ---------- */
+  function renderTheme() {
+    var t = document.documentElement.getAttribute("data-theme");
+    var dark = t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    $("themeBtn").innerHTML = dark ? I.sun : I.moon;
+  }
+
+  function renderChecks() {
+    var cs = checks(), okN = cs.filter(function (c) { return c.ok; }).length;
+    $("checkCount").textContent = okN + " dari " + cs.length + " siap";
+    $("progress").innerHTML = cs.map(function (c) { return '<span class="' + (c.ok ? "on" : "") + '"></span>'; }).join("");
+    $("checks").innerHTML = cs.map(function (c) {
+      var cls = c.ok ? "" : " " + c.sev;
+      var fix = c.fix ? ' <a data-goto="' + c.fix + '">Buka ' + (c.fix === "rules" ? "Aturan" : "Pengaturan") + '</a>' : "";
+      return '<li class="check' + cls + '"><span class="check-ic">' + (c.ok ? I.check : c.sev === "fail" ? I.x : I.alert) + '</span><div><b>' + esc(c.name) + '</b><p>' + esc(c.d) + fix + '</p></div></li>';
+    }).join("");
+  }
+
+  function renderStatus() {
+    var btn = $("startBtn"), pill = $("pill"), b = blocking();
+    var nActive = saved.rules.filter(function (r) { return r.on; }).length;
+    btn.removeAttribute("title");
+    if (run.on) {
+      var problem = !test.obs ? "OBS terputus. Scene tidak bisa diganti sampai OBS tersambung lagi." : !test.shelf ? "Etalase LIVE kosong. Pin akan gagal sampai produk ditambahkan." : "";
+      if (run.paused) {
+        pill.className = "pill warn"; pill.textContent = "Dijeda";
+        $("heroOver").textContent = "Bot dijeda";
+        $("heroTitle").textContent = "Bot berhenti sebentar, LIVE tetap jalan";
+        $("heroText").textContent = "Komentar penonton tidak diproses selama dijeda. Tekan Lanjutkan untuk mendengarkan lagi.";
+        btn.className = "btn primary lg"; btn.innerHTML = I.play + " Lanjutkan";
+      } else {
+        pill.className = problem ? "pill danger" : "pill live"; pill.textContent = problem ? "Ada masalah" : "ON AIR";
+        $("heroOver").textContent = "Bot sedang jalan";
+        $("heroTitle").textContent = problem ? "Bot jalan, tapi ada yang perlu dicek" : "Bot mendengarkan chat LIVE kamu";
+        $("heroText").textContent = problem || (nActive + " aturan aktif. Setiap kejadian tercatat di tab Aktivitas.");
+        btn.className = "btn live lg"; btn.innerHTML = I.stop + " Hentikan Bot";
+      }
+      btn.setAttribute("aria-disabled", "false");
+    } else if (ui.checking) {
+      pill.className = "pill"; pill.textContent = "Mengecek…";
+    } else if (!b.length) {
+      pill.className = "pill ok"; pill.textContent = "Siap dijalankan";
+      btn.className = "btn primary lg"; btn.innerHTML = I.play + " Mulai Bot"; btn.setAttribute("aria-disabled", "false");
+      $("heroOver").textContent = "Status";
+      $("heroTitle").textContent = "Semua siap. Tinggal tekan Mulai Bot";
+      $("heroText").textContent = "Bot akan mengganti scene, pin produk, dan membalas chat sesuai " + nActive + " aturan aktif.";
+    } else {
+      var hard = b.some(function (c) { return c.sev === "fail"; });
+      pill.className = hard ? "pill danger" : "pill warn"; pill.textContent = b.length + " hal perlu dicek";
+      btn.className = "btn primary lg"; btn.innerHTML = I.play + " Mulai Bot"; btn.setAttribute("aria-disabled", "true");
+      btn.title = "Selesaikan " + b.length + " pengecekan dulu";
+      $("heroOver").textContent = "Status";
+      $("heroTitle").textContent = "Belum bisa mulai: " + b.length + " hal perlu dibereskan";
+      $("heroText").textContent = "Ikuti petunjuk di kolom Sebelum mulai, lalu tekan Cek ulang.";
+    }
+    var s = run.stats;
+    $("stats").classList.toggle("dim", !run.on && !s.t);
+    $("sTrig").textContent = s.t; $("sPin").textContent = s.p; $("sReply").textContent = s.r; $("sFail").textContent = s.f;
+    $("acctName").textContent = "@" + saved.settings.username;
+    $("loginLabel").textContent = test.login ? "Masuk sebagai @" + saved.settings.username : "Belum masuk";
+    $("loginHelp").textContent = test.login ? "Sesi masih aktif." : "Sesi habis. Tekan Masuk ulang.";
+  }
+
+  function opts(list, val) { return list.map(function (o) { return "<option" + (o === val ? " selected" : "") + ">" + esc(o) + "</option>"; }).join(""); }
+
+  function renderRules() {
+    var issues = ruleIssues(draft);
+    var nIssue = Object.keys(issues).length;
+    var rc = $("ruleCount"); rc.textContent = draft.rules.length; rc.className = "count" + (nIssue ? " warn" : "");
+    var s = draft.settings;
+    if (!draft.rules.length) {
+      $("rules").innerHTML = '<div class="empty"><strong>Belum ada aturan</strong>Tekan + Tambah aturan untuk membuat yang pertama.</div>';
+      return;
+    }
+    $("rules").innerHTML = draft.rules.map(function (r, i) {
+      var chips = r.triggers.map(function (t) { return '<span class="chip trig">' + esc(t) + '</span>'; }).join("") || '<span class="small" style="color:var(--danger)">belum ada pemicu</span>';
+      var open = ui.editing === r.id;
+      var h = '<div class="rule' + (run.hit === r.id ? " hit" : "") + (r.on ? "" : " off") + (issues[r.id] ? " err" : "") + '" data-rule="' + r.id + '">' +
+        '<div class="rule-main"><div class="num">' + (i + 1) + '</div><div style="min-width:0">' +
+        '<div class="flow"><span class="word">Kalau penonton ketik</span>' + chips +
+        '<span class="arrow">→</span><span class="word">ganti scene</span><span class="chip scene' + (s.autoScene ? "" : " skip") + '">' + esc(r.scene) + '</span>' +
+        '<span class="arrow">→</span><span class="word">pin</span><span class="chip prod' + (s.autoPin ? "" : " skip") + '">' + esc(r.product) + '</span></div>' +
+        '<div class="reply"><span class="small">Balas:</span><q' + (s.autoReply && s.autoPin ? "" : ' style="text-decoration:line-through;color:var(--ink-muted)"') + '>' + esc(r.reply || "(tanpa balasan)") + '</q></div>' +
+        (issues[r.id] ? '<div class="rule-err">' + esc(issues[r.id]) + '</div>' : "") +
+        '</div><div class="rule-actions">' +
+        '<input type="checkbox" class="tgl" id="on-' + r.id + '" data-act="toggle" ' + (r.on ? "checked" : "") + ' aria-label="Aturan ' + (i + 1) + ' aktif" title="' + (r.on ? "Aktif" : "Mati") + '">' +
+        '<button class="btn ' + (open ? "" : "ghost ") + 'sm" data-act="edit">' + (open ? "Tutup" : "Ubah") + '</button></div></div>';
+      if (open) {
+        h += '<div class="editor">' +
+          '<div class="field full"><label class="label" for="trig-' + r.id + '">Kata pemicu</label>' +
+          '<div class="chipbox' + (r.triggers.length ? "" : " bad") + '" data-focus="trig-' + r.id + '">' +
+          r.triggers.map(function (t, ti) { return '<span class="chip trig">' + esc(t) + '<button type="button" class="chip-x" data-act="rmtrig" data-ti="' + ti + '" aria-label="Hapus pemicu ' + esc(t) + '">×</button></span>'; }).join("") +
+          '<input id="trig-' + r.id + '" data-act="trigin" placeholder="ketik pemicu lalu Enter" autocomplete="off"></div>' +
+          '<span class="help">Tekan Enter atau koma untuk menambah. Huruf besar/kecil dan tanda baca diabaikan.</span></div>' +
+          '<div class="field"><label class="label" for="scene-' + r.id + '">Ganti ke scene OBS</label><select class="select" id="scene-' + r.id + '" data-f="scene">' + opts(SCENES, r.scene) + '</select></div>' +
+          '<div class="field"><label class="label" for="prod-' + r.id + '">Pin produk</label><select class="select" id="prod-' + r.id + '" data-f="product">' + opts(PRODUCTS, r.product) + '</select></div>' +
+          '<div class="field full"><label class="label" for="reply-' + r.id + '">Balasan di chat</label><input class="input" id="reply-' + r.id + '" data-f="reply" value="' + esc(r.reply) + '" maxlength="150" autocomplete="off"><span class="help"><span id="rc-' + r.id + '">' + r.reply.length + '</span>/150 · dikirim setelah pin terkonfirmasi. Kosongkan kalau tidak perlu membalas.</span></div>' +
+          '<div class="full row between"><button class="btn danger sm" data-act="askdel">Hapus aturan ini</button><button class="btn sm" data-act="edit">Selesai</button></div></div>';
+      }
+      if (ui.confirmDel === r.id) {
+        h += '<div class="confirm"><span>Hapus aturan ' + (i + 1) + '? Perubahan ini bisa dibuang sebelum disimpan.</span><div class="row" style="gap:6px"><button class="btn ghost sm" data-act="canceldel">Batal</button><button class="btn danger-solid sm" data-act="del">Ya, hapus</button></div></div>';
+      }
+      return h + "</div>";
+    }).join("");
+  }
+
+  function renderQuick() {
+    var q = ['<span class="small muted">Coba cepat:</span>'];
+    saved.rules.filter(function (r) { return r.on && r.triggers.length; }).slice(0, 5).forEach(function (r) {
+      q.push('<button type="button" class="chip trig" data-quick="' + esc(r.triggers[0]) + '">' + esc(r.triggers[0]) + '</button>');
+    });
+    q.push('<button type="button" class="chip" data-quick="kak harganya berapa?">kak harganya berapa?</button>');
+    $("quick").innerHTML = q.join("");
+  }
+
+  function renderFeed() {
+    $("actCount").textContent = feed.length;
+    var list = feed.filter(function (e) {
+      if (ui.filter === "ok") return e.kind === "ok";
+      if (ui.filter === "fail") return e.kind === "fail";
+      return true;
+    });
+    $("feedEmpty").hidden = list.length > 0;
+    if (feed.length && !list.length) { $("feedEmpty").innerHTML = "<strong>Tidak ada yang cocok</strong>Coba saringan lain."; }
+    else $("feedEmpty").innerHTML = "<strong>Belum ada aktivitas</strong>Setiap pemicu, pin, dan balasan akan muncul di sini, lengkap dengan alasannya kalau gagal. Coba ketik komentar di atas.";
+    $("feed").innerHTML = list.slice(0, 60).map(function (e) {
+      var icon = e.kind === "ok" ? I.check : e.kind === "fail" ? I.x : e.kind === "ignored" ? I.alert : e.kind === "pending" ? '<span class="spin" style="width:10px;height:10px"></span>' : (e.icon || I.play);
+      var steps = e.steps.map(function (s) { return '<span class="' + s.c + '">' + esc(s.t) + "</span>"; }).join("");
+      return '<li class="fi ' + e.kind + '"><span class="fi-t">' + e.time + '</span><span class="fi-d">' + icon + '</span><div class="fi-m">' + e.main + (steps ? '<div class="steps">' + steps + "</div>" : "") + "</div></li>";
+    }).join("");
+  }
+
+  function renderSettingsValues() {
+    var s = draft.settings;
+    $("sUser").value = s.username; $("sShop").value = s.shop; $("sHost").value = s.host; $("sPort").value = s.port; $("sCool").value = s.cooldown;
+    $("sScene").checked = s.autoScene; $("sPin").checked = s.autoPin; $("sReply").checked = s.autoReply;
+    renderSettingsErrors();
+  }
+  function renderSettingsErrors() {
+    var e = settingsIssues(draft.settings);
+    [["username", "sUser", "sUserHelp", "Ketik tanpa @. Kalau ikut tertulis, otomatis dihapus."], ["shop", "sShop", "sShopHelp", "Harus sama persis. Dicek sebelum pin."], ["port", "sPort", "sPortHelp", "Bawaan OBS: 4455."], ["cooldown", "sCool", "sCoolHelp", "Supaya produk tidak di-pin berulang kalau banyak yang ketik bersamaan."]].forEach(function (f) {
+      var bad = !!e[f[0]];
+      $(f[1]).classList.toggle("bad", bad);
+      $(f[1]).setAttribute("aria-invalid", bad ? "true" : "false");
+      $(f[2]).textContent = bad ? e[f[0]] : f[3];
+      $(f[2]).classList.toggle("err", bad);
+    });
+  }
+
+  function renderSavebar() {
+    var n = dirtyCount();
+    $("savebar").hidden = n === 0;
+    $("dirtyN").textContent = n + " perubahan";
+    var bad = Object.keys(settingsIssues(draft.settings)).length > 0;
+    $("save").disabled = bad;
+    $("save").title = bad ? "Perbaiki isian berwarna merah di Pengaturan dulu" : "";
+  }
+
+  function renderAll() { renderChecks(); renderStatus(); renderRules(); renderQuick(); renderFeed(); renderSavebar(); }
+
+  /* ---------- Tabs ---------- */
+  function setTab(name) {
+    ui.tab = name;
+    document.querySelectorAll(".tab").forEach(function (t) { t.setAttribute("aria-selected", t.dataset.tab === name ? "true" : "false"); });
+    document.querySelectorAll("[data-panel]").forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+    store.set("tab", name);
+  }
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.addEventListener("click", function () { setTab(t.dataset.tab); });
+    t.addEventListener("keydown", function (e) {
+      var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab")), i = tabs.indexOf(t);
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") { var n = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length]; n.focus(); setTab(n.dataset.tab); }
+    });
+  });
+  document.addEventListener("click", function (e) {
+    var g = e.target.closest("[data-goto]"); if (g) { setTab(g.dataset.goto); }
+  });
+
+  /* ---------- Bot pipeline ---------- */
+  function log(e) { e.id = ++seq; e.time = now(); feed.unshift(e); if (feed.length > 200) feed.pop(); renderFeed(); return e; }
+
+  function processComment(user, text) {
+    user = (user || "penonton").replace(/^@+/, "").trim() || "penonton";
+    var n = " " + norm(text) + " ";
+    var main = "<b>@" + esc(user) + "</b> ketik <span class=\"mono\">" + esc(text) + "</span>";
+    if (!run.on || run.paused) {
+      log({ kind: "info", icon: I.pause, main: main, steps: [{ c: "wait", t: run.on ? "Tidak diproses: bot sedang dijeda" : "Tidak diproses: bot belum jalan. Tekan Mulai Bot dulu." }] });
+      return;
+    }
+    var match = null, trig = null;
+    saved.rules.some(function (r) {
+      if (!r.on) return false;
+      return r.triggers.some(function (t) { var k = norm(t); if (k && n.indexOf(" " + k + " ") !== -1) { match = r; trig = t; return true; } return false; });
+    });
+    if (!match) return; // ordinary chat: ignored silently, like the real bot
+    var s = saved.settings, cd = Number(s.cooldown) * 1000, t0 = Date.now();
+    run.stats.t++;
+    if (run.last[match.id] && t0 - run.last[match.id] < cd) {
+      log({ kind: "ignored", main: main, steps: [{ c: "wait", t: "Diabaikan: aturan " + (saved.rules.indexOf(match) + 1) + " baru saja dipicu (jeda " + s.cooldown + " detik)" }] });
+      renderStatus(); return;
+    }
+    run.last[match.id] = t0;
+    var e = log({ kind: "pending", main: main + ' <span class="small muted">→ aturan ' + (saved.rules.indexOf(match) + 1) + "</span>", steps: [{ c: "wait", t: "Memproses…" }] });
+    run.hit = match.id; renderRules(); renderStatus();
+    var steps = [], failed = false;
+    var push = function (st) { steps.push(st); e.steps = steps.slice(); renderFeed(); };
+    setTimeout(function () {
+      if (!s.autoScene) push({ c: "wait", t: "Ganti scene dimatikan" });
+      else if (!test.obs) { push({ c: "fail", t: "Scene gagal: OBS tidak tersambung" }); failed = true; }
+      else push({ c: "ok", t: "Scene " + match.scene + " ✓" });
+      setTimeout(function () {
+        var pinned = false;
+        if (!s.autoPin) push({ c: "wait", t: "Pin otomatis dimatikan" });
+        else if (!test.shelf) { push({ c: "fail", t: "Pin gagal: " + match.product + " tidak ada di etalase LIVE" }); failed = true; }
+        else if (!test.login) { push({ c: "fail", t: "Pin gagal: sesi TikTok habis" }); failed = true; }
+        else { push({ c: "ok", t: "Pin " + match.product + " ✓" }); pinned = true; run.stats.p++; }
+        setTimeout(function () {
+          if (!s.autoReply || !match.reply) push({ c: "wait", t: "Tanpa balasan" });
+          else if (!pinned) push({ c: "wait", t: "Balasan tidak dikirim karena pin tidak terjadi" });
+          else { push({ c: "ok", t: "Balasan terkirim ✓" }); run.stats.r++; }
+          e.kind = failed ? "fail" : "ok";
+          if (failed) run.stats.f++;
+          renderFeed(); renderStatus();
+          setTimeout(function () { if (run.hit === match.id) { run.hit = null; renderRules(); } }, 1200);
+        }, 350);
+      }, 450);
+    }, 300);
+  }
+
+  function autoViewer() {
+    if (!run.on || run.paused || !test.auto) return;
+    var v = VIEWERS[Math.floor(Math.random() * VIEWERS.length)];
+    var active = saved.rules.filter(function (r) { return r.on && r.triggers.length; });
+    if (Math.random() < .3 || !active.length) { processComment(v, CHATTER[Math.floor(Math.random() * CHATTER.length)]); return; }
+    var r = active[Math.floor(Math.random() * active.length)];
+    processComment(v, r.triggers[Math.floor(Math.random() * r.triggers.length)]);
+  }
+
+  function startBot() {
+    var b = blocking();
+    if (b.length) {
+      toast("Belum bisa mulai: " + b[0].name.toLowerCase() + ".", "warn");
+      $("recheck").focus(); return;
+    }
+    if (dirtyCount()) toast("Ada perubahan yang belum disimpan. Bot memakai versi terakhir yang tersimpan.", "warn");
+    run.on = true; run.paused = false; run.last = {};
+    log({ kind: "info", icon: I.play, main: "Bot mulai jalan", steps: [{ c: "wait", t: saved.rules.filter(function (r) { return r.on; }).length + " aturan aktif · LIVE @" + saved.settings.username }] });
+    run.timer = setInterval(autoViewer, 3200);
+    setTab("activity"); renderStatus(); toast("Bot mulai mendengarkan chat LIVE.");
+  }
+  function stopBot(reason) {
+    run.on = false; run.paused = false; clearInterval(run.timer); run.hit = null;
+    log({ kind: "info", icon: I.stop, main: reason || "Bot dihentikan", steps: [{ c: "wait", t: run.stats.p + " pin berhasil · " + run.stats.r + " balasan · " + run.stats.f + " gagal" }] });
+    renderAll(); toast(reason || "Bot dihentikan.", reason ? "warn" : "");
+  }
+
+  $("startBtn").addEventListener("click", function () {
+    if (run.on && run.paused) { run.paused = false; log({ kind: "info", icon: I.play, main: "Bot dilanjutkan", steps: [] }); renderStatus(); return; }
+    if (run.on) stopBot(); else startBot();
+  });
+
+  /* ---------- Checks & test mode ---------- */
+  $("recheck").addEventListener("click", function () {
+    var b = $("recheck"); ui.checking = true; b.disabled = true; b.innerHTML = '<span class="spin"></span> Mengecek…'; renderStatus();
+    setTimeout(function () {
+      ui.checking = false; b.disabled = false; b.textContent = "Cek ulang";
+      renderChecks(); renderStatus();
+      var n = blocking().length;
+      toast(n ? n + " hal masih perlu dibereskan." : "Semua siap. Kamu bisa tekan Mulai Bot.", n ? "warn" : "");
+    }, 800);
+  });
+  document.querySelectorAll("[data-test]").forEach(function (el) {
+    el.addEventListener("change", function () {
+      var k = el.dataset.test; test[k] = el.checked;
+      if (run.on) {
+        if (k === "live" && !el.checked) { stopBot("LIVE berakhir. Bot berhenti otomatis."); return; }
+        if (k === "obs") log({ kind: el.checked ? "info" : "fail", icon: I.play, main: el.checked ? "OBS tersambung lagi" : "OBS terputus", steps: el.checked ? [] : [{ c: "fail", t: "Scene tidak bisa diganti sampai OBS tersambung lagi" }] });
+        if (k === "login" && !el.checked) log({ kind: "fail", main: "Sesi TikTok habis", steps: [{ c: "fail", t: "Pin dan balasan akan gagal. Buka Pengaturan → Masuk ulang." }] });
+      }
+      renderChecks(); renderStatus();
+    });
+  });
+
+  /* ---------- Rules editing ---------- */
+  function findRule(el) { var w = el.closest("[data-rule]"); return w ? draft.rules.filter(function (r) { return r.id === w.dataset.rule; })[0] : null; }
+  function changed() { renderSavebar(); }
+  function addTrigger(r, raw) {
+    var added = 0;
+    raw.split(/[,\n]/).forEach(function (t) {
+      t = t.trim().replace(/\s+/g, " ");
+      if (!t) return;
+      if (r.triggers.some(function (x) { return norm(x) === norm(t); })) { toast("“" + t + "” sudah ada di aturan ini.", "warn"); return; }
+      r.triggers.push(t); added++;
+    });
+    return added;
+  }
+
+  $("rules").addEventListener("click", function (e) {
+    var a = e.target.closest("[data-act]");
+    var box = e.target.closest(".chipbox");
+    if (box && !a) { var inp = box.querySelector("input"); if (inp) inp.focus(); return; }
+    if (!a) return;
+    var r = findRule(a); if (!r) return;
+    var act = a.dataset.act;
+    if (act === "edit") { ui.editing = ui.editing === r.id ? null : r.id; ui.confirmDel = null; renderRules(); if (ui.editing) { var f = $("trig-" + r.id); if (f) f.focus(); } }
+    else if (act === "rmtrig") { r.triggers.splice(+a.dataset.ti, 1); renderRules(); var f2 = $("trig-" + r.id); if (f2) f2.focus(); changed(); }
+    else if (act === "askdel") { ui.confirmDel = r.id; renderRules(); }
+    else if (act === "canceldel") { ui.confirmDel = null; renderRules(); }
+    else if (act === "del") {
+      draft.rules = draft.rules.filter(function (x) { return x.id !== r.id; });
+      ui.confirmDel = null; ui.editing = null; renderRules(); changed(); toast("Aturan dihapus. Tekan Simpan untuk menerapkan.");
+    }
+  });
+  $("rules").addEventListener("change", function (e) {
+    var el = e.target, r = findRule(el); if (!r) return;
+    if (el.dataset.act === "toggle") { r.on = el.checked; renderRules(); changed(); return; }
+    if (el.dataset.f === "scene" || el.dataset.f === "product") { r[el.dataset.f] = el.value; renderRules(); changed(); }
+  });
+  $("rules").addEventListener("input", function (e) {
+    var el = e.target, r = findRule(el); if (!r) return;
+    if (el.dataset.f === "reply") { r.reply = el.value; var c = $("rc-" + r.id); if (c) c.textContent = el.value.length; changed(); }
+    if (el.dataset.act === "trigin" && /,/.test(el.value)) { var v2 = el.value; el.value = ""; if (addTrigger(r, v2)) { renderRules(); changed(); } el = $("trig-" + r.id); if (el) { el.value = ""; el.focus(); } }
+  });
+  $("rules").addEventListener("keydown", function (e) {
+    var el = e.target; if (el.dataset.act !== "trigin") return;
+    var r = findRule(el); if (!r) return;
+    if (e.key === "Enter") { e.preventDefault(); var v = el.value; el.value = ""; if (addTrigger(r, v)) { renderRules(); changed(); } var n = $("trig-" + r.id); if (n) { n.value = ""; n.focus(); } }
+    else if (e.key === "Backspace" && !el.value && r.triggers.length) { r.triggers.pop(); renderRules(); changed(); var m = $("trig-" + r.id); if (m) m.focus(); }
+  });
+  $("rules").addEventListener("focusout", function (e) {
+    var el = e.target; if (el.dataset.act !== "trigin" || !el.value.trim()) return;
+    var r = findRule(el), v3 = el.value; el.value = ""; if (r && addTrigger(r, v3)) { setTimeout(function () { renderRules(); changed(); }, 0); }
+  });
+  $("addRule").addEventListener("click", function () {
+    var n = draft.rules.length + 1, id = "r" + Date.now().toString(36);
+    draft.rules.push({ id: id, triggers: [], scene: SCENES[Math.min(n + 1, SCENES.length - 1)], product: PRODUCTS[(n - 1) % PRODUCTS.length], reply: "Etalase " + n + " sudah aku pin ya kak", on: true });
+    ui.editing = id; renderRules(); changed();
+    var f = $("trig-" + id); if (f) { f.focus(); f.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  });
+
+  /* ---------- Settings ---------- */
+  document.querySelectorAll("[data-set]").forEach(function (el) {
+    var k = el.dataset.set;
+    el.addEventListener(el.type === "checkbox" ? "change" : "input", function () {
+      if (el.type === "checkbox") draft.settings[k] = el.checked;
+      else {
+        var v = el.value;
+        if (k === "username" && /@/.test(v)) { v = v.replace(/@/g, ""); el.value = v; }
+        if (k === "port" || k === "cooldown") { v = v.replace(/\D/g, ""); el.value = v; }
+        draft.settings[k] = v;
+      }
+      renderSettingsErrors(); renderSavebar();
+      if (k.indexOf("auto") === 0) renderRules();
+    });
+  });
+  $("settingsForm").addEventListener("submit", function (e) { e.preventDefault(); });
+  $("pwChange").addEventListener("click", function () { $("pwView").hidden = true; $("pwEdit").hidden = false; $("sPw").focus(); });
+  $("pwCancel").addEventListener("click", function () { $("sPw").value = ""; $("pwView").hidden = false; $("pwEdit").hidden = true; });
+  $("pwShow").addEventListener("click", function () { var p = $("sPw"); p.type = p.type === "password" ? "text" : "password"; $("pwShow").textContent = p.type === "password" ? "Lihat" : "Sembunyikan"; });
+  $("sPw").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); if ($("sPw").value) { $("sPw").value = ""; $("pwView").hidden = false; $("pwEdit").hidden = true; toast("Password OBS diganti."); } } });
+  $("relogin").addEventListener("click", function () {
+    var b = $("relogin"); b.disabled = true; b.innerHTML = '<span class="spin"></span> Membuka TikTok…';
+    setTimeout(function () { b.disabled = false; b.textContent = "Masuk ulang"; test.login = true; $("tLogin").checked = true; renderAll(); toast("Masuk sebagai @" + saved.settings.username + "."); }, 1200);
+  });
+
+  /* ---------- Save / discard ---------- */
+  $("save").addEventListener("click", function () {
+    if (Object.keys(settingsIssues(draft.settings)).length) { setTab("settings"); toast("Perbaiki isian berwarna merah dulu.", "err"); return; }
+    saved = clone(draft); store.set("config", saved); ui.editing = null; ui.confirmDel = null;
+    renderAll(); toast("Perubahan disimpan." + (run.on ? " Bot langsung memakai aturan baru." : ""));
+  });
+  $("discard").addEventListener("click", function () {
+    draft = clone(saved); ui.editing = null; ui.confirmDel = null;
+    renderSettingsValues(); renderAll(); toast("Perubahan dibuang.");
+  });
+  window.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); if (dirtyCount()) $("save").click(); }
+  });
+
+  /* ---------- Activity ---------- */
+  $("simForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var t = $("simText").value.trim(); if (!t) { $("simText").focus(); return; }
+    var before = feed.length;
+    processComment($("simUser").value, t);
+    if (feed.length === before) log({ kind: "info", icon: I.alert, main: "<b>@" + esc($("simUser").value.replace(/^@+/, "") || "penonton") + "</b> ketik <span class=\"mono\">" + esc(t) + "</span>", steps: [{ c: "wait", t: "Tidak cocok dengan aturan mana pun, jadi bot diam" }] });
+    $("simText").value = ""; $("simText").focus();
+  });
+  $("quick").addEventListener("click", function (e) { var b = e.target.closest("[data-quick]"); if (!b) return; $("simText").value = b.dataset.quick; $("simForm").requestSubmit(); });
+  document.querySelectorAll("[data-filter]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      ui.filter = b.dataset.filter;
+      document.querySelectorAll("[data-filter]").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      renderFeed();
+    });
+  });
+  $("clearFeed").addEventListener("click", function () { feed = []; renderFeed(); });
+
+  /* ---------- Theme ---------- */
+  var th = store.get("theme"); if (th) document.documentElement.setAttribute("data-theme", th);
+  $("themeBtn").addEventListener("click", function () {
+    var t = document.documentElement.getAttribute("data-theme");
+    var dark = t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var next = dark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next); store.set("theme", next); renderTheme();
+  });
+
+  /* ---------- Boot ---------- */
+  var startTab = (location.hash || "").slice(1);
+  setTab(["rules", "activity", "settings"].indexOf(startTab) !== -1 ? startTab : (store.get("tab") || "rules"));
+  renderTheme(); renderSettingsValues(); renderAll();
+})();
+</script>
+
+</body></html>
