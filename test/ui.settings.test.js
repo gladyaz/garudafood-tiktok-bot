@@ -557,7 +557,16 @@ test("field password OBS bertipe password dan tidak pernah di-autofill", () => {
 
 test("halaman TIDAK memuat path config, path profil, atau .env", () => {
   for (const name of ["index.html", "app.js", "ui-logic.js"]) {
-    const src = fs.readFileSync(path.join(PUBLIC_DIR, name), "utf8");
+    const raw = fs.readFileSync(path.join(PUBLIC_DIR, name), "utf8");
+    // Komentar dibuang dulu. Berkas-berkas ini MENJELASKAN bahwa mereka tidak
+    // menyentuh config.json, dan penjelasan itu tidak pernah sampai ke layar —
+    // yang dijaga di sini adalah kebocoran ke customer, bukan kosakata penulis.
+    const src = raw
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+      .join("\n");
     assert.ok(!/data\/config\.json|config\.json/.test(src), name + " tidak boleh menyebut path config");
     assert.ok(!/\.autopin-profile|profileDir/.test(src), name + " tidak boleh menyebut path profil");
     assert.ok(!/\.env|process\.env/.test(src), name + " tidak boleh menyebut env");
@@ -573,12 +582,27 @@ test("app.js tidak menyimpan password di state halaman lebih lama dari perlu", (
   assert.match(app, /if \(!state\.changingPassword\) pwInput\.value = ""/);
 });
 
-test("Settings adalah section TERPISAH dari Mapping", () => {
+test("Settings adalah bagian TERPISAH dari Aturan: kendali simpannya sendiri", () => {
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
-  assert.ok(html.indexOf('id="settings-title"') < html.indexOf('id="mapping-title"'), "Settings sebelum Mapping");
-  // Dan tombol simpannya berbeda.
-  assert.ok(html.includes('id="save-settings-btn"'));
-  assert.ok(html.includes('id="save-btn"'));
+
+  // Keduanya panel sendiri.
+  const panel = (name) => {
+    const start = html.indexOf('data-panel="' + name + '"');
+    assert.ok(start > -1, "panel " + name + " harus ada");
+    const next = html.indexOf("data-panel=", start + 1);
+    return html.slice(start, next === -1 ? undefined : next);
+  };
+  const rules = panel("rules");
+  const settings = panel("settings");
+
+  // Inilah invarian yang sesungguhnya, dan sebab ia pernah merah: sebelum
+  // P4.1.1 menyimpan Settings menuliskan "Saving settings…" di sebelah tombol
+  // simpan milik Aturan. Jadi masing-masing harus punya tombol DAN label
+  // statusnya sendiri, dan tidak satu pun boleh tinggal di panel yang lain.
+  assert.ok(rules.includes('id="save-btn"') && rules.includes('id="save-state"'));
+  assert.ok(settings.includes('id="save-settings-btn"') && settings.includes('id="settings-state"'));
+  assert.ok(!rules.includes('id="save-settings-btn"') && !rules.includes('id="settings-state"'));
+  assert.ok(!settings.includes('id="save-btn"') && !settings.includes('id="save-state"'));
 });
 
 // --- REGRESI P4.1.1: label status Settings dan Mapping saling independen -------

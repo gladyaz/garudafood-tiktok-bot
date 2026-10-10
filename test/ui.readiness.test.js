@@ -122,7 +122,7 @@ test("REGRESI: styles.css tidak boleh menyamakan warna ready dan running", () =>
 
   // Dulu keduanya satu daftar selektor dengan satu warna hijau.
   assert.ok(
-    !/\.readiness\s+dd\.ready\s*,\s*\n?\s*\.readiness\s+dd\.running/.test(css),
+    !/dd\.ready\s*,\s*\n?\s*[.\w]*\s*dd\.running/.test(css),
     "ready dan running tidak boleh berbagi satu aturan"
   );
 
@@ -133,14 +133,20 @@ test("REGRESI: styles.css tidak boleh menyamakan warna ready dan running", () =>
     return m[1];
   };
 
-  assert.match(ruleFor(".readiness dd.ready"), /var\(--ok\)/);
-  assert.match(ruleFor(".readiness dd.running"), /var\(--ready\)/);
+  // Keduanya memakai token SEMANTIK, dan dua token yang berbeda.
+  assert.match(ruleFor(".checks dd.ready"), /var\(--success\)/);
+  assert.match(ruleFor(".checks dd.running"), /var\(--onair\)/);
 
-  // Dan dua tokennya memang nilai yang berbeda.
-  const ok = /--ok:\s*([^;]+);/.exec(css);
-  const ready = /--ready:\s*([^;]+);/.exec(css);
-  assert.ok(ok && ready);
-  assert.notEqual(ok[1].trim(), ready[1].trim());
+  // Dan di KEDUA tema nilainya memang berbeda. Tema gelap mendefinisikan ulang
+  // token yang sama, jadi di sanalah keduanya paling mudah tanpa sengaja
+  // bertemu di satu warna.
+  const tokens = (name) => (css.match(new RegExp("--" + name + ":\\s*([^;]+);", "g")) || [])
+    .map((line) => line.split(":")[1].trim().replace(";", ""));
+  const success = tokens("success");
+  const onair = tokens("onair");
+  assert.equal(success.length, 2, "--success didefinisikan untuk terang DAN gelap");
+  assert.equal(onair.length, 2, "--onair didefinisikan untuk terang DAN gelap");
+  success.forEach((v, i) => assert.notEqual(v, onair[i], "tema " + (i ? "gelap" : "terang")));
 });
 
 // --- kalimat kepala kartu ----------------------------------------------------
@@ -184,16 +190,21 @@ test("REGRESI: app.js mengambil kalimat dari ui-logic, tidak menulisnya sendiri"
   const app = readPublic("app.js");
   const body = /function renderReadiness\(\)[\s\S]*?\n  \}/.exec(app);
   assert.ok(body, "renderReadiness harus bisa ditemukan");
-  assert.match(body[0], /U\.readinessHint\(state\)/);
+  assert.match(body[0], /U\.readinessHint\(state, lang\)/);
   // Kalimat lama yang ditulis langsung di DOM sudah tidak boleh ada di sana.
   assert.ok(!/only read while the automation is stopped/.test(body[0]));
 });
 
-test("judul kartu menyebut pre-start, bukan sekadar readiness", () => {
+test("judul kartu menyebut sebelum-mulai, bukan sekadar kesiapan", () => {
+  // Judulnya tidak lagi ditulis di HTML: ia terikat ke kunci kamus, dan app.js
+  // yang mengisinya. Jadi yang diperiksa adalah IKATANNYA dan bunyi kuncinya.
   const html = readPublic("index.html");
-  const m = /<h2 id="readiness-title">([^<]*)<\/h2>/.exec(html);
-  assert.ok(m, "judul kartu kesiapan harus ada");
-  assert.match(m[1], /pre-start/i);
+  assert.match(html, /id="ready-title"[^>]*data-t="ui\.ready\.title"/, "judul terikat ke kamus");
+
+  // Dan di ketiga bahasa ia berbicara soal SEBELUM mulai, bukan "readiness".
+  assert.match(I18N.DICT.en["ui.ready.title"], /before you start/i);
+  assert.ok(!/readiness/i.test(I18N.DICT.en["ui.ready.title"]));
+  ["id", "zh-CN"].forEach((L) => assert.ok(I18N.DICT[L]["ui.ready.title"].length > 0, L));
 });
 
 // --- label automation --------------------------------------------------------
@@ -307,7 +318,7 @@ test("hint Pemetaan diam saat tidak ada yang mengunci", () => {
 
 test("REGRESI: app.js mengambil hint Pemetaan dari ui-logic", () => {
   const app = readPublic("app.js");
-  assert.match(app, /U\.mappingHint\(state\)/);
+  assert.match(app, /U\.mappingHint\(state, lang\)/);
   assert.ok(!/Editing is disabled while the automation is running/.test(app));
 });
 

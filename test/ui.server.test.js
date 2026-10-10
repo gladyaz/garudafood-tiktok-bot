@@ -211,7 +211,12 @@ test("app.js tidak mengambil keputusan: semuanya lewat AiLiveUI", () => {
   // itu satu sumber yang sama dengan yang dipakai saat memotong daftar.
   assert.ok(!/startEnabled\s*=/.test(app), "aturan tombol harus di ui-logic.js");
   assert.ok(!/(?<!U\.)MAX_ACTIVITY_ITEMS\s*=/.test(app), "batas activity harus didefinisikan di ui-logic.js");
-  assert.ok(!/\.slice\(0,\s*\d+\)/.test(app), "pemotongan daftar harus di ui-logic.js");
+  // Memotong DAFTAR tetap dilarang di sini. Dua huruf pertama nama akun untuk
+  // inisial chip bukan pemotongan daftar, jadi yang diperiksa adalah APA yang
+  // dipotong — bukan polanya saja, yang akan merah karena hal yang sah lalu
+  // dilemahkan orang berikutnya.
+  const sliced = [...app.matchAll(/(\w+)\.slice\(0,\s*\d+\)/g)].map((m) => m[1]);
+  assert.deepEqual(sliced.filter((v) => v !== "name"), [], "pemotongan daftar harus di ui-logic.js");
   // Dan app.js memang memakai modul logika itu.
   assert.ok(/U\.controlsFor\(/.test(app));
   assert.ok(/U\.activityItems\(/.test(app));
@@ -245,8 +250,21 @@ test("berkas statis tidak memuat satu pun NILAI rahasia", async () => {
     const src = fs.readFileSync(path.join(PUBLIC_DIR, name), "utf8");
     // Tidak ada penugasan literal ke field password.
     assert.ok(!/password\s*[:=]\s*["'][^"']+["']/i.test(src), name + " tidak boleh menetapkan nilai password");
-    // Dan tidak ada token/cookie/sesi yang disimpan di browser.
-    assert.ok(!/localStorage|sessionStorage|document\.cookie/.test(src), name);
+    // Dan tidak ada token/cookie/sesi yang disimpan di browser. localStorage
+    // hanya boleh muncul di app.js, tepat sekali, sebagai suntikan ke prefs.js
+    // untuk bahasa dan tema; ui-logic.js dan halaman tidak menyentuhnya sama
+    // sekali.
+    assert.ok(!/sessionStorage|document\.cookie/.test(src), name);
+    // Dihitung dari KODE saja: berkas-berkas ini menjelaskan di komentarnya
+    // mengapa penyimpanan itu hanya dipakai untuk bahasa dan tema, dan
+    // penjelasan bukan pemakaian.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+      .join("\n");
+    const stores = (code.match(/localStorage/g) || []).length;
+    assert.equal(stores, name === "app.js" ? 1 : 0, name + ": localStorage");
   }
 });
 

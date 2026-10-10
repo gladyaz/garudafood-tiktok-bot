@@ -257,9 +257,21 @@ test("halaman TIDAK PERNAH menyebut istilah teknis aksi nyata", () => {
   for (const term of ["dry-run", "autoCommentTransport", "autopinEnabled", "autoCommentEnabled", "transport"]) {
     assert.ok(!visible.includes(term), "halaman tidak boleh menyebut " + term);
   }
-  // Dan yang DILIHAT customer memakai bahasanya sendiri.
-  assert.match(visible, /Auto pin product/);
-  assert.match(visible, /Send admin reply after pin/);
+  // Dan yang DILIHAT customer memakai bahasanya sendiri. Kalimatnya sekarang
+  // ada di kamus, jadi halaman memeriksa IKATANNYA dan kamus memeriksa bunyinya.
+  assert.match(visible, /data-t="ui\.set\.autopin"/);
+  assert.match(visible, /data-t="ui\.set\.autoreply"/);
+  const I18N = require(path.join(PUBLIC_DIR, "i18n.js"));
+  for (const L of I18N.LANGS) {
+    for (const key of ["ui.set.autopin", "ui.set.autoreply"]) {
+      const v = I18N.DICT[L][key];
+      assert.ok(v && v.length > 0, L + " " + key);
+      // Kalimat customer, bukan nama field.
+      assert.ok(!/autoPin|autoComment|transport/i.test(v), L + " " + key + ": " + v);
+    }
+  }
+  assert.match(I18N.DICT.en["ui.set.autopin"], /pin products/i);
+  assert.match(I18N.DICT.en["ui.set.autoreply"], /reply in chat/i);
 });
 
 test("saklar dimatikan saat automation berjalan, sama seperti field lain", () => {

@@ -13,11 +13,48 @@
  *
  * Kalau nanti ada yang menambahkan percabangan di berkas ini, pindahkan ke
  * ui-logic.js dulu.
+ *
+ * BAHASA: tidak satu pun kalimat customer ditulis di berkas ini. Semuanya
+ * datang dari i18n.js lewat T(), dan setiap fungsi ui-logic.js menerima bahasa
+ * yang sedang dipilih sebagai argumen. Dengan begitu mengganti bahasa tidak
+ * bisa meninggalkan satu kata pun dalam bahasa yang lama.
+ *
+ * TAMPILAN: bahasa dan tema adalah preferensi PRESENTASI. Keduanya disimpan
+ * di localStorage lewat prefs.js dan TIDAK PERNAH menyentuh config.json, config
+ * runtime, pemetaan, AutoPIN, AutoComment, atau apa pun yang menentukan apa
+ * yang dilakukan bot.
  */
 (function () {
   "use strict";
 
   var U = window.AiLiveUI;
+  var I18N = window.AiLiveI18N;
+
+  var prefs = window.AiLivePrefs.createPrefs({
+    storage: (function () {
+      // localStorage bisa melempar di konteks tertentu. Tanpa penyimpanan,
+      // prefs tetap bekerja; preferensinya saja yang tidak bertahan.
+      try {
+        return window.localStorage;
+      } catch (e) {
+        return null;
+      }
+    })(),
+    matchMedia: typeof window.matchMedia === "function"
+      ? function (q) { return window.matchMedia(q); }
+      : null,
+  });
+
+  // Bahasa yang sedang dipilih. SETIAP panggilan ke ui-logic.js menerima ini.
+  function L() {
+    return prefs.getLang();
+  }
+
+  function T(key, vars) {
+    return I18N.t(L(), key, vars);
+  }
+
+  var REPLY_MAX = 100;
 
   // --- state halaman --------------------------------------------------------
 
@@ -39,6 +76,12 @@
     backendUnreachable: false,
     dirty: false, // ada perubahan yang belum disimpan
     preflight: null,
+    // Murni tampilan: tab mana yang terbuka, aturan mana yang sedang disunting,
+    // dan aturan mana yang menunggu konfirmasi hapus. Tidak satu pun dikirim ke
+    // server.
+    tab: "rules",
+    editing: null,
+    confirmDelete: null,
   };
 
   var el = {};
@@ -60,6 +103,11 @@
       "set-obs-password", "obs-password-label", "obs-password-change", "obs-password-cancel",
       "err-tiktokUsername", "err-expectedShop", "err-obsHost", "err-obsPort",
       "set-auto-pin", "set-admin-reply", "err-autoPinProduct", "err-sendAdminReply",
+      // Direction D
+      "acct-chip", "acct-initials", "acct-name", "hero-over",
+      "onair", "onair-title", "onair-sub", "onair-elapsed", "onair-chain",
+      "ready-title", "ready-count", "ready-progress", "rules-count", "activity-count", "activity-cap",
+      "lang-group", "theme-group",
     ].forEach(function (id) {
       el[id] = $(id);
     });
@@ -116,6 +164,17 @@
     if (tone) node.classList.add(tone);
   }
 
+  // Teks statis halaman, dari data-t="<kunci>". Dijalankan saat memuat DAN
+  // setiap kali bahasa diganti, jadi tidak ada label yang bisa tertinggal.
+  function fillStatic() {
+    var nodes = document.querySelectorAll("[data-t]");
+    for (var i = 0; i < nodes.length; i += 1) {
+      setText(nodes[i], T(nodes[i].getAttribute("data-t")));
+    }
+    if (el["lang-group"]) el["lang-group"].setAttribute("aria-label", T("ui.lang.label"));
+    if (el["theme-group"]) el["theme-group"].setAttribute("aria-label", T("ui.theme.label"));
+  }
+
   function renderDefinitionList(node, rows) {
     if (!node) return;
     node.textContent = "";
@@ -128,6 +187,29 @@
       node.appendChild(dt);
       node.appendChild(dd);
     });
+  }
+
+  // Keadaan kosong: judul tebal, lalu satu kalimat yang mengatakan apa yang bisa
+  // dilakukan. Keduanya elemen terpisah supaya tidak ada tanda pemisah yang
+  // perlu diterjemahkan.
+  function setEmpty(node, titleKey, bodyKey) {
+    if (!node) return;
+    node.textContent = "";
+    var b = document.createElement("b");
+    b.textContent = T(titleKey);
+    var p = document.createElement("span");
+    p.className = "muted";
+    p.textContent = " " + T(bodyKey);
+    node.appendChild(b);
+    node.appendChild(p);
+  }
+
+  // Chip hitungan di tab. Nol tidak ditampilkan sebagai "0": chipnya yang
+  // pergi, karena pil kosong bergaris terbaca sebagai sesuatu yang gagal dimuat.
+  function setCount(node, n) {
+    if (!node) return;
+    node.hidden = !n;
+    setText(node, n ? String(n) : "");
   }
 
   function showBanner(text, tone) {
@@ -159,155 +241,281 @@
     wrap.appendChild(control);
     if (note) {
       var n = document.createElement("div");
-      n.className = "field-note";
+      n.className = "note";
       n.textContent = note;
       wrap.appendChild(n);
     }
     return wrap;
   }
 
+  function chip(text, kind) {
+    var s = document.createElement("span");
+    s.className = "chip" + (kind ? " " + kind : "");
+    s.textContent = text;
+    return s;
+  }
+
+  function word(text, kind) {
+    var s = document.createElement("span");
+    s.className = kind || "word";
+    s.textContent = text;
+    return s;
+  }
+
+  function button(text, cls, onClick, disabled) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.textContent = text;
+    b.disabled = !!disabled;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // --- aturan otomatis ------------------------------------------------------
+
+  // Satu aturan = satu kalimat, dan tombol Ubah membuka penyuntingnya di tempat.
+  // Formulirnya sendiri tidak berubah dari sebelum Direction D: field yang sama,
+  // peristiwa yang sama, dan nilai yang sama yang dikirim ke /api/config.
   function renderMappings() {
-    var controls = U.controlsFor(state);
-    var issues = U.mappingIssues(state.validation, state.rows.length);
+    var lang = L();
+    var controls = U.controlsFor(state, lang);
+    var issues = U.mappingIssues(state.validation, state.rows.length, lang);
     var resolved = U.resolvedTitles(state.validation, state.rows.length);
-    var sceneOpts = U.sceneOptions(state.scenes, { playableScenes: null });
-    var productOpts = U.productOptions(state.products);
+    var sceneOpts = U.sceneOptions(state.scenes, { playableScenes: null }, lang);
+    var productOpts = U.productOptions(state.products, lang);
 
     el.mappings.textContent = "";
     el["mappings-empty"].hidden = state.rows.length > 0;
+    if (state.rows.length === 0) setEmpty(el["mappings-empty"], "ui.rule.empty.title", "ui.rule.empty.body");
+    setCount(el["rules-count"], state.rows.length);
 
     state.rows.forEach(function (row, index) {
+      var chips = U.ruleChips(row, { scenes: state.scenes, resolvedTitle: resolved[index] }, lang);
+      var editing = state.editing === index;
+
       var card = document.createElement("div");
-      card.className = "mapping" + (issues[index] ? " has-error" : "");
+      card.className = "rule" + (issues[index] ? " has-error" : "");
       card.setAttribute("data-index", String(index));
 
-      var head = document.createElement("div");
-      head.className = "mapping-head";
-      var title = document.createElement("span");
-      title.className = "mapping-title";
-      title.textContent = "Mapping " + (index + 1);
-      var remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "btn btn-ghost";
-      remove.textContent = "Remove";
-      remove.disabled = !controls.editingEnabled;
-      remove.addEventListener("click", function () {
-        state.rows.splice(index, 1);
-        markDirty();
-        renderMappings();
-      });
-      head.appendChild(title);
-      head.appendChild(remove);
-      card.appendChild(head);
+      // --- kalimatnya ---
+      var main = document.createElement("div");
+      main.className = "rule-main";
 
-      var grid = document.createElement("div");
-      grid.className = "mapping-grid";
+      var n = document.createElement("div");
+      n.className = "rule-n";
+      n.textContent = String(index + 1);
+      main.appendChild(n);
 
-      // --- Scene ---
-      var sceneSel = document.createElement("select");
-      sceneSel.disabled = !controls.editingEnabled;
-      sceneSel.appendChild(option("", state.scenes.length ? "Select a scene…" : "No scenes found yet — press Refresh Connections"));
-      sceneOpts.forEach(function (o) {
-        sceneSel.appendChild(option(o.value, o.supported ? o.label : o.label + " (" + o.note + ")"));
-      });
-      // Scene tersimpan yang tidak ada di daftar discovery tetap ditampilkan apa
-      // adanya, supaya nilainya tidak hilang diam-diam dari formulir.
-      if (row.scene && !state.scenes.some(function (s) { return s === row.scene; })) {
-        sceneSel.appendChild(option(row.scene, row.scene + " (not found in OBS)"));
+      var body = document.createElement("div");
+
+      var flow = document.createElement("div");
+      flow.className = "flow";
+      flow.appendChild(word(T("ui.rule.lead")));
+      if (chips.triggers.length) {
+        chips.triggers.forEach(function (t) {
+          flow.appendChild(chip(t, "trig"));
+        });
+      } else {
+        flow.appendChild(chip(chips.triggersEmpty, "trig off"));
       }
-      sceneSel.value = row.scene || "";
-      sceneSel.addEventListener("change", function () {
-        row.scene = sceneSel.value;
-        // Saran PAX hanya mengisi yang masih kosong — keputusannya di ui-logic.js.
-        var suggested = U.applySuggestion({ trigger: row.triggersText, reply: row.reply }, row.scene);
-        row.triggersText = suggested.trigger || "";
-        row.reply = suggested.reply || "";
-        markDirty();
-        renderMappings();
-      });
-      grid.appendChild(field("Scene", sceneSel));
+      flow.appendChild(word("→", "arrow"));
+      flow.appendChild(word(T("ui.rule.thenScene")));
+      flow.appendChild(chip(chips.scene || T("ui.rule.f.scenePick"), chips.scene ? "scene" : "scene off"));
+      flow.appendChild(word("→", "arrow"));
+      flow.appendChild(word(T("ui.rule.thenPin")));
+      flow.appendChild(chip(chips.product || chips.productNone, chips.product ? "prod" : "prod off"));
+      body.appendChild(flow);
 
-      // --- Product ---
-      var prodSel = document.createElement("select");
-      prodSel.disabled = !controls.editingEnabled;
-      prodSel.appendChild(option("", state.products.length ? "Pin nothing for this scene" : "No products found yet — press Refresh Connections"));
-      productOpts.forEach(function (o) {
-        prodSel.appendChild(option(o.value, o.sub ? o.label + " — " + o.sub : o.label));
-      });
-      // Nilai tersimpan yang bukan salah satu judul katalog tetap dapat opsinya
-      // sendiri, supaya tidak hilang dari formulir. Apakah produknya masih ada di
-      // LIVE diputuskan server, dan tampil sebagai pesan di baris ini.
-      var extra = U.extraProductOption(row.productTitle, state.products, resolved[index]);
-      if (extra) {
-        prodSel.appendChild(option(extra.value, extra.resolved ? extra.label + " → " + extra.resolved : extra.label));
+      if (chips.reply) {
+        var rep = document.createElement("div");
+        rep.className = "rule-reply";
+        rep.appendChild(word(T("ui.rule.reply")));
+        var q = document.createElement("q");
+        q.textContent = chips.reply;
+        rep.appendChild(q);
+        body.appendChild(rep);
       }
-      prodSel.value = row.productTitle || "";
-      prodSel.addEventListener("change", function () {
-        row.productTitle = prodSel.value;
-        markDirty();
-        renderMappings();
-      });
-      grid.appendChild(field("Product", prodSel, resolved[index] ? "Matches: " + resolved[index] : ""));
 
-      // --- Trigger ---
-      var trig = document.createElement("textarea");
-      trig.disabled = !controls.editingEnabled;
-      trig.value = row.triggersText || "";
-      trig.placeholder = "spill etalase 1";
-      trig.addEventListener("input", function () {
-        row.triggersText = trig.value;
-        markDirty();
+      // Catatan tentang isi aturan: scene yang tidak ada di OBS, dan judul yang
+      // sebenarnya terlihat di LIVE.
+      [chips.sceneMissing, chips.resolved].forEach(function (note) {
+        if (!note) return;
+        var p = document.createElement("div");
+        p.className = "rule-reply muted";
+        p.textContent = note;
+        body.appendChild(p);
       });
-      grid.appendChild(field("Viewer Trigger", trig, "One trigger per line."));
-
-      // --- Reply ---
-      var reply = document.createElement("input");
-      reply.type = "text";
-      reply.disabled = !controls.editingEnabled;
-      reply.value = row.reply || "";
-      reply.maxLength = 100;
-      reply.placeholder = "Etalase 1 sudah aku pin ya kak";
-      reply.addEventListener("input", function () {
-        row.reply = reply.value;
-        markDirty();
-      });
-      grid.appendChild(field("Admin Reply", reply, "Sent to chat after the pin is confirmed."));
-
-      card.appendChild(grid);
 
       if (issues[index]) {
         var err = document.createElement("p");
-        err.className = "mapping-error";
+        err.className = "rule-error";
         err.textContent = issues[index].message;
-        card.appendChild(err);
+        body.appendChild(err);
       }
+      main.appendChild(body);
 
+      // --- aksi ---
+      var actions = document.createElement("div");
+      actions.className = "rule-actions";
+      actions.appendChild(
+        button(editing ? T("ui.btn.done") : T("ui.btn.edit"), "btn btn-sm", function () {
+          state.editing = editing ? null : index;
+          state.confirmDelete = null;
+          renderMappings();
+        }, !controls.editingEnabled)
+      );
+      // Hapus dalam dua langkah, tanpa jendela modal: klik pertama mengubah
+      // tombolnya menjadi konfirmasi. Dialog browser akan membekukan halaman,
+      // dan halaman ini dipakai orang di tengah LIVE.
+      if (state.confirmDelete === index) {
+        actions.appendChild(
+          button(T("ui.btn.deleteYes"), "btn btn-sm btn-stop", function () {
+            state.rows.splice(index, 1);
+            state.editing = null;
+            state.confirmDelete = null;
+            markDirty();
+            renderMappings();
+          }, !controls.editingEnabled)
+        );
+      } else {
+        actions.appendChild(
+          button(T("ui.btn.deleteRule"), "btn btn-sm", function () {
+            state.confirmDelete = index;
+            renderMappings();
+          }, !controls.editingEnabled)
+        );
+      }
+      main.appendChild(actions);
+      card.appendChild(main);
+
+      if (editing) card.appendChild(mappingEditor(row, index, sceneOpts, productOpts, resolved, controls));
       el.mappings.appendChild(card);
     });
   }
 
+  // Penyunting satu aturan. Perilakunya SAMA seperti sebelum Direction D —
+  // hanya tempatnya yang berpindah ke dalam kartu.
+  function mappingEditor(row, index, sceneOpts, productOpts, resolved, controls) {
+    var grid = document.createElement("div");
+    grid.className = "rule-edit";
+
+    // --- Scene ---
+    var sceneSel = document.createElement("select");
+    sceneSel.disabled = !controls.editingEnabled;
+    sceneSel.appendChild(option("", state.scenes.length ? T("ui.rule.f.scenePick") : T("ui.rule.f.noScenes")));
+    sceneOpts.forEach(function (o) {
+      sceneSel.appendChild(option(o.value, o.supported ? o.label : o.label + " (" + o.note + ")"));
+    });
+    // Scene tersimpan yang tidak ada di daftar discovery tetap ditampilkan apa
+    // adanya, supaya nilainya tidak hilang diam-diam dari formulir.
+    if (row.scene && !state.scenes.some(function (s) { return s === row.scene; })) {
+      sceneSel.appendChild(option(row.scene, T("ui.rule.f.sceneMissing", { scene: row.scene })));
+    }
+    sceneSel.value = row.scene || "";
+    sceneSel.addEventListener("change", function () {
+      row.scene = sceneSel.value;
+      // Saran PAX hanya mengisi yang masih kosong — keputusannya di ui-logic.js.
+      var suggested = U.applySuggestion({ trigger: row.triggersText, reply: row.reply }, row.scene);
+      row.triggersText = suggested.trigger || "";
+      row.reply = suggested.reply || "";
+      markDirty();
+      renderMappings();
+    });
+    grid.appendChild(field(T("ui.rule.f.scene"), sceneSel));
+
+    // --- Product ---
+    var prodSel = document.createElement("select");
+    prodSel.disabled = !controls.editingEnabled;
+    prodSel.appendChild(option("", state.products.length ? T("ui.rule.f.productNone") : T("ui.rule.f.noProducts")));
+    productOpts.forEach(function (o) {
+      prodSel.appendChild(option(o.value, o.sub ? o.label + " — " + o.sub : o.label));
+    });
+    // Nilai tersimpan yang bukan salah satu judul katalog tetap dapat opsinya
+    // sendiri, supaya tidak hilang dari formulir. Apakah produknya masih ada di
+    // LIVE diputuskan server, dan tampil sebagai pesan di baris ini.
+    var extra = U.extraProductOption(row.productTitle, state.products, resolved[index]);
+    if (extra) {
+      prodSel.appendChild(option(extra.value, extra.resolved ? extra.label + " → " + extra.resolved : extra.label));
+    }
+    prodSel.value = row.productTitle || "";
+    prodSel.addEventListener("change", function () {
+      row.productTitle = prodSel.value;
+      markDirty();
+      renderMappings();
+    });
+    grid.appendChild(
+      field(T("ui.rule.f.product"), prodSel, resolved[index] ? T("ui.rule.f.resolved", { title: resolved[index] }) : "")
+    );
+
+    // --- Trigger ---
+    var trig = document.createElement("textarea");
+    trig.disabled = !controls.editingEnabled;
+    trig.rows = 3;
+    trig.value = row.triggersText || "";
+    trig.placeholder = T("ui.rule.f.triggersPlaceholder");
+    trig.addEventListener("input", function () {
+      row.triggersText = trig.value;
+      markDirty();
+    });
+    grid.appendChild(field(T("ui.rule.f.triggers"), trig, T("ui.rule.f.triggersHelp")));
+
+    // --- Reply ---
+    var reply = document.createElement("input");
+    reply.type = "text";
+    reply.disabled = !controls.editingEnabled;
+    reply.value = row.reply || "";
+    reply.maxLength = REPLY_MAX;
+    var replyField = field(
+      T("ui.rule.f.reply"),
+      reply,
+      T("ui.rule.f.replyHelp", { n: (row.reply || "").length, max: REPLY_MAX })
+    );
+    reply.addEventListener("input", function () {
+      row.reply = reply.value;
+      // Hitungan hurufnya ikut mengetik. Tanpa ini customer baru tahu batasnya
+      // saat ketikannya terpotong.
+      var note = replyField.querySelector(".note");
+      if (note) note.textContent = T("ui.rule.f.replyHelp", { n: reply.value.length, max: REPLY_MAX });
+      markDirty();
+    });
+    replyField.className = "field wide";
+    grid.appendChild(replyField);
+
+    return grid;
+  }
+
+  // --- aktivitas ------------------------------------------------------------
+
   function renderActivity() {
-    var items = U.activityItems(state.activity);
+    var lang = L();
+    var items = U.activityItems(state.activity, undefined, lang);
     el.activity.textContent = "";
     el["activity-empty"].hidden = items.length > 0;
+    if (!items.length) setEmpty(el["activity-empty"], "ui.act.empty.title", "ui.act.empty.body");
     items.forEach(function (it) {
       var li = document.createElement("li");
       li.className = it.tone || "";
       var at = document.createElement("span");
-      at.className = "at";
+      at.className = "feed-time";
       at.textContent = it.time;
       var what = document.createElement("span");
-      what.className = "what";
+      what.className = "feed-what";
       what.textContent = it.text;
       li.appendChild(at);
       li.appendChild(what);
       el.activity.appendChild(li);
     });
-    setText(el["activity-hint"], items.length ? "Latest " + items.length : "");
+    setText(el["activity-hint"], items.length ? T("ui.act.latest", { n: items.length }) : "");
+    setCount(el["activity-count"], items.length);
+    setText(el["activity-cap"], items.length ? U.activityCapText(lang) : "");
   }
 
+  // --- kendali --------------------------------------------------------------
+
   function renderControls() {
-    var c = U.controlsFor(state);
+    var lang = L();
+    var c = U.controlsFor(state, lang);
     // Keadaan terkunci Settings disegarkan di sini juga, pada irama yang sama
     // dengan tombol lain. Lihat renderSettingsEnabled().
     renderSettingsEnabled();
@@ -317,30 +525,77 @@
     el["add-mapping-btn"].disabled = !c.editingEnabled;
     el["save-btn"].disabled = !c.editingEnabled || !state.dirty;
 
-    var label = U.automationLabel(state.status);
-    var tone = U.automationTone(state.status);
-    setText(el["run-state"], label);
-    setTone(el["run-state"], tone);
-    setText(el["automation-pill"], label);
-    setTone(el["automation-pill"], tone);
-    el["automation-pill"].className = "pill " + (tone || "neutral");
+    // Lampu tally: kosakatanya sendiri, diputuskan di ui-logic.js.
+    var tally = U.tallyView(state, lang);
+    setText(el["automation-pill"], tally.label);
+    el["automation-pill"].className = "tally " + (tally.tone || "neutral");
 
-    // Kenapa Start mati, kalau memang mati karena sesuatu.
-    if (!c.startEnabled && c.startReason) setText(el["run-note"], c.startReason);
-    else if (state.dirty && c.editingEnabled) setText(el["run-note"], "You have unsaved changes. They will be saved when you press START BOT.");
-    else setText(el["run-note"], "");
+    // Kartu status.
+    var hero = U.heroView(state, lang);
+    setText(el["hero-over"], hero.over);
+    setText(el["run-state"], hero.title);
+    setTone(el["run-state"], hero.tone);
+    // Kenapa Start mati, atau apa yang terjadi pada perubahan yang belum
+    // disimpan. Keduanya kalimat dari kamus, bukan dari sini.
+    if (state.dirty && c.editingEnabled) setText(el["run-note"], T("ui.note.dirtyOnStart"));
+    else setText(el["run-note"], hero.note);
 
-    setText(el["mapping-hint"], c.editingEnabled ? "" : U.mappingHint(state));
+    renderOnAir();
+    setText(el["mapping-hint"], c.editingEnabled ? "" : U.mappingHint(state, lang));
   }
 
+  // Kartu "sedang tayang". Disembunyikan kalau tidak ada yang tayang; setiap
+  // angkanya datang dari kejadian yang sungguh dikirim server.
+  function renderOnAir() {
+    var v = U.onairView(state, L());
+    el.onair.hidden = !v.visible;
+    if (!v.visible) return;
+    setText(el["onair-title"], v.title);
+    setText(el["onair-sub"], v.sub);
+    setText(el["onair-elapsed"], v.elapsed);
+    el["onair-elapsed"].setAttribute("aria-label", v.elapsedLabel);
+
+    el["onair-chain"].textContent = "";
+    v.chain.forEach(function (s) {
+      var box = document.createElement("div");
+      box.className = "oc" + (s.tone === "ready" ? "" : " wait");
+      var lab = document.createElement("span");
+      lab.textContent = s.label;
+      var val = document.createElement("b");
+      val.textContent = s.value;
+      box.appendChild(lab);
+      box.appendChild(val);
+      el["onair-chain"].appendChild(box);
+    });
+  }
+
+  // --- kesiapan -------------------------------------------------------------
+
   function renderReadiness() {
+    var lang = L();
     renderDefinitionList(
       el.readiness,
-      U.readinessRows({ obs: state.obs, tiktok: state.tiktok, status: state.status, validation: state.validation })
+      U.readinessRows({ obs: state.obs, tiktok: state.tiktok, status: state.status, validation: state.validation, busy: state.busy }, lang)
     );
+
+    // Hitungan dan sel progres: satu sel per syarat, warnanya mengikuti barisnya.
+    // Saat berjalan, readyView mengembalikan daftar kosong - lihat sebabnya di
+    // ui-logic.js. Kosong di sini berarti barisnya saja yang bicara.
+    var ready = U.readyView(state, lang);
+    setText(el["ready-title"], ready.title);
+    setText(el["ready-count"], ready.label);
+    el["ready-progress"].textContent = "";
+    el["ready-progress"].hidden = !ready.counting;
+    ready.cells.forEach(function (tone) {
+      var s = document.createElement("span");
+      if (tone === "ready") s.className = "on";
+      else if (tone === "attention") s.className = "bad";
+      el["ready-progress"].appendChild(s);
+    });
+
     // Kalimatnya diputuskan di ui-logic.js, bukan di sini: kalimat customer
     // tidak boleh hidup di lapisan DOM, karena di sana ia tidak bisa diuji.
-    setText(el["readiness-hint"], U.readinessHint(state));
+    setText(el["readiness-hint"], U.readinessHint(state, lang));
     renderLogin();
     // Panduan pertama kali hanya saat belum ada config sama sekali.
     var noConfig = !!(state.status && state.status.config && state.status.config.present === false);
@@ -348,15 +603,24 @@
   }
 
   function renderLogin() {
-    var lv = U.loginView(state);
+    var lv = U.loginView(state, L());
     el["login-btn"].hidden = lv.state === "waiting";
     el["login-btn"].disabled = !lv.canLogin;
-    el["login-btn"].textContent = lv.state === "connected" ? "SIGN IN AGAIN" : "LOGIN TIKTOK";
+    el["login-btn"].textContent = lv.state === "connected" ? T("ui.btn.loginAgain") : T("ui.btn.login");
     el["login-check-btn"].hidden = !lv.canCheck && lv.state !== "waiting";
     el["login-check-btn"].disabled = !lv.canCheck;
     el["login-cancel-btn"].hidden = !lv.canCancel && lv.state !== "waiting";
     el["login-cancel-btn"].disabled = !lv.canCancel;
     setText(el["login-hint"], lv.hint);
+
+    // Chip akun di bilah atas. Nama akunnya datang dari loginView — SATU tempat
+    // yang memutuskan siapa yang sedang masuk.
+    var name = lv.identity || "";
+    el["acct-chip"].hidden = !name;
+    if (name) {
+      setText(el["acct-name"], name);
+      setText(el["acct-initials"], name.slice(0, 2).toUpperCase());
+    }
   }
 
   // Pasangan field formulir <-> elemen input. Satu tempat, supaya membaca dan
@@ -395,7 +659,7 @@
   // server (loadConfig) atau dari formulir saat menyimpan, jadi menulis nilai
   // setiap 2 detik akan MENGHAPUS centang customer sebelum ia menekan Save.
   function renderSettingsEnabled() {
-    var sv = U.settingsView(state);
+    var sv = U.settingsView(state, L());
 
     SETTINGS_FIELDS.forEach(function (pair) {
       var node = el[pair[1]];
@@ -458,13 +722,13 @@
     setText(
       el["obs-password-label"],
       state.changingPassword
-        ? "Type the new password, or leave empty to remove it."
+        ? T("ui.set.passwordChangeHelp")
         : f.obsPasswordSet
-          ? "A password is saved."
-          : "No password saved yet."
+          ? T("ui.set.passwordSaved")
+          : T("ui.set.passwordNone")
     );
     el["obs-password-change"].hidden = state.changingPassword;
-    el["obs-password-change"].textContent = f.obsPasswordSet ? "Change" : "Set password";
+    el["obs-password-change"].textContent = f.obsPasswordSet ? T("ui.btn.change") : T("ui.btn.setPw");
     el["obs-password-cancel"].hidden = !state.changingPassword;
 
     // Keadaan terkunci + hint diurus renderSettingsEnabled(), SATU tempat.
@@ -484,8 +748,52 @@
 
   function markDirty() {
     state.dirty = true;
-    setText(el["save-state"], "Unsaved changes");
+    setText(el["save-state"], T("ui.set.dirty"));
     renderControls();
+  }
+
+  // --- tab, bahasa, tema ----------------------------------------------------
+
+  // Murni tampilan. Tidak satu pun dari ketiganya mengirim apa pun ke server.
+  function renderTabs() {
+    var tabs = document.querySelectorAll("[data-tab]");
+    for (var i = 0; i < tabs.length; i += 1) {
+      var name = tabs[i].getAttribute("data-tab");
+      tabs[i].setAttribute("aria-selected", name === state.tab ? "true" : "false");
+    }
+    var panels = document.querySelectorAll("[data-panel]");
+    for (var j = 0; j < panels.length; j += 1) {
+      panels[j].hidden = panels[j].getAttribute("data-panel") !== state.tab;
+    }
+  }
+
+  function renderPrefButtons() {
+    var lang = prefs.getLang();
+    var theme = prefs.getTheme();
+    var lb = document.querySelectorAll("[data-lang-btn]");
+    for (var i = 0; i < lb.length; i += 1) {
+      lb[i].setAttribute("aria-pressed", lb[i].getAttribute("data-lang-btn") === lang ? "true" : "false");
+    }
+    var tb = document.querySelectorAll("[data-theme-btn]");
+    for (var j = 0; j < tb.length; j += 1) {
+      tb[j].setAttribute("aria-pressed", tb[j].getAttribute("data-theme-btn") === theme ? "true" : "false");
+    }
+  }
+
+  // Bahasa berganti seketika, tanpa memuat ulang dan tanpa menyentuh server:
+  // teks statis diisi lagi, lalu seluruh halaman dirender dari state yang SAMA.
+  function setLang(value) {
+    prefs.setLang(value);
+    prefs.applyTo(document.documentElement);
+    fillStatic();
+    renderPrefButtons();
+    renderAll();
+  }
+
+  function setTheme(value) {
+    prefs.setTheme(value);
+    prefs.applyTo(document.documentElement);
+    renderPrefButtons();
   }
 
   // --- pemuatan data --------------------------------------------------------
@@ -519,7 +827,7 @@
       if (!r) return;
       state.status = r.body;
       if (r.body && r.body.restartRequired) {
-        showBanner("Changes saved. Press STOP BOT, then START BOT to use them.", "attention");
+        showBanner(T("ui.banner.savedRestart"), "attention");
       }
     });
   }
@@ -536,7 +844,7 @@
   // Discovery MAHAL (membuka browser), jadi tidak pernah dipanggil dari polling.
   // Hanya saat muat pertama, saat Refresh ditekan, dan sekali sebelum Start.
   function loadDiscovery() {
-    var c = U.controlsFor(state);
+    var c = U.controlsFor(state, L());
     var jobs = [guarded(api("/api/obs/scenes")).then(function (r) {
       if (!r) return;
       state.obs = r.body;
@@ -587,7 +895,7 @@
   //
   // Sekarang setiap operasi hanya boleh menyentuh labelnya sendiri, dan yang tidak
   // punya label (Refresh/Start/Stop) tidak menulis ke mana pun — kemajuannya sudah
-  // terlihat dari tombol yang mati, pill automation, dan spanduk.
+  // terlihat dari tombol yang mati, lampu tally, dan spanduk.
   function withBusy(label, fn, target, op) {
     state.busy = true;
     // Nama operasinya, bukan hanya "ada sesuatu yang berjalan". Penyuntingan
@@ -621,27 +929,32 @@
       if (r.body && r.body.ok) {
         state.config = r.body.config;
         state.dirty = false;
-        setText(el["save-state"], "Saved");
+        state.editing = null;
+        setText(el["save-state"], T("ui.set.saved"));
         if (r.body.restartRequired) {
-          showBanner("Changes saved. Press STOP BOT, then START BOT to use them.", "attention");
+          showBanner(T("ui.banner.savedRestart"), "attention");
         } else {
           showBanner("", null);
         }
         return { ok: true };
       }
-      // Kesalahan per field dari server. Ditampilkan apa adanya: kalimatnya
-      // dibentuk di controller/errors.js, bukan di sini.
+      // Kesalahan per field dari server. Jalur mesin seperti mappings[0].product
+      // diubah menjadi label yang bisa dibaca customer — kode dan jalur mentah
+      // tidak pernah tampil di UI biasa.
       var msgs = (r.body && r.body.errors ? r.body.errors : []).map(function (e) {
-        return e.userMessage;
+        return I18N.fieldProblem(L(), e.path || e.field, e.reason || e.code, e.userMessage);
       });
-      setText(el["save-state"], "Not saved");
-      showBanner(msgs.length ? msgs.join(" · ") : U.messageOf(r.body, "The configuration could not be saved."), "error");
+      setText(el["save-state"], T("ui.set.notSaved"));
+      showBanner(
+        msgs.length ? msgs.join(" · ") : U.messageOf(L(), r.body, "err.config-write-failed"),
+        "error"
+      );
       return { ok: false };
     });
   }
 
   function onSave() {
-    return withBusy("Saving…", function () {
+    return withBusy(T("ui.rule.savingRules"), function () {
       return saveConfig().then(function (r) {
         if (r.ok) return loadValidation().then(renderAll);
         renderAll();
@@ -650,7 +963,7 @@
   }
 
   function onRefresh() {
-    return withBusy("Refreshing…", function () {
+    return withBusy("", function () {
       return loadDiscovery()
         .then(loadStatus)
         .then(loadValidation)
@@ -668,7 +981,7 @@
   // atas keadaan yang belum diperiksa.
   function onStart() {
     el["start-btn"].disabled = true; // langsung, sebelum apa pun di-await
-    return withBusy("Starting…", function () {
+    return withBusy("", function () {
       showBanner("", null);
       el.preflight.hidden = true;
 
@@ -687,17 +1000,19 @@
         })
         .then(function (r) {
           state.preflight = r.body;
-          var rows = U.preflightRows(r.body);
+          var rows = U.preflightRows(r.body, L());
           renderDefinitionList(el.preflight, rows);
           el.preflight.hidden = rows.length === 0;
 
           if (!r.body || r.body.ok !== true) {
             // Preflight merah: JANGAN panggil /api/start.
-            var failed = U.failedPreflight(r.body);
+            var failed = U.failedPreflight(r.body, L());
             showBanner(
               failed.length
-                ? "Not ready to start: " + failed.map(function (f) { return f.label + " — " + f.value; }).join(" · ")
-                : "Not ready to start.",
+                ? T("ui.banner.notReady", {
+                    reasons: failed.map(function (f) { return f.label + " — " + f.value; }).join(" · "),
+                  })
+                : T("ui.banner.notReadyPlain"),
               "attention"
             );
             return null;
@@ -710,7 +1025,7 @@
             showBanner("", null);
             return null;
           }
-          showBanner(U.messageOf(r.body, "The automation could not be started."), "error");
+          showBanner(U.messageOf(L(), r.body, "err.controller-start-failed"), "error");
           return null;
         })
         .then(function () {
@@ -729,12 +1044,12 @@
 
   function onStop() {
     el["stop-btn"].disabled = true;
-    return withBusy("Stopping safely…", function () {
-      showBanner("Stopping safely…", null);
+    return withBusy("", function () {
+      showBanner(T("ui.note.stopping"), null);
       return api("/api/stop", { method: "POST" })
         .then(function (r) {
-          if (r.body && r.body.ok) showBanner("Automation stopped", "ready");
-          else showBanner(U.messageOf(r.body, "The automation could not be stopped."), "error");
+          if (r.body && r.body.ok) showBanner(T("ui.note.stopped"), "ready");
+          else showBanner(U.messageOf(L(), r.body, "err.unknown"), "error");
         })
         .then(loadStatus)
         // Katalog produk hanya bisa dibaca saat berhenti, jadi inilah saat yang
@@ -754,17 +1069,17 @@
 
     // Validasi formulir lebih dulu, supaya field yang kurang disorot tanpa perlu
     // bolak-balik ke server.
-    var verdict = U.validateSettingsForm(form);
+    var verdict = U.validateSettingsForm(form, L());
     state.settings = form;
     state.settingsErrors = verdict.errors;
     if (!verdict.ok) {
-      setText(el["settings-state"], "Not saved");
-      showBanner("Some settings need attention.", "attention");
+      setText(el["settings-state"], T("ui.set.notSaved"));
+      showBanner(T("ui.banner.settingsBad"), "attention");
       renderSettings();
       return Promise.resolve({ ok: false });
     }
 
-    return withBusy("Saving settings…", function () {
+    return withBusy(T("ui.rule.savingSettings"), function () {
       // Dibangun dari config yang TERAKHIR DIBACA, jadi mapping dan setelan lain
       // tidak tersentuh. Password yang tidak diubah tidak dikirim sama sekali.
       var payload = U.applySettingsToConfig(state.config, form);
@@ -772,14 +1087,17 @@
 
       return api("/api/config", { method: "PUT", body: payload }).then(function (r) {
         if (!(r.body && r.body.ok)) {
-          // Server yang berwenang. Pesan per field darinya ditampilkan apa adanya;
-          // config valid yang terakhir TIDAK tersentuh karena saveConfig
-          // memvalidasi sebelum menulis.
+          // Server yang berwenang. Pesan per field darinya ditampilkan dengan
+          // label yang bisa dibaca customer; config valid yang terakhir TIDAK
+          // tersentuh karena saveConfig memvalidasi sebelum menulis.
           var msgs = (r.body && r.body.errors ? r.body.errors : []).map(function (e) {
-            return e.userMessage;
+            return I18N.fieldProblem(L(), e.path || e.field, e.reason || e.code, e.userMessage);
           });
-          setText(el["settings-state"], "Not saved");
-          showBanner(msgs.length ? msgs.join(" · ") : U.messageOf(r.body, "The settings could not be saved."), "error");
+          setText(el["settings-state"], T("ui.set.notSaved"));
+          showBanner(
+            msgs.length ? msgs.join(" · ") : U.messageOf(L(), r.body, "err.config-write-failed"),
+            "error"
+          );
           renderAll();
           return { ok: false };
         }
@@ -791,8 +1109,8 @@
         state.settingsErrors = {};
         state.settingsDirty = false;
         state.changingPassword = false;
-        setText(el["settings-state"], "Saved");
-        showBanner(r.body.restartRequired ? "Changes saved. Press STOP BOT, then START BOT to use them." : "", r.body.restartRequired ? "attention" : null);
+        setText(el["settings-state"], T("ui.set.saved"));
+        showBanner(r.body.restartRequired ? T("ui.banner.savedRestart") : "", r.body.restartRequired ? "attention" : null);
 
         // Kesiapan disegarkan: dengan OBS dan akun terisi, discovery sekarang bisa
         // menjawab, dan LOGIN TIKTOK boleh dipakai.
@@ -821,8 +1139,8 @@
     // customer, bukan config terakhir yang dibaca dari server.
     state.settings = readSettingsForm();
     state.settingsDirty = true;
-    setText(el["settings-state"], "Unsaved changes");
-    el["save-settings-btn"].disabled = !U.settingsView(state).editable;
+    setText(el["settings-state"], T("ui.set.dirty"));
+    el["save-settings-btn"].disabled = !U.settingsView(state, L()).editable;
   }
 
   // --- login TikTok ---------------------------------------------------------
@@ -831,14 +1149,14 @@
   // Controller membuka jendela browser; customer login sendiri di dalamnya.
 
   function onLogin() {
-    return withBusy("Opening sign-in…", function () {
+    return withBusy("", function () {
       showBanner("", null);
       return api("/api/tiktok/login/start", { method: "POST" })
         .then(function (r) {
           if (r.body && r.body.ok) {
-            showBanner("Complete the TikTok login in the browser window, then press Check Login.", null);
+            showBanner(T("ui.login.hintWaiting"), null);
           } else {
-            showBanner(U.messageOf(r.body, "The sign-in window could not be opened."), "error");
+            showBanner(U.messageOf(L(), r.body, "err.login-browser-failed"), "error");
           }
         })
         .then(loadStatus)
@@ -847,14 +1165,14 @@
   }
 
   function onLoginCheck() {
-    return withBusy("Checking sign-in…", function () {
+    return withBusy("", function () {
       return api("/api/tiktok/login/check", { method: "POST" })
         .then(function (r) {
           if (r.body && r.body.ok) {
-            showBanner("Signed in as " + r.body.identity, "ready");
+            showBanner(T("ui.login.signedIn", { name: r.body.identity }), "ready");
           } else {
             // "Belum selesai" bukan kegagalan: customer bisa menekan lagi.
-            showBanner(U.messageOf(r.body, "Sign-in is not finished yet."), "attention");
+            showBanner(U.messageOf(L(), r.body, "err.login-not-finished"), "attention");
           }
         })
         .then(loadStatus)
@@ -866,7 +1184,7 @@
   }
 
   function onLoginCancel() {
-    return withBusy("Cancelling…", function () {
+    return withBusy("", function () {
       return api("/api/tiktok/login/cancel", { method: "POST" })
         .then(function () {
           showBanner("", null);
@@ -896,6 +1214,13 @@
   function init() {
     cacheEls();
 
+    // Bahasa dan tema lebih dulu: halaman tidak boleh sempat terlihat dalam
+    // bahasa atau tema yang salah.
+    prefs.applyTo(document.documentElement);
+    fillStatic();
+    renderPrefButtons();
+    renderTabs();
+
     el["refresh-btn"].addEventListener("click", onRefresh);
     el["save-btn"].addEventListener("click", onSave);
     el["start-btn"].addEventListener("click", onStart);
@@ -914,7 +1239,7 @@
         markSettingsDirty();
         // Divalidasi dari STATE, bukan dengan membaca DOM lagi: satu sumber,
         // dan tidak ada celah di antara keduanya.
-        state.settingsErrors = U.validateSettingsForm(state.settings).errors;
+        state.settingsErrors = U.validateSettingsForm(state.settings, L()).errors;
         // Dirender ulang supaya error "nyalakan Auto pin dulu" muncul seketika,
         // bukan baru saat Save ditekan.
         renderSettings();
@@ -938,8 +1263,46 @@
     el["login-cancel-btn"].addEventListener("click", onLoginCancel);
     el["add-mapping-btn"].addEventListener("click", function () {
       state.rows.push(U.mappingToRow(U.blankMapping()));
+      // Aturan yang baru dibuat langsung terbuka: kalimatnya masih kosong, dan
+      // yang dibutuhkan customer berikutnya adalah formulirnya.
+      state.editing = state.rows.length - 1;
+      state.confirmDelete = null;
       markDirty();
       renderMappings();
+    });
+
+    // Tab.
+    var tabs = document.querySelectorAll("[data-tab]");
+    for (var i = 0; i < tabs.length; i += 1) {
+      (function (node) {
+        node.addEventListener("click", function () {
+          state.tab = node.getAttribute("data-tab");
+          renderTabs();
+        });
+      })(tabs[i]);
+    }
+
+    // Bahasa dan tema.
+    var langBtns = document.querySelectorAll("[data-lang-btn]");
+    for (var j = 0; j < langBtns.length; j += 1) {
+      (function (node) {
+        node.addEventListener("click", function () {
+          setLang(node.getAttribute("data-lang-btn"));
+        });
+      })(langBtns[j]);
+    }
+    var themeBtns = document.querySelectorAll("[data-theme-btn]");
+    for (var k = 0; k < themeBtns.length; k += 1) {
+      (function (node) {
+        node.addEventListener("click", function () {
+          setTheme(node.getAttribute("data-theme-btn"));
+        });
+      })(themeBtns[k]);
+    }
+    // Tema "ikut sistem" berarti ikut BERUBAH bersama sistem, juga saat halaman
+    // sedang terbuka. Pilihan customer yang eksplisit tidak tersentuh di sini.
+    prefs.onSystemChange(function () {
+      prefs.applyTo(document.documentElement);
     });
 
     renderAll();

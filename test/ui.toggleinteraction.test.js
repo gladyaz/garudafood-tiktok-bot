@@ -343,7 +343,7 @@ test("app.js: state disinkronkan dari DOM SEBELUM render apa pun", () => {
   assert.ok(iValidate < iRender, "validasi sebelum render");
 
   // Dan validasinya dari STATE, bukan dari DOM lagi.
-  assert.match(hBody, /validateSettingsForm\(state\.settings\)/, "satu sumber: state");
+  assert.match(hBody, /validateSettingsForm\(state\.settings, L\(\)\)/, "satu sumber: state");
 });
 
 test("app.js memakai fungsi baca/tulis DOM dari ui-logic, bukan salinannya", () => {

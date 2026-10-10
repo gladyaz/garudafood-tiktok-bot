@@ -343,7 +343,16 @@ test("app.js tidak pernah menyentuh kredensial TikTok, dan tidak menyimpan passw
 
   // Tidak ada jalur kredensial TikTok sama sekali.
   assert.ok(!/tiktokPassword|tiktok_password|loginPassword/i.test(appCode));
-  assert.ok(!/cookie|document\.cookie|localStorage|sessionStorage/i.test(appCode), "tidak menyimpan apa pun di browser");
+  // Cookie dan sessionStorage: TIDAK PERNAH, di mana pun.
+  assert.ok(!/cookie|document\.cookie|sessionStorage/i.test(appCode), "tidak menyimpan sesi apa pun di browser");
+  // localStorage disebut TEPAT SEKALI, dan hanya untuk menyerahkan penyimpanan
+  // itu ke prefs.js. Bahasa dan tema adalah preferensi presentasi; prefs.js
+  // dijaga terpisah (test/ui.prefs.test.js) supaya ia tidak bisa menulis kunci
+  // selain ailive:lang dan ailive:theme. Yang dilarang di sini adalah app.js
+  // menyentuh penyimpanan browser atas kemauannya sendiri.
+  const stores = appCode.match(/localStorage/g) || [];
+  assert.equal(stores.length, 1, "localStorage hanya boleh disebut sekali");
+  assert.match(appCode, /storage:[\s\S]{0,200}window\.localStorage/, "dan hanya sebagai suntikan ke createPrefs");
 
   // Password OBS hanya dibaca saat sedang diganti, dan dikosongkan sesudahnya.
   //

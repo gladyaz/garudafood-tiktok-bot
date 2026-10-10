@@ -208,8 +208,22 @@
     var status = (data && data.status) || null;
     var validation = (data && data.validation) || null;
 
+    // Datum yang belum ada punya DUA sebab yang berbeda, dan keduanya tidak
+    // boleh berbunyi sama.
+    //
+    // Saat berhenti, ia memang sedang dibaca: "Memeriksa..." benar. Saat
+    // BERJALAN, service memegang profil Chrome dan discovery tidak dijalankan
+    // sama sekali - jadi "Memeriksa..." adalah pernyataan yang salah yang
+    // bertahan di layar sepanjang LIVE, dan operator menunggu sesuatu yang
+    // tidak akan pernah datang.
+    var s = status ? status.automation : null;
+    var busyRunning = s === STATES.RUNNING || s === STATES.DEGRADED;
     function unknown(labelKey) {
-      return { label: tr(lang, labelKey), value: tr(lang, "ui.state.checking"), tone: TONE.NEUTRAL };
+      return {
+        label: tr(lang, labelKey),
+        value: tr(lang, busyRunning ? "ui.row.cannotCheck" : "ui.state.checking"),
+        tone: TONE.NEUTRAL,
+      };
     }
 
     var rows = [];
@@ -387,7 +401,7 @@
     var stopped = automation === STATES.STOPPED || automation === STATES.ERROR;
 
     if (!status) {
-      return { state: "unknown", label: tr(lang, "ui.state.checking"), tone: TONE.NEUTRAL, canLogin: false, canCheck: false, canCancel: false, hint: "" };
+      return { state: "unknown", label: tr(lang, "ui.state.checking"), tone: TONE.NEUTRAL, identity: "", canLogin: false, canCheck: false, canCancel: false, hint: "" };
     }
 
     if (login && login.active) {
@@ -395,6 +409,7 @@
         state: "waiting",
         label: tr(lang, "ui.login.waiting"),
         tone: TONE.ATTENTION,
+        identity: "",
         canLogin: false,
         canCheck: !busy,
         canCancel: !busy,
@@ -412,6 +427,7 @@
         // diterjemahkan.
         label: tr(lang, "ui.login.signedIn", { name: identity }),
         tone: TONE.READY,
+        identity: String(identity),
         canLogin: stopped && !busy && !(status.config && status.config.present === false),
         canCheck: false,
         canCancel: false,
@@ -428,6 +444,7 @@
       state: "signed-out",
       label: tr(lang, "ui.login.none"),
       tone: TONE.ATTENTION,
+      identity: "",
       // Login hanya saat berhenti: service memegang profil Chrome saat berjalan.
       canLogin: stopped && !busy && !noConfig,
       canCheck: false,
@@ -693,7 +710,7 @@
 
   function settingsView(view, lang) {
     var status = (view && view.status) || null;
-    var controls = controlsFor(view);
+    var controls = controlsFor(view, lang);
     return {
       // Belum ada config: itulah pekerjaan pertama customer.
       firstRun: !!(status && status.config && status.config.present === false),
@@ -884,7 +901,7 @@
 
     // Start hidup HANYA kalau tidak ada satu pun penghalang. Semua syaratnya ada
     // di startBlockers(), termasuk kesiapan yang belum diketahui.
-    var blockers = startBlockers(view);
+    var blockers = startBlockers(view, lang);
 
     return {
       startEnabled: blockers.length === 0,
@@ -1146,6 +1163,295 @@
     return preflightRows(result, lang).filter(function (r) { return r.tone === TONE.ATTENTION; });
   }
 
+  // ---------------------------------------------------------------------------
+  // Tampilan Direction D
+  // ---------------------------------------------------------------------------
+  //
+  // Bagian ini memutuskan BUNYI kartu status, lampu tally, hitungan kesiapan,
+  // kartu "sedang tayang", dan kalimat satu aturan. Ia tinggal di sini dan bukan
+  // di app.js karena setiap percabangan di bawah bisa salah membaca keadaan
+  // sistem — dan percabangan yang bersembunyi di dalam handler DOM adalah
+  // percabangan yang tidak akan pernah diuji. Lihat kepala app.js.
+
+  // Jumlah aturan untuk KALIMAT, bukan untuk keputusan. Yang sudah divalidasi
+  // server lebih dipercaya daripada isi formulir yang belum disimpan.
+  function ruleCount(view) {
+    var val = view && view.validation;
+    if (val && Array.isArray(val.mappings)) return val.mappings.length;
+    return Array.isArray(view && view.rows) ? view.rows.length : 0;
+  }
+
+  // Penghalang yang BENAR-BENAR milik kesiapan.
+  //
+  // startBlockers() juga mengembalikan tiga penghalang semu — backend mati,
+  // status belum dimuat, ada operasi berjalan — dan ketiganya bukan "syarat yang
+  // perlu dibereskan customer". Kalau ikut dihitung, menyimpan pengaturan
+  // membuat judul berbunyi "Belum bisa mulai: 1 hal perlu dibereskan", lalu
+  // angka itu menghilang sendiri sedetik kemudian.
+  var PSEUDO_BLOCKERS = { backend: true, status: true, busy: true };
+
+  function realBlockers(view, lang) {
+    return startBlockers(view, lang).filter(function (b) {
+      return !PSEUDO_BLOCKERS[b.key];
+    });
+  }
+
+  // Lampu tally di bilah atas.
+  //
+  // Kosakatanya SENGAJA berbeda dari kartu status: lampu ini menjawab "apa yang
+  // sedang terjadi sekarang" dalam satu lirikan di tengah LIVE, kartu yang
+  // menjelaskannya. Merah siaran HANYA berarti sedang mengudara, dan hijau HANYA
+  // berarti MULAI BOT benar-benar bisa ditekan.
+  function tallyView(view, lang) {
+    var status = (view && view.status) || null;
+    if (view && view.backendUnreachable) return { label: tr(lang, "ui.pill.problem"), tone: TONE.ERROR };
+    if (!status) return { label: tr(lang, "ui.pill.checking"), tone: TONE.NEUTRAL };
+
+    switch (status.automation) {
+      case STATES.RUNNING: return { label: tr(lang, "ui.pill.onair"), tone: TONE.RUNNING };
+      case STATES.DEGRADED: return { label: tr(lang, "ui.pill.problem"), tone: TONE.ATTENTION };
+      case STATES.ERROR: return { label: tr(lang, "ui.pill.problem"), tone: TONE.ERROR };
+      case STATES.STARTING:
+      case STATES.PREFLIGHT:
+      case STATES.STOPPING:
+        return { label: automationLabel(status, lang), tone: TONE.ATTENTION };
+      default: break;
+    }
+
+    var blockers = realBlockers(view, lang);
+    // Abu-abu, bukan kuning. Belum-bisa-mulai adalah keadaan ISTIRAHAT yang
+    // normal pada peluncuran pertama; kalau ia kuning, tidak ada warna yang
+    // tersisa untuk "ada yang rusak".
+    if (blockers.length) return { label: tr(lang, "ui.pill.blocked", { n: blockers.length }), tone: TONE.NEUTRAL };
+    return { label: tr(lang, "ui.pill.ready"), tone: TONE.READY };
+  }
+
+  // Kartu status: satu judul yang menjawab "apa yang sedang terjadi", dan satu
+  // kalimat yang menjawab "lalu saya harus apa".
+  function heroView(view, lang) {
+    var status = (view && view.status) || null;
+    var OVER = "ui.hero.over.status";
+
+    if (view && view.backendUnreachable) {
+      return { over: tr(lang, OVER), title: tr(lang, BACKEND_DOWN_KEY), note: "", tone: TONE.ERROR };
+    }
+    if (!status) {
+      return { over: tr(lang, OVER), title: tr(lang, "ui.hero.checking.title"), note: "", tone: TONE.NEUTRAL };
+    }
+
+    var n = ruleCount(view);
+    switch (status.automation) {
+      case STATES.RUNNING:
+        return {
+          over: tr(lang, "ui.hero.over.running"),
+          title: tr(lang, "ui.hero.running.title"),
+          note: tr(lang, "ui.hero.running.body", { n: n }),
+          tone: TONE.RUNNING,
+        };
+      case STATES.DEGRADED:
+        return {
+          over: tr(lang, "ui.hero.over.running"),
+          title: tr(lang, "ui.hero.problem.title"),
+          note: tr(lang, "ui.ready.hint.running"),
+          tone: TONE.ATTENTION,
+        };
+      case STATES.ERROR:
+        // Judulnya adalah sebab kegagalannya sendiri: itu satu hal yang paling
+        // perlu dibaca orang yang menemukan layar ini.
+        return {
+          over: tr(lang, OVER),
+          title: automationLabel(status, lang),
+          note: tr(lang, "ui.ready.hint.error"),
+          tone: TONE.ERROR,
+        };
+      case STATES.STARTING:
+      case STATES.PREFLIGHT:
+      case STATES.STOPPING:
+        return { over: tr(lang, OVER), title: automationLabel(status, lang), note: "", tone: TONE.ATTENTION };
+      default: break;
+    }
+
+    // Berhenti. Tidak satu pun cabang di bawah boleh berbunyi seperti sesuatu
+    // yang sedang berjalan.
+    if (view && view.busy) {
+      return { over: tr(lang, OVER), title: tr(lang, "ui.working"), note: "", tone: TONE.ATTENTION };
+    }
+
+    var blockers = realBlockers(view, lang);
+    if (blockers.length) {
+      return {
+        over: tr(lang, OVER),
+        title: tr(lang, "ui.hero.blocked.title", { n: blockers.length }),
+        // Satu penghalang: sebut saja apa. Banyak penghalang: tunjuk daftarnya,
+        // karena menyebut satu dari enam membuat lima lainnya tidak terlihat.
+        note: blockers.length === 1 ? blockers[0].message : tr(lang, "ui.hero.blocked.body"),
+        tone: TONE.NEUTRAL,
+      };
+    }
+
+    return {
+      over: tr(lang, OVER),
+      title: tr(lang, "ui.hero.ready.title"),
+      note: tr(lang, "ui.hero.ready.body", { n: n }),
+      tone: TONE.READY,
+    };
+  }
+
+  // Hitungan di kepala rel kesiapan, dan satu sel progres per syarat.
+  //
+  // Baris PERTAMA readinessRows() adalah KEADAAN otomasi, bukan syarat, jadi ia
+  // tidak ikut dihitung — kalau ikut, "Berhenti" membuat hitungannya selalu
+  // kurang satu dan customer mencari syarat yang tidak ada.
+  function readyView(view, lang) {
+    var status = (view && view.status) || null;
+    var s = status ? status.automation : null;
+    // Hitungannya milik "sebelum mulai", dan HANYA itu.
+    //
+    // Selama berjalan, service memegang profil Chrome, jadi katalog produk dan
+    // identitas TikTok memang tidak bisa dibaca lagi - tiga baris tinggal
+    // "Memeriksa...". Menghitungnya tetap membuat run yang SEHAT berbunyi
+    // "3 dari 6 siap", yaitu angka yang membaca seperti separuh sistem rusak di
+    // layar yang dipakai orang memutuskan apakah perlu menekan HENTIKAN BOT.
+    var counting = s !== STATES.RUNNING && s !== STATES.DEGRADED;
+    var rows = readinessRows(view, lang).slice(1);
+    var cells = rows.map(function (r) {
+      if (r.tone === TONE.READY) return TONE.READY;
+      if (r.tone === TONE.ATTENTION || r.tone === TONE.ERROR) return TONE.ATTENTION;
+      return TONE.NEUTRAL;
+    });
+    var ok = cells.filter(function (c) { return c === TONE.READY; }).length;
+    var total = cells.length;
+    return {
+      counting: counting,
+      // "Sebelum mulai" di atas kartu yang sedang menemani sebuah run adalah
+      // judul yang salah: tidak ada lagi yang "sebelum".
+      title: tr(lang, counting ? "ui.ready.title" : "ui.ready.titleRunning"),
+      ok: ok,
+      total: total,
+      cells: counting ? cells : [],
+      label: !counting
+        ? ""
+        : total > 0 && ok === total
+          ? tr(lang, "ui.ready.allClear", { total: total })
+          : tr(lang, "ui.ready.count", { ok: ok, total: total }),
+    };
+  }
+
+  // m:ss. Angka, jadi tidak butuh terjemahan.
+  function clock(sec) {
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return m + ":" + (s < 10 ? "0" + s : String(s));
+  }
+
+  // Kartu "sedang tayang".
+  //
+  // SETIAP angka di sini datang dari kejadian yang sungguh dikirim server.
+  // Panjang scene TIDAK PERNAH ada di /api/status, jadi tidak ada hitungan
+  // mundur: yang ditampilkan adalah waktu BERJALAN sejak kejadian PLAY, yang
+  // memang punya stempel waktu. Hitungan mundur palsu di layar yang dipakai
+  // orang memutuskan kapan bicara jauh lebih buruk daripada tidak ada angka.
+  function onairView(view, lang, now) {
+    var status = (view && view.status) || null;
+    var s = status ? status.automation : null;
+    var hidden = { visible: false, scene: "", title: "", sub: "", elapsed: "", elapsedSeconds: 0, elapsedLabel: "", chain: [] };
+    if (s !== STATES.RUNNING && s !== STATES.DEGRADED) return hidden;
+
+    var events = Array.isArray(view && view.activity) ? view.activity : [];
+
+    // Dibaca dari yang TERBARU. Kalau yang ditemui lebih dulu adalah akhir
+    // scene, berarti sekarang tidak ada yang tayang — dan kartunya tidak boleh
+    // tetap memamerkan scene yang sudah selesai.
+    var play = null;
+    for (var i = events.length - 1; i >= 0; i -= 1) {
+      var e = events[i];
+      if (!e) continue;
+      if (e.type === "PLAYBACK_END") break;
+      if (e.type === "PLAY") { play = e; break; }
+    }
+    if (!play) return hidden;
+
+    var after = events.filter(function (x) { return x && x.id > play.id; });
+    function last(type) {
+      for (var j = after.length - 1; j >= 0; j -= 1) if (after[j].type === type) return after[j];
+      return null;
+    }
+    var pinOk = last("AUTOPIN_SUCCESS");
+    var pinBad = last("AUTOPIN_FAILED");
+    var repOk = last("AUTOCOMMENT_SUCCESS");
+    var repBad = last("AUTOCOMMENT_FAILED");
+
+    function step(labelKey, ok, bad) {
+      if (ok) return { label: tr(lang, labelKey), value: activityTime(ok.time, lang), tone: TONE.READY };
+      if (bad) return { label: tr(lang, labelKey), value: messageOf(lang, bad, "ui.row.needsAttention"), tone: TONE.ATTENTION };
+      return { label: tr(lang, labelKey), value: tr(lang, "ui.onair.waiting"), tone: TONE.NEUTRAL };
+    }
+
+    var at = Date.parse(play.time);
+    var nowMs = typeof now === "number" ? now : Date.now();
+    var sec = isFinite(at) ? Math.max(0, Math.floor((nowMs - at) / 1000)) : 0;
+
+    // Judulnya milik customer kalau ada: judul produk yang SUNGGUH ter-pin.
+    // Nama scene bukan kalimat, jadi ia menjadi judul hanya kalau tidak ada yang
+    // lebih baik.
+    var scene = play.scene ? String(play.scene) : "";
+    var product = pinOk && pinOk.product ? String(pinOk.product) : "";
+    var sceneLine = scene ? tr(lang, "ui.onair.scene", { scene: scene }) : "";
+
+    return {
+      visible: true,
+      scene: scene,
+      title: product || sceneLine,
+      sub: product ? sceneLine : "",
+      elapsed: clock(sec),
+      elapsedSeconds: sec,
+      elapsedLabel: tr(lang, "ui.onair.elapsed", { sec: I18N.num(lang, sec, 0) }),
+      chain: [step("ui.onair.pinned", pinOk, pinBad), step("ui.onair.replied", repOk, repBad)],
+    };
+  }
+
+  function activityCapText(lang) {
+    return tr(lang, "ui.act.cap", { n: MAX_ACTIVITY_ITEMS });
+  }
+
+  // Satu aturan sebagai KALIMAT — inti Direction D. Pemicu, scene, produk,
+  // balasan; dibaca seperti instruksi, bukan seperti baris tabel berkolom.
+  //
+  // Isi aturan adalah milik customer dan dikembalikan APA ADANYA. Yang
+  // diterjemahkan hanya catatan tentang isinya.
+  function ruleChips(row, ctx, lang) {
+    var c = ctx || {};
+    var triggers = parseTriggers(row && row.triggersText);
+    var scene = row && row.scene ? String(row.scene) : "";
+    var product = row && row.productTitle ? String(row.productTitle) : "";
+    var scenes = Array.isArray(c.scenes) ? c.scenes : [];
+    var resolved = c.resolvedTitle ? String(c.resolvedTitle) : "";
+
+    return {
+      triggers: triggers,
+      // Kosong itu KEADAAN, bukan kesalahan: aturan yang baru ditambahkan memang
+      // belum punya pemicu, dan ia belum disimpan ke mana pun.
+      triggersEmpty: triggers.length === 0 ? tr(lang, "ui.rule.f.triggersEmpty") : "",
+      scene: scene,
+      // Hanya mengaku "tidak ada di OBS" kalau daftar scene MEMANG sudah dibaca.
+      // Dengan daftar kosong, discovery belum pernah berhasil — dan menuduh
+      // scene customer hilang berdasarkan daftar yang belum ada adalah
+      // pernyataan yang salah tentang keadaan sistem.
+      sceneMissing: scene !== "" && scenes.length > 0 && scenes.indexOf(scene) === -1
+        ? tr(lang, "ui.rule.f.sceneMissing", { scene: scene })
+        : "",
+      product: product,
+      productNone: product === "" ? tr(lang, "ui.rule.f.productNone") : "",
+      // Judul yang BENAR-BENAR terlihat di LIVE, dan hanya kalau ia berbeda dari
+      // potongan judul yang disimpan customer.
+      resolved: resolved && product && resolved !== product
+        ? tr(lang, "ui.rule.f.resolved", { title: resolved })
+        : "",
+      reply: row && row.reply ? String(row.reply) : "",
+      noReply: row && row.reply ? "" : tr(lang, "ui.rule.noReply"),
+    };
+  }
+
   return {
     STATES: STATES,
     TONE: TONE,
@@ -1198,5 +1504,13 @@
     preflightRows: preflightRows,
     failedPreflight: failedPreflight,
     messageOf: messageOf,
+    ruleCount: ruleCount,
+    realBlockers: realBlockers,
+    tallyView: tallyView,
+    heroView: heroView,
+    readyView: readyView,
+    onairView: onairView,
+    activityCapText: activityCapText,
+    ruleChips: ruleChips,
   };
 });

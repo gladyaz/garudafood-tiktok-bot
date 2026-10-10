@@ -1,212 +1,288 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id" data-theme="light" data-lang="id">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI LIVE HOST</title>
     <!-- Tidak ada CDN, tidak ada font eksternal, tidak ada analytics. Semua
          berkas disajikan Controller dari disk; halaman ini tidak pernah
-         menghubungi apa pun selain 127.0.0.1. -->
+         menghubungi apa pun selain 127.0.0.1.
+
+         SETIAP kalimat di halaman ini datang dari i18n.js. Teks statis memakai
+         data-t="<kunci>"; app.js yang mengisinya saat memuat dan setiap kali
+         bahasa diganti. Tidak ada satu pun kata customer yang ditulis di sini,
+         jadi tidak ada yang bisa tertinggal saat bahasa berubah. -->
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <h1>AI LIVE HOST</h1>
-      <div class="topbar-right">
-        <span id="automation-pill" class="pill neutral">Loading…</span>
-        <button id="refresh-btn" type="button" class="btn btn-secondary">Refresh Connections</button>
+    <!-- ===================================================== bilah atas === -->
+    <header class="top">
+      <div class="top-in">
+        <div class="mark">
+          <span class="mark-dots" aria-hidden="true"
+            ><i></i><i></i><i></i><i></i><i></i
+          ></span>
+          AI LIVE HOST
+        </div>
+
+        <span class="acct" id="acct-chip" hidden>
+          <b id="acct-initials" aria-hidden="true"></b>
+          <span id="acct-name"></span>
+        </span>
+
+        <span class="spacer"></span>
+
+        <!-- Lampu tally. BUKAN pil terisi: satu-satunya blok merah penuh di
+             layar ini adalah tombol HENTIKAN BOT, supaya "sedang mengudara"
+             dan "hentikan sekarang" tidak pernah terbaca sama. -->
+        <span id="automation-pill" class="tally neutral"></span>
+
+        <!-- Pemilih bahasa: fitur produk, di bilah utama. Tema tinggal di
+             Pengaturan supaya bilah ini tidak penuh preferensi sekunder. -->
+        <span class="seg" role="group" id="lang-group" aria-label="Bahasa">
+          <button type="button" data-lang-btn="id" aria-pressed="true">ID</button>
+          <button type="button" data-lang-btn="en" aria-pressed="false">EN</button>
+          <button type="button" data-lang-btn="zh-CN" aria-pressed="false">中文</button>
+        </span>
+
+        <button id="refresh-btn" type="button" class="btn" data-t="ui.btn.recheck"></button>
+        <button id="start-btn" type="button" class="btn btn-start" data-t="ui.btn.start"></button>
+        <button id="stop-btn" type="button" class="btn btn-stop" data-t="ui.btn.stop"></button>
       </div>
     </header>
 
-    <!-- Spanduk ini hanya untuk hal yang berlaku ke SELURUH halaman (controller
-         tidak terjangkau, config tersimpan, restart dibutuhkan). Masalah yang
-         dimiliki satu pemetaan tampil di baris pemetaan itu, bukan di sini. -->
+    <!-- Spanduk untuk hal yang berlaku ke SELURUH halaman. Masalah milik satu
+         pemetaan tampil di baris pemetaan itu, bukan di sini. -->
     <div id="banner" class="banner" hidden></div>
 
-    <main>
-      <!-- 1. Kesiapan
-           Judulnya menyebut "pre-start" dengan sengaja. "Connection & Readiness"
-           dengan enam baris hijau terbaca seperti laporan sesuatu yang sedang
-           bekerja; yang sebenarnya ditampilkan adalah syarat SEBELUM mulai. -->
-      <section class="card" aria-labelledby="readiness-title">
-        <div class="card-head">
-          <h2 id="readiness-title">Connections &amp; pre-start checks</h2>
-          <span id="readiness-hint" class="hint"></span>
-        </div>
-        <dl id="readiness" class="readiness"></dl>
-
-        <!-- Login TikTok. Password TIDAK PERNAH diminta di sini: aplikasi hanya
-             membuka jendela browser, dan customer login sendiri di dalamnya. -->
-        <div class="login-row">
-          <div class="login-actions">
-            <button id="login-btn" type="button" class="btn btn-secondary">LOGIN TIKTOK</button>
-            <button id="login-check-btn" type="button" class="btn btn-primary" hidden>CHECK LOGIN</button>
-            <button id="login-cancel-btn" type="button" class="btn btn-secondary" hidden>CANCEL</button>
-          </div>
-          <p id="login-hint" class="hint" aria-live="polite"></p>
+    <main class="wrap">
+      <!-- =================================================== status ===== -->
+      <section class="card pad hero" aria-live="polite">
+        <div class="hero-text">
+          <div class="over" id="hero-over"></div>
+          <h1 id="run-state"></h1>
+          <p class="hero-sub" id="run-note"></p>
         </div>
       </section>
 
-      <!-- Panduan pertama kali, hanya saat belum ada config -->
-      <section id="setup" class="card" hidden aria-labelledby="setup-title">
-        <div class="card-head"><h2 id="setup-title">Initial setup</h2></div>
+      <!-- Sedang tayang. Hanya muncul saat benar-benar ada yang tayang, dan
+           SETIAP angkanya datang dari kejadian yang sungguh dikirim server:
+           waktu berjalan dihitung dari stempel waktu PLAY, bukan dari panjang
+           scene yang memang tidak pernah dikirim ke UI. -->
+      <section class="card pad onair" id="onair" hidden aria-live="polite">
+        <div class="onair-head">
+          <div class="onair-what">
+            <span class="over" data-t="ui.onair.over"></span>
+            <h2 id="onair-title"></h2>
+            <p id="onair-sub"></p>
+          </div>
+          <div class="onair-time">
+            <b id="onair-elapsed"></b>
+          </div>
+        </div>
+        <div class="onair-chain" id="onair-chain"></div>
+      </section>
+
+      <!-- Panduan pertama kali, hanya saat belum ada config sama sekali -->
+      <section id="setup" class="card pad" hidden aria-labelledby="setup-title">
+        <h2 id="setup-title" class="card-title" data-t="ui.setup.title"></h2>
         <ol class="setup-steps">
-          <li>Fill in <strong>Settings</strong> below and press <strong>Save Settings</strong>.</li>
-          <li>Open OBS and enable its WebSocket server.</li>
-          <li>Press <strong>LOGIN TIKTOK</strong> and sign in once.</li>
-          <li>Start your TikTok LIVE and add the products you want to pin.</li>
-          <li>Press <strong>Refresh Connections</strong>, then create your mappings.</li>
+          <li data-t="ui.setup.1"></li>
+          <li data-t="ui.setup.2"></li>
+          <li data-t="ui.setup.3"></li>
+          <li data-t="ui.setup.4"></li>
+          <li data-t="ui.setup.5"></li>
         </ol>
       </section>
 
-      <!-- Settings. Satu-satunya tempat customer mengisi akun dan OBS; tidak ada
-           berkas yang perlu disunting tangan. -->
-      <section class="card" aria-labelledby="settings-title">
-        <div class="card-head">
-          <h2 id="settings-title">Settings</h2>
-          <span id="settings-hint" class="hint"></span>
-        </div>
-
-        <div class="settings-grid">
-          <div class="field">
-            <label for="set-tiktok-username">TikTok username that goes LIVE</label>
-            <input id="set-tiktok-username" type="text" autocomplete="off" spellcheck="false" placeholder="namaakunmu" />
-            <div class="field-note">Without the @. This is the LIVE room the bot listens to.</div>
-            <div id="err-tiktokUsername" class="field-error" hidden></div>
-          </div>
-
-          <div class="field">
-            <label for="set-expected-shop">Shop name as it appears on your TikTok LIVE page</label>
-            <input id="set-expected-shop" type="text" autocomplete="off" spellcheck="false" placeholder="Toko Saya" />
-            <div class="field-note">Checked before anything is pinned. Must match exactly.</div>
-            <div id="err-expectedShop" class="field-error" hidden></div>
-          </div>
-
-          <div class="field">
-            <label for="set-obs-host">OBS host</label>
-            <input id="set-obs-host" type="text" autocomplete="off" spellcheck="false" placeholder="127.0.0.1" />
-            <div class="field-note">Usually 127.0.0.1 — the same computer.</div>
-            <div id="err-obsHost" class="field-error" hidden></div>
-          </div>
-
-          <div class="field">
-            <label for="set-obs-port">OBS WebSocket port</label>
-            <input id="set-obs-port" type="text" inputmode="numeric" autocomplete="off" placeholder="4455" />
-            <div class="field-note">OBS → Tools → WebSocket Server Settings.</div>
-            <div id="err-obsPort" class="field-error" hidden></div>
-          </div>
-
-          <!-- Password OBS. Yang tersimpan TIDAK PERNAH dikirim kembali ke halaman:
-               server hanya memberi tahu "sudah diisi atau belum". -->
-          <div class="field">
-            <label for="set-obs-password">OBS password</label>
-            <div id="obs-password-state" class="pw-state">
-              <span id="obs-password-label" class="hint"></span>
-              <button id="obs-password-change" type="button" class="btn btn-ghost">Change</button>
-              <button id="obs-password-cancel" type="button" class="btn btn-ghost" hidden>Keep current</button>
+      <div class="grid">
+        <!-- ============================================ rel kesiapan ===== -->
+        <aside class="rail">
+          <section class="card" aria-labelledby="ready-title">
+            <div class="card-head">
+              <h2 id="ready-title" class="card-title" data-t="ui.ready.title"></h2>
+              <span class="muted small" id="ready-count"></span>
             </div>
-            <input id="set-obs-password" type="password" autocomplete="new-password" placeholder="Type the new OBS password" hidden />
-            <div class="field-note">Only needed if OBS asks for a password. Press Change to type it.</div>
+            <div class="pad-sm">
+              <div class="progress" id="ready-progress" aria-hidden="true"></div>
+              <dl id="readiness" class="checks"></dl>
+              <p id="readiness-hint" class="hint"></p>
+              <dl id="preflight" class="checks" hidden></dl>
+            </div>
+
+            <!-- Login TikTok. Password TIDAK PERNAH diminta di sini: aplikasi
+                 hanya membuka jendela browser, customer login sendiri. -->
+            <div class="card-foot login-row">
+              <button id="login-btn" type="button" class="btn" data-t="ui.btn.login"></button>
+              <button id="login-check-btn" type="button" class="btn btn-ink" hidden data-t="ui.btn.loginCheck"></button>
+              <button id="login-cancel-btn" type="button" class="btn" hidden data-t="ui.btn.cancel"></button>
+              <p id="login-hint" class="hint" aria-live="polite"></p>
+            </div>
+          </section>
+        </aside>
+
+        <!-- ================================================== ruang kerja = -->
+        <section class="card work">
+          <div class="tabs" role="tablist">
+            <button class="tab" role="tab" id="tab-rules" data-tab="rules" aria-selected="true">
+              <span data-t="ui.tab.rules"></span><span class="count" id="rules-count"></span>
+            </button>
+            <button class="tab" role="tab" id="tab-activity" data-tab="activity" aria-selected="false">
+              <span data-t="ui.tab.activity"></span><span class="count" id="activity-count"></span>
+            </button>
+            <button class="tab" role="tab" id="tab-settings" data-tab="settings" aria-selected="false">
+              <span data-t="ui.tab.settings"></span>
+            </button>
           </div>
-        </div>
 
-        <!-- Aksi nyata.
-             Dua saklar, bukan tiga setelan teknis. Customer memutuskan APA yang
-             dilakukan bot; bahwa "balas di chat" berarti jalur kirim browser
-             adalah urusan ui-logic.js, bukan urusannya.
+          <!-- ------------------------------------------------ aturan ----- -->
+          <div class="pad" data-panel="rules" role="tabpanel" aria-labelledby="tab-rules">
+            <div class="panel-head">
+              <div>
+                <h3 class="panel-title" data-t="ui.rule.title"></h3>
+                <p class="muted small" data-t="ui.rule.subtitle"></p>
+              </div>
+              <span class="hint" id="mapping-hint"></span>
+            </div>
 
-             Sampai 2026-10-08 ketiga field ini TIDAK ADA di halaman sama sekali,
-             sehingga aplikasi terpasang hanya bisa mengganti scene: satu run LIVE
-             berjalan dengan AutoPIN mati, semua indikator hijau, nol produk
-             ter-pin. Lihat controller/automation-mode.js. -->
-        <div class="settings-actions">
-          <h3 class="settings-actions-title">What the bot will do during your LIVE</h3>
+            <div id="mappings" class="rules"></div>
+            <p id="mappings-empty" class="empty" hidden></p>
 
-          <div class="field field-check">
-            <label for="set-auto-pin">
-              <input id="set-auto-pin" type="checkbox" />
-              <span>Auto pin product</span>
-            </label>
-            <div class="field-note">Pins the mapped product in your LIVE when a viewer triggers its scene.</div>
-            <div id="err-autoPinProduct" class="field-error" hidden></div>
+            <div class="panel-foot">
+              <button id="add-mapping-btn" type="button" class="btn" data-t="ui.btn.addRule"></button>
+              <button id="save-btn" type="button" class="btn btn-accent" data-t="ui.btn.save"></button>
+              <span id="save-state" class="hint" aria-live="polite"></span>
+            </div>
           </div>
 
-          <div class="field field-check">
-            <label for="set-admin-reply">
-              <input id="set-admin-reply" type="checkbox" />
-              <span>Send admin reply after pin</span>
-            </label>
-            <div class="field-note">Posts one short reply in your LIVE chat, only after the product is confirmed pinned.</div>
-            <div id="err-sendAdminReply" class="field-error" hidden></div>
+          <!-- ---------------------------------------------- aktivitas ---- -->
+          <div class="pad" data-panel="activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
+            <div class="panel-head">
+              <h3 class="panel-title" data-t="ui.act.title"></h3>
+              <span class="hint" id="activity-hint"></span>
+            </div>
+            <ul id="activity" class="feed"></ul>
+            <p id="activity-empty" class="empty"></p>
+            <p class="muted small" id="activity-cap"></p>
           </div>
-        </div>
 
-        <div class="card-actions">
-          <button id="save-settings-btn" type="button" class="btn btn-primary">Save Settings</button>
-          <span id="settings-state" class="hint" aria-live="polite"></span>
-        </div>
-      </section>
+          <!-- --------------------------------------------- pengaturan ---- -->
+          <div class="pad" data-panel="settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+            <div class="panel-head">
+              <h3 class="panel-title" data-t="ui.tab.settings"></h3>
+              <span class="hint" id="settings-hint"></span>
+            </div>
 
-      <!-- 2. Pemetaan -->
-      <section class="card" aria-labelledby="mapping-title">
-        <div class="card-head">
-          <h2 id="mapping-title">Automation Mapping</h2>
-          <span id="mapping-hint" class="hint"></span>
-        </div>
+            <div class="group">
+              <div class="group-head">
+                <h4 data-t="ui.set.account.title"></h4>
+                <p class="muted small" data-t="ui.set.account.help"></p>
+              </div>
+              <div class="fields">
+                <div class="field">
+                  <label for="set-tiktok-username" data-t="ui.set.username"></label>
+                  <span class="affix"><span>@</span
+                    ><input id="set-tiktok-username" type="text" autocomplete="off" spellcheck="false" /></span>
+                  <div class="note" data-t="ui.set.usernameHelp"></div>
+                  <div id="err-tiktokUsername" class="field-error" hidden></div>
+                </div>
+                <div class="field">
+                  <label for="set-expected-shop" data-t="ui.set.shop"></label>
+                  <input id="set-expected-shop" type="text" autocomplete="off" spellcheck="false" />
+                  <div class="note" data-t="ui.set.shopHelp"></div>
+                  <div id="err-expectedShop" class="field-error" hidden></div>
+                </div>
+              </div>
+            </div>
 
-        <div id="mappings" class="mappings"></div>
+            <div class="group">
+              <div class="group-head">
+                <h4 data-t="ui.set.obs.title"></h4>
+                <p class="muted small" data-t="ui.set.obs.help"></p>
+              </div>
+              <div class="fields">
+                <div class="field">
+                  <label for="set-obs-host" data-t="ui.set.host"></label>
+                  <input id="set-obs-host" type="text" autocomplete="off" spellcheck="false" />
+                  <div class="note" data-t="ui.set.hostHelp"></div>
+                  <div id="err-obsHost" class="field-error" hidden></div>
+                </div>
+                <div class="field">
+                  <label for="set-obs-port" data-t="ui.set.port"></label>
+                  <input id="set-obs-port" type="text" inputmode="numeric" autocomplete="off" />
+                  <div class="note" data-t="ui.set.portHelp"></div>
+                  <div id="err-obsPort" class="field-error" hidden></div>
+                </div>
+                <!-- Password OBS. Yang tersimpan TIDAK PERNAH dikirim kembali
+                     ke halaman: server hanya memberi tahu sudah diisi atau
+                     belum. -->
+                <div class="field field-wide">
+                  <label for="set-obs-password" data-t="ui.set.password"></label>
+                  <span class="pw-row">
+                    <span id="obs-password-label" class="muted small"></span>
+                    <button id="obs-password-change" type="button" class="btn btn-sm" data-t="ui.btn.change"></button>
+                    <button id="obs-password-cancel" type="button" class="btn btn-sm" hidden data-t="ui.btn.keep"></button>
+                  </span>
+                  <input id="set-obs-password" type="password" autocomplete="new-password" hidden />
+                  <div class="note" data-t="ui.set.passwordHelp"></div>
+                </div>
+              </div>
+            </div>
 
-        <p id="mappings-empty" class="empty" hidden>
-          No mappings yet. Add one to tell the bot which product to pin for each scene.
-        </p>
+            <div class="group">
+              <div class="group-head">
+                <h4 data-t="ui.set.actions.title"></h4>
+                <p class="muted small" data-t="ui.set.actions.help"></p>
+              </div>
+              <div class="fields">
+                <label class="toggle-row" for="set-auto-pin">
+                  <span>
+                    <span class="toggle-name" data-t="ui.set.autopin"></span>
+                    <span class="note" data-t="ui.set.autopinHelp"></span>
+                    <span id="err-autoPinProduct" class="field-error" hidden></span>
+                  </span>
+                  <input id="set-auto-pin" type="checkbox" class="tgl" />
+                </label>
+                <label class="toggle-row" for="set-admin-reply">
+                  <span>
+                    <span class="toggle-name" data-t="ui.set.autoreply"></span>
+                    <span class="note" data-t="ui.set.autoreplyHelp"></span>
+                    <span id="err-sendAdminReply" class="field-error" hidden></span>
+                  </span>
+                  <input id="set-admin-reply" type="checkbox" class="tgl" />
+                </label>
+              </div>
+            </div>
 
-        <div class="card-actions">
-          <button id="add-mapping-btn" type="button" class="btn btn-secondary">+ Add Mapping</button>
-          <button id="save-btn" type="button" class="btn btn-primary">Save Changes</button>
-          <span id="save-state" class="hint" aria-live="polite"></span>
-        </div>
-      </section>
+            <!-- Tampilan. Preferensi presentasi, jadi ia tinggal di Pengaturan
+                 dan TIDAK menyentuh config.json. -->
+            <div class="group">
+              <div class="group-head">
+                <h4 data-t="ui.theme.label"></h4>
+                <p class="muted small" data-t="ui.theme.help"></p>
+              </div>
+              <div class="fields">
+                <span class="seg seg-wide" role="group" id="theme-group">
+                  <button type="button" data-theme-btn="system" data-t="ui.theme.system" aria-pressed="true"></button>
+                  <button type="button" data-theme-btn="light" data-t="ui.theme.light" aria-pressed="false"></button>
+                  <button type="button" data-theme-btn="dark" data-t="ui.theme.dark" aria-pressed="false"></button>
+                </span>
+              </div>
+            </div>
 
-      <!-- 3. Start / Stop -->
-      <section class="card" aria-labelledby="run-title">
-        <div class="card-head">
-          <h2 id="run-title">Automation</h2>
-        </div>
-
-        <div class="run-row">
-          <div class="run-status">
-            <span class="run-label">Status</span>
-            <span id="run-state" class="run-value neutral">Loading…</span>
+            <div class="panel-foot">
+              <button id="save-settings-btn" type="button" class="btn btn-accent" data-t="ui.btn.saveSettings"></button>
+              <span id="settings-state" class="hint" aria-live="polite"></span>
+            </div>
           </div>
-          <div class="run-buttons">
-            <button id="start-btn" type="button" class="btn btn-start">START BOT</button>
-            <button id="stop-btn" type="button" class="btn btn-stop">STOP BOT</button>
-          </div>
-        </div>
-
-        <p id="run-note" class="hint" aria-live="polite"></p>
-
-        <!-- Daftar kesiapan saat Start. Tanpa persentase palsu: setiap baris
-             adalah hal yang benar-benar diperiksa, dengan hasilnya sendiri. -->
-        <dl id="preflight" class="readiness" hidden></dl>
-      </section>
-
-      <!-- 4. Activity -->
-      <section class="card" aria-labelledby="activity-title">
-        <div class="card-head">
-          <h2 id="activity-title">Activity</h2>
-          <span id="activity-hint" class="hint"></span>
-        </div>
-        <ul id="activity" class="activity"></ul>
-        <p id="activity-empty" class="empty">Nothing yet.</p>
-      </section>
+        </section>
+      </div>
     </main>
 
-    <footer class="footer">
-      <span>Local only — this dashboard is served from your own computer.</span>
-    </footer>
+    <p class="foot" data-t="ui.local"></p>
 
-    <!-- ui-logic.js memuat semua keputusan; app.js hanya memetakannya ke DOM. -->
+    <script src="i18n.js"></script>
+    <script src="prefs.js"></script>
     <script src="ui-logic.js"></script>
     <script src="app.js"></script>
   </body>
