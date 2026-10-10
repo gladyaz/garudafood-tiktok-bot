@@ -165,6 +165,28 @@
     "field.scene-never-mappable": "tidak bisa dipasangkan dengan produk",
     "field.version-missing": "tidak ada",
     "field.version-unsupported": "tidak didukung aplikasi ini",
+    "path.join": "{head} — {tail}",
+    "path.mappings": "Aturan otomatis",
+    "path.obs": "OBS",
+    "path.obs.host": "Host OBS",
+    "path.obs.password": "Password OBS",
+    "path.obs.port": "Port OBS",
+    "path.rule": "Aturan {n}",
+    "path.rule.product": "Produk",
+    "path.rule.productTitle": "Judul produk",
+    "path.rule.reply": "Balasan di chat",
+    "field.sep": " ",
+    "path.rule.scene": "Scene",
+    "path.rule.trigger": "Kata pemicu {n}",
+    "path.rule.triggers": "Kata pemicu",
+    "path.settings": "Pengaturan",
+    "path.settings.autoCommentEnabled": "Balas di chat setelah pin",
+    "path.settings.autopinEnabled": "Pin produk otomatis",
+    "path.settings.expectedShop": "Nama toko",
+    "path.settings.other": "Pengaturan lanjutan",
+    "path.tiktok": "Akun TikTok",
+    "path.tiktok.username": "Username TikTok",
+    "path.version": "Versi berkas pengaturan",
     "ui.act.cap": "Menyimpan {n} kejadian terbaru. Yang lebih lama ada di log dukungan.",
     "ui.act.connected": "Tersambung ke LIVE TikTok Anda",
     "ui.act.disconnected": "Terputus dari LIVE TikTok",
@@ -520,6 +542,28 @@
     "field.scene-never-mappable": "can't be paired with a product",
     "field.version-missing": "is missing",
     "field.version-unsupported": "is not one this app supports",
+    "path.join": "{head} — {tail}",
+    "path.mappings": "Automation rules",
+    "path.obs": "OBS",
+    "path.obs.host": "OBS host",
+    "path.obs.password": "OBS password",
+    "path.obs.port": "OBS port",
+    "path.rule": "Rule {n}",
+    "path.rule.product": "Product",
+    "path.rule.productTitle": "Product title",
+    "path.rule.reply": "Chat reply",
+    "field.sep": " ",
+    "path.rule.scene": "Scene",
+    "path.rule.trigger": "Trigger word {n}",
+    "path.rule.triggers": "Trigger words",
+    "path.settings": "Settings",
+    "path.settings.autoCommentEnabled": "Reply in chat after pinning",
+    "path.settings.autopinEnabled": "Pin products automatically",
+    "path.settings.expectedShop": "Shop name",
+    "path.settings.other": "Advanced settings",
+    "path.tiktok": "TikTok account",
+    "path.tiktok.username": "TikTok username",
+    "path.version": "Settings file version",
     "ui.act.cap": "Shows the most recent events, up to {n}. Older ones are in the support log.",
     "ui.act.connected": "Connected to your TikTok LIVE",
     "ui.act.disconnected": "Disconnected from the TikTok LIVE",
@@ -867,11 +911,33 @@
     "field.not-an-object": "不是有效的设置",
     "field.port-conflicts-with-obs": "不能和 OBS 端口相同",
     "field.prefix": "设置",
-    "field.product-missing": "需要选择商品；如果这个场景不置顶商品就留空",
+    "field.product-missing": "必须选择一个，或留空表示这个场景不置顶商品",
     "field.reply-too-long": "超过 100 个字",
     "field.scene-never-mappable": "不能和商品对应",
     "field.version-missing": "没有版本号",
     "field.version-unsupported": "由另一个版本的应用创建",
+    "path.join": "{head} — {tail}",
+    "path.mappings": "自动化规则",
+    "path.obs": "OBS",
+    "path.obs.host": "OBS 主机",
+    "path.obs.password": "OBS 密码",
+    "path.obs.port": "OBS 端口",
+    "path.rule": "规则 {n}",
+    "path.rule.product": "商品",
+    "path.rule.productTitle": "商品标题",
+    "path.rule.reply": "评论区回复",
+    "field.sep": "",
+    "path.rule.scene": "场景",
+    "path.rule.trigger": "触发词 {n}",
+    "path.rule.triggers": "触发词",
+    "path.settings": "设置",
+    "path.settings.autoCommentEnabled": "置顶后在评论区回复",
+    "path.settings.autopinEnabled": "自动置顶商品",
+    "path.settings.expectedShop": "店铺名称",
+    "path.settings.other": "高级设置",
+    "path.tiktok": "TikTok 账号",
+    "path.tiktok.username": "TikTok 用户名",
+    "path.version": "设置文件版本",
     "ui.act.cap": "只保留最近 {n} 条记录。更早的在支持日志里。",
     "ui.act.connected": "已连接到你的 TikTok 直播",
     "ui.act.disconnected": "已与 TikTok 直播断开连接",
@@ -1151,7 +1217,56 @@
     return t(L, "err.unknown");
   }
 
-  // fieldProblem(): "<path> <keluhan>", mengikuti bentuk server.
+  // fieldLabel(): path mesin -> nama yang bisa dibaca pemilik toko.
+  //
+  // Validator mengirim path seperti "mappings[0].product" dan "obs.port". Itu
+  // bahasa berkas config, bukan bahasa orang yang memakai aplikasinya: tidak
+  // ada pemilik toko yang tahu bahwa aturan pertamanya bernama mappings[0].
+  // Di sini ia menjadi "Aturan 1 — Produk".
+  //
+  // Bentuk path yang benar-benar dikirim controller/config-manager.js:
+  //   ""                              berkas config secara keseluruhan
+  //   "version" | "tiktok" | "obs" | "settings" | "mappings"
+  //   "tiktok.username" | "obs.host" | "obs.port" | "obs.password"
+  //   "settings.<apa saja>"
+  //   "mappings[N]"            .scene .product .product.title .reply
+  //                            .triggers  .triggers[M]
+  function fieldLabel(lang, path) {
+    var L = normalizeLang(lang);
+    var p = String(path === undefined || path === null ? "" : path).trim();
+    if (p === "") return t(L, "field.prefix");
+
+    var m = /^mappings\[(\d+)\](?:\.(.*))?$/.exec(p);
+    if (m) {
+      var head = t(L, "path.rule", { n: Number(m[1]) + 1 });
+      var rest = m[2] || "";
+      if (rest === "") return head;
+
+      var tail;
+      var ti = /^triggers\[(\d+)\]$/.exec(rest);
+      if (ti) tail = t(L, "path.rule.trigger", { n: Number(ti[1]) + 1 });
+      else if (rest === "triggers") tail = t(L, "path.rule.triggers");
+      else if (rest === "scene") tail = t(L, "path.rule.scene");
+      else if (rest === "product") tail = t(L, "path.rule.product");
+      else if (rest === "product.title") tail = t(L, "path.rule.productTitle");
+      else if (rest === "reply") tail = t(L, "path.rule.reply");
+      else return head;
+
+      return t(L, "path.join", { head: head, tail: tail });
+    }
+
+    var known = DICT[L]["path." + p] !== undefined || DICT[DEFAULT_LANG]["path." + p] !== undefined;
+    if (known) return t(L, "path." + p);
+
+    // settings.<sesuatu yang bukan kendali customer>: satu label umum, bukan
+    // nama field internal.
+    if (p.indexOf("settings.") === 0) return t(L, "path.settings.other");
+
+    return t(L, "field.prefix");
+  }
+
+  // fieldProblem(): "<label> <keluhan>".
+  // Path mentah TIDAK PERNAH keluar dari sini.
   function fieldProblem(lang, path, code, serverMessage) {
     var L = normalizeLang(lang);
     var key = "field." + String(code || "");
@@ -1161,8 +1276,7 @@
       if (typeof serverMessage === "string" && serverMessage !== "") return serverMessage;
       tail = t(L, "field.generic");
     }
-    var head = path ? String(path) : t(L, "field.prefix");
-    return head + " " + tail;
+    return fieldLabel(L, path) + t(L, "field.sep") + tail;
   }
 
   /* ----------------------------------------------------------------------
@@ -1219,6 +1333,7 @@
     normalizeLang: normalizeLang,
     t: t,
     fromServer: fromServer,
+    fieldLabel: fieldLabel,
     fieldProblem: fieldProblem,
     fill: fill,
     localeOf: localeOf,

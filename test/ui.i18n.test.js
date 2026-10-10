@@ -38,13 +38,19 @@ test("tiga bahasa punya daftar kunci yang PERSIS SAMA", () => {
 });
 
 test("tidak ada nilai kosong di bahasa mana pun", () => {
+  // field.sep SENGAJA kosong di Mandarin: tidak ada spasi antara label dan
+  // lanjutan kalimat. Itu satu-satunya nilai kosong yang sah.
+  const MAY_BE_EMPTY = ["field.sep"];
   for (const lang of LANGS) {
     const empty = Object.keys(I.DICT[lang]).filter((k) => {
+      if (MAY_BE_EMPTY.indexOf(k) !== -1) return false;
       const v = I.DICT[lang][k];
       return typeof v !== "string" || v.trim() === "";
     });
     assert.deepEqual(empty, [], lang + " punya nilai kosong");
   }
+  // tapi ia tetap harus ADA dan berupa string di ketiga bahasa
+  for (const lang of LANGS) assert.equal(typeof I.DICT[lang]["field.sep"], "string", lang);
 });
 
 /* === kode mesin dari server ============================================== */
@@ -177,12 +183,65 @@ test("PAGAR: kode mesin tidak pernah sampai ke layar", () => {
   }
 });
 
-test("fieldProblem menempelkan nama field di depan potongannya", () => {
+test("fieldProblem menempelkan LABEL yang bisa dibaca, bukan path mesin", () => {
   const out = I.fieldProblem("id", "obs.port", "must-be-port", "");
-  assert.ok(out.indexOf("obs.port") === 0, out);
-  assert.ok(out.length > "obs.port ".length);
+  assert.ok(out.indexOf("Port OBS") === 0, out);
+  assert.ok(out.indexOf("obs.port") === -1, "path mentah bocor: " + out);
   // tanpa path, tetap jadi kalimat yang bisa dibaca
   assert.ok(I.fieldProblem("id", "", "must-be-port", "").length > 0);
+});
+
+test("path aturan jadi nomor yang dikenal customer, dihitung dari 1", () => {
+  // Validator menghitung dari nol; pemilik toko menghitung dari satu.
+  assert.equal(I.fieldLabel("id", "mappings[0].product"), "Aturan 1 — Produk");
+  assert.equal(I.fieldLabel("en", "mappings[0].product"), "Rule 1 — Product");
+  assert.equal(I.fieldLabel("id", "mappings[1].triggers[2]"), "Aturan 2 — Kata pemicu 3");
+  assert.equal(I.fieldLabel("id", "mappings[3]"), "Aturan 4");
+  assert.equal(I.fieldLabel("id", "mappings[2].scene"), "Aturan 3 — Scene");
+  assert.equal(I.fieldLabel("id", "mappings[0].product.title"), "Aturan 1 — Judul produk");
+  assert.equal(I.fieldLabel("id", "mappings[4].reply"), "Aturan 5 — Balasan di chat");
+});
+
+test("field yang bukan kendali customer memakai satu label umum", () => {
+  // "settings.autoCommentMinIntervalMs" sama tidak berartinya dengan path
+  // mentah bagi pemilik toko.
+  assert.equal(I.fieldLabel("id", "settings.autoCommentMinIntervalMs"), "Pengaturan lanjutan");
+  assert.equal(I.fieldLabel("id", "settings.autopinTimeoutMs"), "Pengaturan lanjutan");
+  // sementara yang MEMANG kendali customer punya namanya sendiri
+  assert.equal(I.fieldLabel("id", "settings.expectedShop"), "Nama toko");
+  assert.equal(I.fieldLabel("id", "settings.autopinEnabled"), "Pin produk otomatis");
+});
+
+test("PAGAR: path mesin tidak pernah muncul di kalimat mana pun", () => {
+  // Setiap bentuk path yang benar-benar dikirim config-manager.js.
+  const paths = [
+    "", "version", "tiktok", "tiktok.username", "obs", "obs.host", "obs.port",
+    "obs.password", "settings", "settings.expectedShop", "settings.autopinEnabled",
+    "settings.autoCommentEnabled", "settings.forbiddenShops", "settings.chromePath",
+    "settings.consoleUrl", "settings.profileDir", "settings.debugDir",
+    "settings.sceneReplayCooldownMs", "settings.autoCommentTransport", "mappings",
+    "mappings[0]", "mappings[0].scene", "mappings[0].product", "mappings[0].product.title",
+    "mappings[0].triggers", "mappings[0].triggers[0]", "mappings[0].reply",
+    "mappings[12].triggers[7]",
+  ];
+  for (const lang of LANGS) {
+    for (const p of paths) {
+      const label = I.fieldLabel(lang, p);
+      const sentence = I.fieldProblem(lang, p, "must-be-string", "");
+      assert.ok(label.length > 0, lang + " " + p + " menghasilkan label kosong");
+      for (const needle of ["mappings[", "settings.", "obs.", "tiktok.", "product.title", "[0]"]) {
+        assert.ok(label.indexOf(needle) === -1, lang + ' label "' + label + '" memuat path mentah');
+        assert.ok(sentence.indexOf(needle) === -1, lang + ' kalimat "' + sentence + '" memuat path mentah');
+      }
+    }
+  }
+});
+
+test("Mandarin tidak memberi spasi antara label dan lanjutannya", () => {
+  const zh = I.fieldProblem("zh-CN", "obs.port", "must-be-port", "");
+  assert.ok(zh.indexOf("OBS 端口必须") === 0, zh);
+  // sementara Latin tetap memakai spasi
+  assert.ok(/^OBS port must/.test(I.fieldProblem("en", "obs.port", "must-be-port", "")));
 });
 
 test("normalizeLang menerima bentuk yang wajar dan menolak sisanya", () => {
