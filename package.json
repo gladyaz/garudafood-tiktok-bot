@@ -14,6 +14,7 @@
     "package:prepare": "node scripts/package/prepare-runtime.js",
     "package:win": "npm run package:prepare && electron-builder --win --x64",
     "package:win:unpacked": "npm run package:prepare && electron-builder --win --x64 --dir",
+    "package:icon": "node scripts/package/make-icon.js",
     "package:verify": "node scripts/package/verify-package.js",
     "package:browser-check": "node scripts/package/browser-sanity.js",
     "test:packaging": "node --test test/packaging.paths.test.js test/packaging.config.test.js test/packaging.runtime.test.js"
@@ -91,7 +92,8 @@
           ]
         }
       ],
-      "artifactName": "${productName} Setup ${version}.${ext}"
+      "artifactName": "${productName} Setup ${version}.${ext}",
+    "icon": "packaging/icon.ico"
     },
     "nsis": {
       "oneClick": true,
