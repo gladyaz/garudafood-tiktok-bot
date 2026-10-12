@@ -7,6 +7,7 @@ const path = require("path");
 const puppeteer = require("puppeteer");
 const { log } = require("./core");
 const { PROTOCOL_TIMEOUT_MS } = require("../autocomment/timeouts");
+const { resolveHeadless } = require("./browser-mode");
 
 const SETTLE_POLL_MS = 500;
 const SETTLE_STABLE_MS = 2_500;
@@ -35,14 +36,27 @@ function safeUrl(raw) {
   }
 }
 
-async function launchBrowser(config) {
+// `purpose` WAJIB: "login" (terlihat) atau "runtime" (headless secara bawaan).
+// Tidak ada default — lihat autopin/browser-mode.js untuk alasannya. Purpose
+// yang hilang atau tak dikenal melempar, dan itu memang yang diinginkan: lebih
+// baik satu jalur baru gagal keras di CI daripada diam-diam membuka jendela
+// Chrome di tengah LIVE customer.
+//
+// `env` disuntikkan supaya tes bisa menjalankan kedua cabang tanpa menyentuh
+// environment proses tes. Produksi memakai process.env.
+async function launchBrowser(config, purpose, { env = process.env } = {}) {
+  const headless = resolveHeadless(purpose, env);
   ensurePrivateDir(config.profileDir);
   let browser;
   try {
     browser = await puppeteer.launch({
-      headless: false,
+      headless,
       userDataDir: config.profileDir,
       executablePath: config.chromePath || undefined,
+      // TIDAK diubah saat headless. defaultViewport null berarti viewport
+      // mengikuti ukuran jendela, dan --window-size di bawah tetap berlaku di
+      // headless baru — jadi dimensi efektif 1440x960 yang sudah terbukti di
+      // v0.1.0 tetap sama persis. Selektor DOM tidak boleh melihat perbedaan.
       defaultViewport: null,
       // Bawaan Puppeteer 180 detik, dan itulah yang membuat satu panggilan
       // Runtime.callFunctionOn menggantung jauh melewati timeout bot pada

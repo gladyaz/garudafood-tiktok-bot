@@ -32,6 +32,7 @@
 // diam-diam.
 
 const { OWNER } = require("./profile-owner");
+const { PURPOSE } = require("../autopin/browser-mode");
 
 const STATE = Object.freeze({
   IDLE: "idle",
@@ -124,7 +125,10 @@ function createLoginFlow({
     }
 
     try {
-      browser = await launchBrowser(bcfg);
+      // TERLIHAT, selalu. Customer harus mengetik di halaman TikTok, dan
+      // AILIVE_BROWSER_HEADLESS tidak pernah berlaku di sini - lihat
+      // resolveHeadless() di autopin/browser-mode.js.
+      browser = await launchBrowser(bcfg, PURPOSE.LOGIN);
       page = await getPage(browser);
     } catch (err) {
       // launchBrowser melempar `profile-in-use` kalau Chrome lain masih memegang

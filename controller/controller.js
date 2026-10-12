@@ -32,6 +32,9 @@ const { memoThunk } = require("./lazy");
 const { createProfileOwnership, OWNER } = require("./profile-owner");
 // Jejak baris mentah anak. MURNI dan OPSIONAL — lihat controller/child-trace.js.
 const { createChildTracer, traceEnabled } = require("./child-trace");
+// Nama variabel saklar headless runtime. Kebijakannya sendiri ada di
+// autopin/browser-mode.js; di sini ia hanya diteruskan ke anak.
+const { HEADLESS_ENV } = require("../autopin/browser-mode");
 // Konsistensi mode automation. MURNI, dan dipakai BERSAMA oleh jalur start dan
 // status() supaya tombol UI dan penolakan server tidak bisa menyimpang.
 const { describeMode } = require("./automation-mode");
@@ -203,6 +206,17 @@ function createController({
   // tersunting. Satu sink, satu kebijakan rotasi, satu redactor — bukan salinan
   // kedua yang nanti menyimpang.
   const childTraceOn = traceEnabled(env);
+
+  // Saklar headless runtime, dibaca SEKALI di sini — bukan di dalam
+  // startAutomation().
+  //
+  // Di sana ada `const env = toEnv(...)` yang menaungi parameter `env` milik
+  // createController, jadi membacanya di dalam inisialisasi const itu jatuh ke
+  // temporal dead zone dan setiap START melempar "Cannot access 'env' before
+  // initialization". Terbukti: lima belas tes Controller merah sekaligus.
+  //
+  // null berarti tidak diset, dan yang tidak diset tidak diteruskan sama sekali.
+  const headlessOverride = typeof env[HEADLESS_ENV] === "string" ? env[HEADLESS_ENV] : null;
   const traceChildLine = createChildTracer({
     enabled: childTraceOn,
     write: (text) => console.log(text),
@@ -629,7 +643,22 @@ function createController({
     log("RUNTIME_CONFIG", { id: artifact.id, mappings: config.mappings.length });
 
     const env = toEnv(config, {
-      base: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+      base: {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        // Saklar headless runtime, DITERUSKAN DENGAN SENGAJA.
+        //
+        // Anak-anak tidak mewarisi environment Controller, dan itu aturan yang
+        // benar: nilai sisa tidak boleh mengubah perilaku bot tanpa terlihat.
+        // Tapi service AutoPIN adalah proses terpisah yang membuka browsernya
+        // sendiri, jadi tanpa baris ini `AILIVE_BROWSER_HEADLESS=false` akan
+        // membuat discovery terlihat sementara service tetap headless — yaitu
+        // setengah diagnosa, yang lebih buruk daripada tidak ada.
+        //
+        // Hanya diteruskan kalau memang DISET, supaya environment anak tidak
+        // tumbuh variabel kosong yang tidak berarti apa-apa.
+        ...(headlessOverride === null ? {} : { [HEADLESS_ENV]: headlessOverride }),
+      },
       // Profil, direktori debug, kunci bot, dan browser terbundel. Anak-anak
       // TIDAK mewarisi environment Controller (lihat process-manager.js), jadi
       // inilah satu-satunya jalan nilai-nilai itu sampai ke bot dan service.

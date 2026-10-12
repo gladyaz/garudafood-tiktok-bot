@@ -24,10 +24,22 @@ const build = pkg.build || {};
 
 // --- identitas ---------------------------------------------------------------
 
-test("appId, productName, dan versi pilot sesuai keputusan P5", () => {
+test("appId, productName, dan versi sesuai keputusan P5", () => {
   assert.equal(build.appId, "com.ailivehost.desktop");
   assert.equal(build.productName, "AI LIVE HOST");
-  assert.equal(pkg.version, "0.1.0");
+
+  // Versi TIDAK dipaku ke satu angka.
+  //
+  // Memaku "0.1.0" membuat tes ini merah pada setiap bump versi yang sah, dan
+  // tes yang merah karena alasan yang benar akan dilemahkan orang berikutnya.
+  // Yang benar-benar perlu dijaga: versinya semver yang sah, dan ia TIDAK boleh
+  // mundur ke bawah 0.1.0 — artefak pilot yang sudah divalidasi memakai angka
+  // itu, dan installer kedua dengan nama berkas yang sama adalah cara paling
+  // mudah membagikan build yang salah.
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/, "versi harus semver");
+  const [maj, min, pat] = pkg.version.split(".").map(Number);
+  const atLeast = maj > 0 || min > 1 || (min === 1 && pat >= 0);
+  assert.ok(atLeast, "versi tidak boleh mundur di bawah 0.1.0: " + pkg.version);
 });
 
 test("nama paket menentukan direktori instalasi, jadi ia harus nama PRODUK", () => {

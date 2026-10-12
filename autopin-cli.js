@@ -19,6 +19,7 @@ const { loadConfig } = require("./autopin/config");
 const {
   AutoPinError, launchBrowser, getPage, openConsole, saveScreenshot, closeBrowser,
 } = require("./autopin/browser");
+const { PURPOSE } = require("./autopin/browser-mode");
 const { inspectPage } = require("./autopin/inspect");
 const { collectProducts, readIdentity, pinProductByTitle, readPinState, diffSnapshots } = require("./autopin/products");
 
@@ -53,7 +54,8 @@ async function hasVisibleLoginControl(page) {
 
 // buka browser + LIVE console, jalankan fn(page, info), selalu tutup browser
 async function withConsole(config, fn) {
-  const browser = await launchBrowser(config);
+  // Perintah pemeriksaan: jalur runtime, headless secara bawaan.
+  const browser = await launchBrowser(config, PURPOSE.RUNTIME);
   try {
     const page = await getPage(browser);
     const info = await openConsole(page, config);
@@ -65,7 +67,8 @@ async function withConsole(config, fn) {
 }
 
 async function cmdLogin(config) {
-  const browser = await launchBrowser(config);
+  // Ini login manual, sama seperti tombol LOGIN TIKTOK: wajib terlihat.
+  const browser = await launchBrowser(config, PURPOSE.LOGIN);
   const page = await getPage(browser);
   try {
     await openConsole(page, config);

@@ -37,6 +37,8 @@
 // kali ada aksi pin (lihat autopin/VERIFICATION.md), jadi nomor sebagai
 // identitas adalah identitas yang berubah sendiri.
 
+const { PURPOSE } = require("../../autopin/browser-mode");
+
 const DEFAULT_TIMEOUT_MS = 45000;
 
 // Bentuk produk yang keluar ke Controller/UI. Sempit dengan sengaja: yang lain
@@ -104,7 +106,9 @@ function createTikTokDiscovery({
         // config.settings.profileDir — meneruskannya apa adanya membuat
         // profileDir undefined dan ensurePrivateDir() langsung melempar.
         const bcfg = toBrowserConfig(config);
-        browser = await launchBrowser(bcfg);
+        // Runtime: headless secara bawaan. Tidak ada mata manusia yang
+        // dibutuhkan untuk membaca status LIVE dan daftar produk.
+        browser = await launchBrowser(bcfg, PURPOSE.RUNTIME);
         const page = await getPage(browser);
         await openConsole(page, bcfg);
 

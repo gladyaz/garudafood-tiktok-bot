@@ -14,6 +14,7 @@ const express = require("express");
 const { log, checkIdentity, createSerialRunner, normalizeTitleKey, resolveProductForPin } = require("./core");
 const { loadConfig } = require("./config");
 const browserMod = require("./browser");
+const { PURPOSE } = require("./browser-mode");
 const productsMod = require("./products");
 const { createBrowserTransport, waitForComposerReady } = require("../autocomment/browser-transport");
 const { createSendOnce } = require("../autocomment/send-once");
@@ -143,7 +144,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
         /* abaikan: kita memang sedang membangun ulang */
       }
     }
-    browser = await d.launchBrowser(config);
+    // Runtime: headless secara bawaan. Pin, konfirmasi pin, dan tab chat
+    // AutoComment semuanya berjalan di browser ini.
+    browser = await d.launchBrowser(config, PURPOSE.RUNTIME);
     page = await d.getPage(browser);
 
     // Profil persisten bisa memulihkan beberapa tab. Tab latar di-throttle Chrome:
