@@ -717,7 +717,12 @@ function createController({
 
     const ps = pm.getProcessState();
     log("STARTED", { servicePid: ps.service.pid, botPid: ps.bot.pid });
-    return { ok: true, state: sm.state(), service: ps.service, bot: ps.bot };
+    // `preflight` ikut di jalur SUKSES juga, bukan hanya jalur gagal.
+    //
+    // Sejak P0-3 inilah SATU-SATUNYA sumber baris panel kesiapan: UI tidak lagi
+    // memanggil /api/preflight sendiri sebelum start. Tanpa field ini panel itu
+    // kosong setiap kali start berhasil.
+    return { ok: true, state: sm.state(), service: ps.service, bot: ps.bot, preflight: lastPreflight };
   }
 
   // --- stop -----------------------------------------------------------------

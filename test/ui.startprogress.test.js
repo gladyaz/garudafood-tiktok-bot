@@ -351,7 +351,12 @@ test("penanda tahap berada SEBELUM operasi yang diwakilinya", () => {
     ["tiktok", "/api/tiktok/status"],
     ["products", "/api/tiktok/products"],
     ["rules", "loadValidation()"],
-    ["preflight", "/api/preflight"],
+    // Sejak P0-3 tahap ini TIDAK lagi menandai POST /api/preflight milik UI -
+    // panggilan itu dibuang karena startAutomation() menjalankan preflight
+    // sendiri, sehingga seluruh delapan check dikerjakan dua kali per START.
+    // Tahapnya sekarang menandai awal /api/start, yang pekerjaan pertamanya
+    // memang preflight server. Lihat test/controller.preflightdedup.test.js.
+    ["preflight", "startWithProgress()"],
   ];
   for (const [stage, op] of PAIRS) {
     const marker = marks(stage);

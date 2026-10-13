@@ -1026,37 +1026,53 @@
           return loadValidation();
         })
         .then(function () {
+          // TIDAK ada POST /api/preflight di sini lagi.
+          //
+          // startAutomation() menjalankan preflight.run() SENDIRI sebelum
+          // menyalakan apa pun (controller/controller.js), jadi panggilan ini
+          // dulu mengerjakan seluruh 8 check DUA KALI per START - termasuk
+          // probeTikTok, yang membuka Chrome dan membaca dashboard produk.
+          // Terukur: ~10,9 detik pada satu aturan dengan profil hangat, 25,2
+          // detik pada lima aturan.
+          //
+          // Yang dibuang HANYA pemeriksaan penasihat. Gerbangnya tidak berubah:
+          // keputusan boleh-tidak tetap milik preflight server yang segar, dan
+          // sekarang ia bahkan dinilai dari keadaan yang lebih baru karena tidak
+          // ada lagi satu panggilan HTTP yang menyela antara periksa dan mulai.
+          // Tidak ada cache dan tidak ada hasil lama yang dipakai ulang.
           setStage("preflight");
-          return api("/api/preflight", { method: "POST" });
-        })
-        .then(function (r) {
-          state.preflight = r.body;
-          var rows = U.preflightRows(r.body, L());
-          renderDefinitionList(el.preflight, rows);
-          el.preflight.hidden = rows.length === 0;
-
-          if (!r.body || r.body.ok !== true) {
-            // Preflight merah: JANGAN panggil /api/start.
-            var failed = U.failedPreflight(r.body, L());
-            showBanner(
-              failed.length
-                ? T("ui.banner.notReady", {
-                    reasons: failed.map(function (f) { return f.label + " — " + f.value; }).join(" · "),
-                  })
-                : T("ui.banner.notReadyPlain"),
-              "attention"
-            );
-            return null;
-          }
           return startWithProgress();
         })
         .then(function (r) {
           if (!r) return null;
-          if (r.body && r.body.ok) {
+
+          // Baris kesiapan datang dari jawaban /api/start, yang membawa hasil
+          // preflight server di KEDUA jalur - sukses maupun gagal.
+          var body = r.body || null;
+          var pf = body && body.preflight ? body.preflight : null;
+          state.preflight = pf;
+          var rows = U.preflightRows(pf, L());
+          renderDefinitionList(el.preflight, rows);
+          el.preflight.hidden = rows.length === 0;
+
+          if (body && body.ok) {
             showBanner("", null);
             return null;
           }
-          showBanner(U.messageOf(L(), r.body, "err.controller-start-failed"), "error");
+
+          // Preflight merah punya kalimatnya sendiri: ia menyebut check mana yang
+          // belum siap, bukan hanya "gagal menyala".
+          var failed = U.failedPreflight(pf, L());
+          if (failed.length) {
+            showBanner(
+              T("ui.banner.notReady", {
+                reasons: failed.map(function (f) { return f.label + " — " + f.value; }).join(" · "),
+              }),
+              "attention"
+            );
+            return null;
+          }
+          showBanner(U.messageOf(L(), body, "err.controller-start-failed"), "error");
           return null;
         })
         .then(function () {
@@ -1098,9 +1114,17 @@
         function (r) {
           if (finished || !r || !r.body) return;
           var st = r.body;
-          // Bot hidup berarti service sudah sehat dan yang ditunggu sekarang
-          // adalah sambungan ke chat LIVE.
-          setStage(st.bot && st.bot.running ? "connecting" : "preparing");
+          // Sejak P0-3, /api/start MENCAKUP preflight server, jadi jendela ini
+          // melewati tiga fase nyata. Ketiganya dibaca dari keadaan yang server
+          // SUDAH laporkan; tidak ada satu pun yang ditebak di sini.
+          if (st.bot && st.bot.running) {
+            // Service sehat, bot hidup: yang ditunggu sambungan ke chat LIVE.
+            setStage("connecting");
+          } else if (st.automation === "PREFLIGHT") {
+            setStage("preflight");
+          } else {
+            setStage("preparing");
+          }
         },
         function () {
           /* satu pembacaan yang gagal bukan alasan mengubah tahap */

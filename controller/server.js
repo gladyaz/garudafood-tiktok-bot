@@ -223,23 +223,36 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
     );
   });
 
-  app.post("/api/preflight", loopbackOnly, async (_req, res) => {
-    const result = await controller.runPreflight();
-    // Setiap check yang merah membawa kalimatnya sendiri, supaya UI bisa
-    // menampilkan daftar kesiapan baris per baris — bukan satu pesan gabungan
-    // yang menyembunyikan mana yang sebenarnya belum siap.
+  // Setiap check yang merah membawa kalimatnya sendiri, supaya UI bisa
+  // menampilkan daftar kesiapan baris per baris — bukan satu pesan gabungan yang
+  // menyembunyikan mana yang sebenarnya belum siap.
+  //
+  // Dipakai DUA endpoint (/api/preflight dan /api/start), jadi bentuknya diputuskan
+  // di satu tempat. Menyalinnya ke endpoint kedua akan menyimpang pada perubahan
+  // berikutnya, dan yang menyimpang tidak akan yang kelihatan.
+  function enrichPreflight(result) {
+    if (!result || !result.checks) return result || null;
     const checks = {};
-    for (const [name, c] of Object.entries(result.checks || {})) {
+    for (const [name, c] of Object.entries(result.checks)) {
       checks[name] = c && c.ok === true ? c : withUserMessage(c, c && c.reason);
     }
-    res.json({ ok: result.ok, checks });
+    return { ok: result.ok, checks };
+  }
+
+  app.post("/api/preflight", loopbackOnly, async (_req, res) => {
+    const result = await controller.runPreflight();
+    res.json(enrichPreflight(result));
   });
 
   app.post("/api/start", loopbackOnly, async (_req, res) => {
     const r = await controller.startAutomation();
+    // Sejak P0-3 jawaban ini adalah SATU-SATUNYA sumber baris panel kesiapan:
+    // UI tidak lagi menjalankan preflight penasihat sendiri sebelum start.
+    // Bentuknya dibuat sama dengan /api/preflight lewat fungsi yang sama.
+    const body = r.preflight ? Object.assign({}, r, { preflight: enrichPreflight(r.preflight) }) : r;
     // 409 untuk penolakan yang benar (sudah jalan, preflight merah): itu bukan
     // kesalahan server, dan bukan sesuatu yang perlu dicoba ulang apa adanya.
-    res.status(r.ok ? 200 : 409).json(r);
+    res.status(r.ok ? 200 : 409).json(body);
   });
 
   app.post("/api/stop", loopbackOnly, async (_req, res) => {
