@@ -706,8 +706,8 @@ test("REGRESI: Refresh, Start, dan Stop tidak menulis ke label mana pun", () => 
 
 test("REGRESI: dua panggilan discovery TikTok TIDAK dijalankan bersamaan", () => {
   const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
-  const body = /function loadDiscovery\(\)[\s\S]*?\n  \}/.exec(app);
-  assert.ok(body, "loadDiscovery harus bisa ditemukan");
+  const body = /function loadDiscovery\([^)]*\)[\s\S]*?\n  \}/.exec(app);
+  assert.ok(body, "loadDiscovery tidak ditemukan - tanda tangannya berubah?");
 
   // Keduanya TIDAK boleh berada di dalam daftar yang sama-sama di-Promise.all.
   assert.ok(
@@ -731,7 +731,7 @@ test("REGRESI: discovery OBS tetap boleh paralel (sumber dayanya berbeda)", () =
   // OBS lewat WebSocket, bukan profil Chrome. Menyerialkannya hanya memperlambat
   // tanpa alasan.
   const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
-  const body = /function loadDiscovery\(\)[\s\S]*?\n  \}/.exec(app)[0];
+  const body = /function loadDiscovery\([^)]*\)[\s\S]*?\n  \}/.exec(app)[0];
   assert.match(body, /var jobs = \[guarded\(api\("\/api\/obs\/scenes"\)\)/);
   assert.match(body, /Promise\.all\(jobs\)/);
 });

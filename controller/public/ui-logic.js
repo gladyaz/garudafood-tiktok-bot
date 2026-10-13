@@ -351,7 +351,16 @@
     if (code && I18N.DICT[I18N.normalizeLang(lang)]["err." + code] !== undefined) {
       return I18N.fromServer(lang, code, server);
     }
-    if (server) return String(server);
+    // Kalimat server dipakai HANYA kalau ia memang ditulis untuk customer.
+    //
+    // translate() di controller/errors.js SELALU mengisi userMessage: kode yang
+    // ada di katalog mendapat kalimatnya sendiri, dan kode yang TIDAK ada
+    // mendapat satu kalimat generik berbahasa Inggris. Tanpa penjaga ini,
+    // kalimat generik itu selalu menang atas cabang di bawahnya — dan customer
+    // berbahasa Indonesia membaca bahasa Inggris semata-mata karena sebuah kode
+    // mesin belum sempat diterjemahkan. Terukur: 134 kode produksi berada di
+    // luar katalog, tujuh di antaranya bisa sampai ke layar.
+    if (server && !I18N.isServerGeneric(server)) return String(server);
     return tr(lang, fallbackKey);
   }
 
@@ -1218,12 +1227,63 @@
       default: break;
     }
 
+    // Rantai START masih berjalan, tapi server BELUM bertransisi.
+    //
+    // Letaknya SESUDAH switch dengan sengaja: PREFLIGHT dan STARTING sudah
+    // punya label sendiri yang lebih spesifik, dan tidak boleh ditimpa. Yang
+    // tersisa di sini adalah fase paling awal - server masih STOPPED sementara
+    // UI sudah membuka Chrome tiga kali - dan fase itulah yang paling lama.
+    //
+    // Tanpa cabang ini lampunya HIJAU "Siap dijalankan" selama fase itu,
+    // padahal MULAI BOT justru sedang mati. Hijau di lampu ini punya satu arti
+    // saja, dan artinya adalah tombolnya benar-benar bisa ditekan.
+    if (view && view.busy && startStageText(view.startStage, lang)) {
+      return { label: tr(lang, "ui.pill.checking"), tone: TONE.ATTENTION };
+    }
+
     var blockers = realBlockers(view, lang);
     // Abu-abu, bukan kuning. Belum-bisa-mulai adalah keadaan ISTIRAHAT yang
     // normal pada peluncuran pertama; kalau ia kuning, tidak ada warna yang
     // tersisa untuk "ada yang rusak".
     if (blockers.length) return { label: tr(lang, "ui.pill.blocked", { n: blockers.length }), tone: TONE.NEUTRAL };
     return { label: tr(lang, "ui.pill.ready"), tone: TONE.READY };
+  }
+
+  // Tahap MULAI BOT.
+  //
+  // Satu klik START bisa berjalan lebih dari satu menit (terukur 92 detik pada
+  // lima aturan dari keadaan dingin), dan sampai sekarang layar hanya berbunyi
+  // satu kalimat statis selama itu. Aplikasi yang terlihat membeku akan ditutup
+  // paksa — dan penutupan paksa adalah jalur yang meninggalkan .bot.lock basi
+  // dan Chrome yatim yang, sejak runtime headless, tidak punya jendela untuk
+  // ditutup customer.
+  //
+  // Daftar ini URUTAN SEBENARNYA dari onStart() di app.js. Setiap nama menandai
+  // satu operasi yang memang dijalankan; tidak ada tahap hiasan, tidak ada
+  // persentase, dan tidak ada perkiraan waktu selesai.
+  var START_STAGES = Object.freeze([
+    "saving",     // saveConfig(), hanya kalau ada perubahan
+    "obs",        // GET /api/obs/scenes
+    "tiktok",     // GET /api/tiktok/status
+    "products",   // GET /api/tiktok/products
+    "rules",      // POST /api/mappings/validate
+    "preflight",  // POST /api/preflight
+    "preparing",  // POST /api/start berjalan; service belum/baru menyala
+    "connecting", // status server melaporkan bot hidup, menunggu chat LIVE
+  ]);
+
+  function isStartStage(value) {
+    return START_STAGES.indexOf(value) !== -1;
+  }
+
+  // Kalimat untuk satu tahap, atau "" kalau namanya tidak dikenal.
+  //
+  // Mengembalikan "" dan BUKAN kalimat umum itu disengaja: tahap yang salah
+  // ketik harus hilang dari layar, bukan menampilkan sesuatu yang terlihat
+  // benar. Pemanggilnya jatuh ke kalimat "sedang bekerja" yang lama.
+  function startStageText(stage, lang) {
+    if (!isStartStage(stage)) return "";
+    return tr(lang, "ui.start." + stage);
   }
 
   // Kartu status: satu judul yang menjawab "apa yang sedang terjadi", dan satu
@@ -1237,6 +1297,22 @@
     }
     if (!status) {
       return { over: tr(lang, OVER), title: tr(lang, "ui.hero.checking.title"), note: "", tone: TONE.NEUTRAL };
+    }
+
+    // Tahap START menang selama rantainya masih berjalan.
+    //
+    // Harus di ATAS switch automation: begitu /api/start dipanggil, server
+    // bertransisi ke PREFLIGHT lalu STARTING, dan cabang-cabang itu akan
+    // menimpa tahap yang sedang dilaporkan dengan satu kata yang jauh lebih
+    // sedikit artinya bagi customer.
+    //
+    // Hanya saat busy, jadi tahap basi tidak bisa tertinggal di layar: begitu
+    // rantainya selesai atau gagal, app.js mengosongkannya dan busy pun turun.
+    if (view && view.busy) {
+      var staged = startStageText(view.startStage, lang);
+      if (staged) {
+        return { over: tr(lang, OVER), title: staged, note: tr(lang, "ui.start.note"), tone: TONE.ATTENTION };
+      }
     }
 
     var n = ruleCount(view);
@@ -1504,6 +1580,9 @@
     preflightRows: preflightRows,
     failedPreflight: failedPreflight,
     messageOf: messageOf,
+    START_STAGES: START_STAGES,
+    isStartStage: isStartStage,
+    startStageText: startStageText,
     ruleCount: ruleCount,
     realBlockers: realBlockers,
     tallyView: tallyView,

@@ -82,6 +82,9 @@
     tab: "rules",
     editing: null,
     confirmDelete: null,
+    // Tahap MULAI BOT yang sedang berjalan. null = tidak ada start berjalan.
+    // Nama-namanya milik ui-logic.js (START_STAGES); di sini hanya ditandai.
+    startStage: null,
   };
 
   var el = {};
@@ -202,6 +205,20 @@
     p.textContent = " " + T(bodyKey);
     node.appendChild(b);
     node.appendChild(p);
+  }
+
+  // Menandai tahap MULAI BOT, lalu MENGECAT ULANG seketika.
+  //
+  // Dipanggil tepat SEBELUM operasinya dimulai, tidak pernah sesudah: tahap yang
+  // dilaporkan setelah pekerjaannya selesai adalah tahap yang bohong tentang apa
+  // yang sedang terjadi sekarang.
+  //
+  // setStage(null) mengosongkannya. Itu WAJIB di jalur sukses MAUPUN gagal —
+  // "Menyiapkan automation…" yang tertinggal di layar sesudah start gagal lebih
+  // buruk daripada tidak ada tahap sama sekali.
+  function setStage(name) {
+    state.startStage = name || null;
+    renderControls();
   }
 
   // Chip hitungan di tab. Nol tidak ditampilkan sebagai "0": chipnya yang
@@ -843,8 +860,13 @@
 
   // Discovery MAHAL (membuka browser), jadi tidak pernah dipanggil dari polling.
   // Hanya saat muat pertama, saat Refresh ditekan, dan sekali sebelum Start.
-  function loadDiscovery() {
+  // `onStage` OPSIONAL. Tanpa itu perilakunya persis seperti sebelumnya, jadi
+  // Periksa ulang, Stop, dan simpan Pengaturan tidak berubah sama sekali —
+  // hanya MULAI BOT yang meneruskannya.
+  function loadDiscovery(onStage) {
+    var stage = typeof onStage === "function" ? onStage : function () {};
     var c = U.controlsFor(state, L());
+    stage("obs");
     var jobs = [guarded(api("/api/obs/scenes")).then(function (r) {
       if (!r) return;
       state.obs = r.body;
@@ -865,9 +887,11 @@
     // apakah START BOT boleh ditekan, jadi ia harus benar.
     return Promise.all(jobs).then(function () {
       if (!c.discoveryAllowed) return null;
+      stage("tiktok");
       return guarded(api("/api/tiktok/status"))
         .then(function (r) {
           if (r) state.tiktok = r.body;
+          stage("products");
           return guarded(api("/api/tiktok/products"));
         })
         .then(function (r) {
@@ -987,15 +1011,22 @@
 
       var chain = Promise.resolve();
       if (state.dirty) {
+        setStage("saving");
         chain = chain.then(saveConfig).then(function (r) {
           if (!r.ok) throw new Error("config-not-saved");
         });
       }
 
       return chain
-        .then(loadDiscovery)
-        .then(loadValidation)
         .then(function () {
+          return loadDiscovery(setStage);
+        })
+        .then(function () {
+          setStage("rules");
+          return loadValidation();
+        })
+        .then(function () {
+          setStage("preflight");
           return api("/api/preflight", { method: "POST" });
         })
         .then(function (r) {
@@ -1017,7 +1048,7 @@
             );
             return null;
           }
-          return api("/api/start", { method: "POST" });
+          return startWithProgress();
         })
         .then(function (r) {
           if (!r) return null;
@@ -1032,14 +1063,67 @@
           return loadStatus();
         })
         .then(function () {
+          setStage(null);
           renderAll();
         })
         .catch(function () {
           // Satu-satunya jalan ke sini adalah penyimpanan yang gagal; pesannya
-          // sudah tampil dari saveConfig().
+          // sudah tampil dari saveConfig(). Tahap DIKOSONGKAN lebih dulu, supaya
+          // layar tidak tertinggal di "Menyiapkan automation…" yang tidak
+          // berjalan lagi.
+          setStage(null);
           return loadStatus().then(renderAll);
         });
     }, null, "start");
+  }
+
+  // POST /api/start adalah SATU panggilan panjang: ia baru kembali saat server
+  // sudah RUNNING. Di dalamnya server menyalakan service, menunggunya sehat,
+  // menyalakan bot, lalu menunggu bot tersambung ke chat LIVE — dan itu bagian
+  // paling lama dari seluruh START.
+  //
+  // Supaya jendela itu tidak jadi satu kalimat diam, keadaan server DIBACA
+  // selama panggilan berlangsung dan tahapnya diturunkan dari sana. Ini bukan
+  // state machine kedua: yang dibaca adalah state machine yang SUDAH ada
+  // (STOPPED -> PREFLIGHT -> STARTING -> RUNNING) beserta bot.running yang
+  // memang sudah dilaporkan /api/status.
+  //
+  // Pembacaan ini TIDAK menulis ke state.status. Tahapnya saja yang bergerak,
+  // jadi tidak ada polling yang bisa menimpa kebenaran yang sedang ditampilkan.
+  function startWithProgress() {
+    var finished = false;
+    var timer = setInterval(function () {
+      if (finished) return;
+      api("/api/status").then(
+        function (r) {
+          if (finished || !r || !r.body) return;
+          var st = r.body;
+          // Bot hidup berarti service sudah sehat dan yang ditunggu sekarang
+          // adalah sambungan ke chat LIVE.
+          setStage(st.bot && st.bot.running ? "connecting" : "preparing");
+        },
+        function () {
+          /* satu pembacaan yang gagal bukan alasan mengubah tahap */
+        }
+      );
+    }, 1000);
+
+    function done() {
+      finished = true;
+      clearInterval(timer);
+    }
+
+    setStage("preparing");
+    return api("/api/start", { method: "POST" }).then(
+      function (r) {
+        done();
+        return r;
+      },
+      function (e) {
+        done();
+        throw e;
+      }
+    );
   }
 
   function onStop() {

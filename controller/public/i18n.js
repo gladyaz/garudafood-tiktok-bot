@@ -40,6 +40,23 @@
   var LANGS = ["id", "en", "zh-CN"];
   var DEFAULT_LANG = "id";
 
+  // Kalimat generik yang DISISIPKAN SERVER untuk kode yang tidak ada di
+  // katalognya (controller/errors.js FALLBACK).
+  //
+  // Ia harus dikenali, bukan dipercaya. translate() SELALU mengisi userMessage,
+  // jadi tanpa penanda ini kalimat Inggris ini akan selalu menang atas kamus —
+  // dan customer berbahasa Indonesia melihat bahasa Inggris hanya karena sebuah
+  // kode mesin belum sempat diterjemahkan.
+  //
+  // Nilainya dipaku ke nilai produksi oleh tes kontrak; menyalinnya tanpa tes
+  // adalah persis bentuk "fake mengarang bentuk" yang sudah pernah meloloskan
+  // tiga bug di repo ini.
+  var SERVER_GENERIC = "Something went wrong. Check the logs for details.";
+
+  function isServerGeneric(text) {
+    return typeof text === "string" && text.trim() === SERVER_GENERIC;
+  }
+
   /* =======================================================================
      BAHASA INDONESIA — sumber kebenaran.
      Dua bahasa lain diterjemahkan DARI sini, bukan sebaliknya.
@@ -136,7 +153,7 @@
     "err.tiktok-username-missing": "Username TikTok Anda belum diisi.",
     "err.timeout": "TikTok menjawab terlalu lambat.",
     "err.unexpected-page": "Halaman yang terbuka bukan halaman produk LIVE.",
-    "err.unknown": "Terjadi masalah yang tidak dikenali.",
+    "err.unknown": "Terjadi masalah. Coba lagi. Kalau masih berlanjut, lihat log dukungan.",
     "err.unknown-profile-owner": "Profil browser sedang dipakai, tapi tidak jelas oleh apa.",
     "err.version-missing": "Pengaturan ini tidak punya nomor versi.",
     "err.version-unsupported": "Pengaturan ini dibuat versi aplikasi yang berbeda.",
@@ -408,6 +425,15 @@
     "ui.state.degraded": "Berjalan, tapi ada bagian yang berhenti",
     "ui.state.error": "Bermasalah",
     "ui.state.preflight": "Memeriksa kesiapan…",
+    "ui.start.saving": "Menyimpan perubahan…",
+    "ui.start.note": "Jangan tutup aplikasi. Persiapan masih berjalan.",
+    "ui.start.obs": "Memeriksa OBS…",
+    "ui.start.tiktok": "Memeriksa TikTok LIVE Anda…",
+    "ui.start.products": "Membaca produk di etalase…",
+    "ui.start.rules": "Memeriksa aturan otomatis…",
+    "ui.start.preflight": "Memeriksa kesiapan…",
+    "ui.start.preparing": "Menyiapkan automation…",
+    "ui.start.connecting": "Menghubungkan bot ke chat LIVE…",
     "ui.state.running": "Berjalan",
     "ui.state.starting": "Menyalakan…",
     "ui.state.stopped": "Berhenti",
@@ -525,7 +551,7 @@
     "err.tiktok-username-missing": "Your TikTok username is empty.",
     "err.timeout": "TikTok answered too slowly.",
     "err.unexpected-page": "The page that opened is not the LIVE products page.",
-    "err.unknown": "An unknown problem came up.",
+    "err.unknown": "Something went wrong. Try again. If it keeps happening, check the support log.",
     "err.unknown-profile-owner": "The browser profile is in use, but it is not clear what is using it.",
     "err.version-missing": "These settings have no version number.",
     "err.version-unsupported": "These settings were made by a different version of the app.",
@@ -797,6 +823,15 @@
     "ui.state.degraded": "Running, but part of it has stopped",
     "ui.state.error": "Problem",
     "ui.state.preflight": "Checking readiness…",
+    "ui.start.saving": "Saving your changes…",
+    "ui.start.note": "Keep the app open. Preparation is still in progress.",
+    "ui.start.obs": "Checking OBS…",
+    "ui.start.tiktok": "Checking your TikTok LIVE…",
+    "ui.start.products": "Reading products in your showcase…",
+    "ui.start.rules": "Checking your automation rules…",
+    "ui.start.preflight": "Checking readiness…",
+    "ui.start.preparing": "Preparing the automation…",
+    "ui.start.connecting": "Connecting the bot to LIVE chat…",
     "ui.state.running": "Running",
     "ui.state.starting": "Starting…",
     "ui.state.stopped": "Stopped",
@@ -911,7 +946,7 @@
     "err.tiktok-username-missing": "还没填写你的 TikTok 用户名。",
     "err.timeout": "TikTok 响应太慢。",
     "err.unexpected-page": "打开的不是直播商品页。",
-    "err.unknown": "出现了无法识别的问题。",
+    "err.unknown": "出现问题。请重试。如果问题持续，请查看支持日志。",
     "err.unknown-profile-owner": "浏览器配置文件被占用，但不清楚是被什么占用。",
     "err.version-missing": "这份设置没有版本号。",
     "err.version-unsupported": "这份设置是另一个版本的应用创建的。",
@@ -1183,6 +1218,15 @@
     "ui.state.degraded": "运行中，但有部分已停止",
     "ui.state.error": "出错",
     "ui.state.preflight": "启动前检查…",
+    "ui.start.saving": "正在保存更改…",
+    "ui.start.note": "请保持应用打开，准备工作仍在进行中。",
+    "ui.start.obs": "正在检查 OBS…",
+    "ui.start.tiktok": "正在检查你的 TikTok 直播…",
+    "ui.start.products": "正在读取橱窗里的商品…",
+    "ui.start.rules": "正在检查自动化规则…",
+    "ui.start.preflight": "正在检查就绪状态…",
+    "ui.start.preparing": "正在准备自动化…",
+    "ui.start.connecting": "正在连接机器人到直播评论区…",
     "ui.state.running": "运行中",
     "ui.state.starting": "启动中…",
     "ui.state.stopped": "已停止",
@@ -1247,7 +1291,13 @@
     var key = "err." + String(code || "");
     var hit = DICT[L][key];
     if (hit !== undefined) return fill(hit, vars);
-    if (typeof serverMessage === "string" && serverMessage !== "") return serverMessage;
+    // Kalimat server dipakai hanya kalau ia memang DITULIS untuk customer.
+    // Kalimat generik milik server bukan itu: ia penanda "kode ini tidak ada di
+    // katalog", dan meneruskannya berarti mengirim bahasa Inggris ke layar yang
+    // sedang berbahasa lain.
+    if (typeof serverMessage === "string" && serverMessage !== "" && !isServerGeneric(serverMessage)) {
+      return serverMessage;
+    }
     hit = DICT[DEFAULT_LANG][key];
     if (hit !== undefined) return fill(hit, vars);
     return t(L, "err.unknown");
@@ -1309,7 +1359,13 @@
     var tail = DICT[L][key];
     if (tail === undefined) tail = DICT[DEFAULT_LANG][key];
     if (tail === undefined) {
-      if (typeof serverMessage === "string" && serverMessage !== "") return serverMessage;
+      // Kalimat server dipakai hanya kalau ia memang DITULIS untuk customer.
+      // Kalimat generik milik server bukan itu: ia penanda "kode ini tidak ada
+      // di katalog", dan meneruskannya berarti mengirim bahasa Inggris ke layar
+      // yang sedang berbahasa lain.
+      if (typeof serverMessage === "string" && serverMessage !== "" && !isServerGeneric(serverMessage)) {
+        return serverMessage;
+      }
       tail = t(L, "field.generic");
     }
     return fieldLabel(L, path) + t(L, "field.sep") + tail;
@@ -1364,6 +1420,8 @@
 
   return {
     LANGS: LANGS,
+    SERVER_GENERIC: SERVER_GENERIC,
+    isServerGeneric: isServerGeneric,
     DEFAULT_LANG: DEFAULT_LANG,
     DICT: DICT,
     normalizeLang: normalizeLang,
