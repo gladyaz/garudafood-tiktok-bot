@@ -205,6 +205,69 @@ test("fieldProblem juga tidak mempercayai kalimat generik server", () => {
   assert.equal(I.fieldProblem("id", "mappings[0].product", "kode-asing", specific), specific);
 });
 
+/* === pesan harus benar untuk runtime HEADLESS ============================ */
+
+// profile-busy-external keluar dari SATU tempat: controller/login.js:136, saat
+// Chrome menolak membuka direktori profil karena proses lain memegangnya.
+// Kepemilikan sudah bebas saat itu (acquire(OWNER.LOGIN) di atasnya berhasil),
+// jadi pemegangnya bukan login yang tercatat dan bukan run automation.
+//
+// Sejak runtime headless, pemegang yang paling mungkin adalah Chrome HEADLESS
+// yatim sisa penutupan paksa. Ia tidak punya jendela. Pesan lamanya menyuruh
+// customer menutup "jendela Chrome lain" - dan customer akan mencari sesuatu
+// yang tidak ada, lalu menutup paksa lagi, yang justru membuat yatim berikutnya.
+//
+// Jalan keluar yang benar sudah ditelusuri sampai ke kodenya:
+//   desktop/main.js window-all-closed / before-quit -> gracefulQuit()
+//   -> lifecycle.stop() -> sweep() -> cleanupOrphans()
+//   -> cleanupAutomationChrome(), yang mencocokkan Chrome lewat direktori
+//      profil (Chrome pribadi operator tidak pernah ikut).
+// Login TIDAK menyapu dan tidak ada sapuan saat boot, jadi menutup lalu membuka
+// aplikasi memang satu-satunya jalan keluar yang ada di tangan customer.
+test("profile-busy-external tidak menyuruh menutup jendela yang mungkin tidak ada", () => {
+  const WINDOW_WORDS = [
+    [/jendela/i, "menyebut jendela (id)"],
+    [/\bwindow\b/i, "menyebut jendela (en)"],
+    [/\u7a97\u53e3/, "menyebut jendela (zh)"],
+  ];
+
+  for (const lang of LANGS) {
+    const text = I.DICT[lang]["err.profile-busy-external"];
+    assert.ok(text && text.length > 0, lang + " kehilangan pesannya");
+    for (const pair of WINDOW_WORDS) {
+      assert.doesNotMatch(text, pair[0], lang + " " + pair[1] + ": " + JSON.stringify(text));
+    }
+  }
+
+  // Kalimat katalog server dibaca juga di log dukungan, jadi ia ikut dijaga.
+  assert.doesNotMatch(errors.CATALOG["profile-busy-external"], /\bwindow\b/i);
+});
+
+// Pesan yang hanya menghapus saran lama tanpa memberi gantinya membuat customer
+// terjebak: ia tahu ada yang salah dan tidak tahu harus apa.
+test("profile-busy-external menyebut jalan keluar yang benar-benar ada", () => {
+  const WAY_OUT = {
+    id: /tutup .*buka lagi/i,
+    en: /close .*open it again/i,
+    "zh-CN": /\u5173\u95ed[\s\S]*\u91cd\u65b0\u6253\u5f00/,
+  };
+  for (const lang of LANGS) {
+    const text = I.DICT[lang]["err.profile-busy-external"];
+    assert.match(text, WAY_OUT[lang], lang + " tidak memberi jalan keluar: " + JSON.stringify(text));
+  }
+});
+
+// Dua kode sebelahnya TETAP akurat dan TIDAK ikut diubah: jendela login memang
+// ada jendelanya, dan automation yang berjalan memang bisa dihentikan.
+test("profile-busy-login dan -automation tetap menyebut pemegangnya", () => {
+  for (const lang of LANGS) {
+    for (const code of ["profile-busy-login", "profile-busy-automation"]) {
+      const text = I.DICT[lang]["err." + code];
+      assert.ok(text && text.length > 0, lang + "/" + code);
+    }
+  }
+});
+
 /* === konten customer tidak diterjemahkan ================================= */
 
 test("konten customer TIDAK ikut berganti bahasa", () => {

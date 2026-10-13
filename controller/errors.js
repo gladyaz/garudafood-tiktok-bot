@@ -123,7 +123,7 @@ const CATALOG = Object.freeze({
   "login-unavailable-while-running": "Stop the automation first. You can only sign in while it is stopped.",
   "profile-busy-login": "A TikTok sign-in window is open. Finish or cancel it first.",
   "profile-busy-automation": "The automation is using the browser. Stop it first.",
-  "profile-busy-external": "Another Chrome window is using the browser profile. Close it and try again.",
+  "profile-busy-external": "The browser profile is still in use. Close AI LIVE HOST completely, then open it again.",
   "not-profile-owner": "The browser profile is in use by something else.",
   "unknown-profile-owner": "Internal problem while reserving the browser.",
   "discovery-unavailable-during-login": "Finish or cancel the TikTok sign-in first, then refresh.",
