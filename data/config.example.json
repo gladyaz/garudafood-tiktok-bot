@@ -19,7 +19,7 @@
     "autoCommentTimeoutMs": 8000,
     "sceneReplayCooldownMs": 120000,
     "expectedShop": "",
-    "forbiddenShops": ["garudafood"],
+    "forbiddenShops": [],
     "consoleUrl": "https://shop.tiktok.com/streamer/live/product/dashboard",
     "profileDir": ".autopin-profile",
     "debugDir": ".autopin-debug",

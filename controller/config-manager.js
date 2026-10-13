@@ -58,7 +58,17 @@ function defaultConfig() {
       autoCommentTimeoutMs: 8000,
       sceneReplayCooldownMs: 120000,
       expectedShop: "",
-      forbiddenShops: ["garudafood"],
+      // KOSONG untuk instalasi baru. Nama klien lama tidak ada artinya bagi
+      // customer lain, dan menaruhnya di sini membocorkannya ke setiap config
+      // yang baru dibuat.
+      //
+      // Tidak ada keselamatan yang hilang: penjaga utama adalah kecocokan
+      // PERSIS antara identitas yang terlihat dan expectedShop (autopin/core.js
+      // checkIdentity), dan expectedShop sendiri default kosong - yang
+      // memblokir semua klik dengan `expected-shop-not-configured` sampai
+      // customer mengisinya. Daftar ini lapis KEDUA: ia menangkap operator yang
+      // salah mengisi expectedShop dengan nama toko produksi.
+      forbiddenShops: [],
       consoleUrl: "https://shop.tiktok.com/streamer/live/product/dashboard",
       profileDir: ".autopin-profile",
       debugDir: ".autopin-debug",
