@@ -72,6 +72,23 @@ const DEFAULT_TIMEOUTS = Object.freeze({
 // RECONNECTED ikut dihitung karena artinya sama-sama "tersambung sekarang".
 const BOT_READY_TYPES = Object.freeze(["TIKTOK_CONNECTED", "TIKTOK_RECONNECTED"]);
 
+// Pemanasan browser service, dari baris yang service MEMANG sudah catat:
+//   [SERVICE_WARMED] ok=true       halaman produk terbuka  -> AutoPIN siap
+//   [SERVICE_CHAT_WARMED] ok=true  komposer chat siap      -> balasan siap
+//
+// Dibaca dari aliran baris anak yang SUDAH ada (onLine), bukan dari polling
+// baru dan bukan dari hitungan detik. `ok=false` berarti pemanasannya GAGAL,
+// dan itu bukan "belum siap" - itu "tidak akan siap".
+//
+// Bentuk barisnya diambil dari log produksi, bukan dari dugaan:
+//
+//   2026-10-08T11:30:41.256Z [CHILD:service] [AUTOPIN_SERVICE_WARMED] ok=true
+//
+// Awalan AUTOPIN_ ikut dicocoki OPSIONAL, dan polanya TIDAK berjangkar di awal
+// baris: stempel waktu atau penanda peran di depannya tidak boleh membuat
+// sinyal ini hilang.
+const WARM_LINE_RE = /\[(?:AUTOPIN_)?(SERVICE_WARMED|SERVICE_CHAT_WARMED)\]\s*ok=(true|false)/;
+
 function defaultFetchHealth({ port, timeoutMs = 2000 }) {
   const doFetch = globalThis.fetch;
   if (typeof doFetch !== "function") return Promise.resolve({ ok: false, reason: "fetch-unavailable" });
@@ -187,6 +204,20 @@ function createController({
   // Satu-satunya pihak yang tahu bot sudah tersambung adalah bot itu sendiri.
   let botReadyResolve = null;
   let botReady = false;
+  // null = belum ada kabar, true = siap, false = pemanasannya gagal.
+  let pinWarm = null;
+  let replyWarm = null;
+
+  // Satu baris, satu flag. Tidak ada efek lain, dan tidak ada yang menunggu
+  // di sini: pemanasan SENGAJA berada di luar jalur kritis START, dan pass
+  // ini tidak mengubah itu. Yang berubah hanya apa yang dikatakan layar.
+  function noteWarmLine(line) {
+    const m = WARM_LINE_RE.exec(String(line || ""));
+    if (!m) return;
+    const ok = m[2] === "true";
+    if (m[1] === "SERVICE_WARMED") pinWarm = ok;
+    else replyWarm = ok;
+  }
 
   function noteBotReady() {
     botReady = true;
@@ -250,6 +281,11 @@ function createController({
       // kesiapan bot.
       const ev = activity.ingest({ line, at: at ? new Date(at).toISOString() : undefined });
       if (ev && BOT_READY_TYPES.includes(ev.type)) noteBotReady();
+
+      // Pemanasan service dibaca dari baris MENTAH, bukan dari activity feed:
+      // SERVICE_WARMED bukan kejadian yang layak muncul di riwayat customer,
+      // jadi ia sengaja tidak ada di TAG_TYPES.
+      if (role === "service") noteWarmLine(line);
 
       // Dan HANYA kalau jejak diminta: baris mentah diteruskan ke stdout
       // Controller, dari mana aplikasi desktop menuliskannya ke log dukungan
@@ -535,6 +571,10 @@ function createController({
 
     stopRequested = false;
     botReady = false;
+    // Run baru berarti pemanasan baru. Tanpa ini, run kedua akan mengaku
+    // hangat sejak detik pertama karena kabar dari run SEBELUMNYA.
+    pinWarm = null;
+    replyWarm = null;
     lastError = null;
 
     // --- config -------------------------------------------------------------
@@ -791,6 +831,10 @@ function createController({
         ownership.forceRelease("stopped");
         configChangedWhileRunning = false;
         botReady = false;
+    // Run baru berarti pemanasan baru. Tanpa ini, run kedua akan mengaku
+    // hangat sejak detik pertama karena kabar dari run SEBELUMNYA.
+    pinWarm = null;
+    replyWarm = null;
         lastError = null;
         log("STOPPED", { chrome: result.chrome && result.chrome.killed ? result.chrome.killed : 0 });
         return { ok: true, state: sm.state(), code: "stopped" };
@@ -815,7 +859,14 @@ function createController({
     const out = {
       controller: "RUNNING", // proses Controller sendiri; ia yang menjawab ini.
       automation: state,
-      service: { running: ps.service.running, pid: ps.service.pid },
+      // `warm` adalah satu-satunya hal baru yang dibuka ke UI, dan isinya
+      // hanya dua boolean/null. Tidak ada internal browser yang ikut: bukan
+      // URL halaman, bukan jumlah tab, bukan port.
+      //
+      // null = belum ada kabar. Itu BUKAN false: "belum tahu" dan "gagal"
+      // harus bisa dibedakan, kalau tidak layar akan menyerah terlalu cepat
+      // atau mengaku siap terlalu cepat.
+      service: { running: ps.service.running, pid: ps.service.pid, warm: { pin: pinWarm, reply: replyWarm } },
       bot: { running: ps.bot.running, pid: ps.bot.pid },
       activity: { count: activity.size(), dropped: activity.dropped(), max: activity.max, lastId: activity.lastId() },
       // P2: metadata generasi config runtime. AMAN untuk ditampilkan — ia hash

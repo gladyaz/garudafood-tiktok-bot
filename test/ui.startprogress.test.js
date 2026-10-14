@@ -32,7 +32,15 @@ const APP = fs.readFileSync(path.join(__dirname, "..", "controller", "public", "
 
 // Status server minimal. Hanya field yang benar-benar dibaca heroView.
 const stopped = () => ({ automation: "STOPPED", config: { present: true } });
-const running = () => ({ automation: "RUNNING", config: { present: true } });
+// RUNNING yang sudah hangat sepenuhnya. Sejak pass kejujuran pemanasan,
+// RUNNING tanpa service.warm SENGAJA tidak berbunyi "siap sepenuhnya", jadi
+// helper ini harus menyebutkannya - kalau tidak, yang diuji di bawah bukan
+// lagi keadaan yang dimaksud.
+const running = () => ({
+  automation: "RUNNING",
+  config: { present: true },
+  service: { running: true, pid: 2, warm: { pin: true, reply: true } },
+});
 
 /* === bentuk daftar tahap ================================================= */
 

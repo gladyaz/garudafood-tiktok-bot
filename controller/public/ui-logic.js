@@ -64,6 +64,11 @@
   // Nada warna. Dipakai sebagai nama kelas CSS; artinya tetap di satu tempat.
   var TONE = { READY: "ready", RUNNING: "running", ATTENTION: "attention", ERROR: "error", NEUTRAL: "neutral" };
 
+  // Kehangatan service browser. UNKNOWN dan WARMING dibedakan supaya
+  // "belum ada kabar sama sekali" tidak terbaca sebagai "sedang berjalan
+  // mulus"; keduanya menghasilkan tampilan yang sama, tapi sebabnya beda.
+  var WARMTH = { UNKNOWN: "unknown", WARMING: "warming", READY: "ready", FAILED: "failed" };
+
   // ---------------------------------------------------------------------------
   // Saran PAX
   // ---------------------------------------------------------------------------
@@ -1292,6 +1297,38 @@
     return tr(lang, "ui.start." + stage);
   }
 
+  // Apakah service browser sudah cukup hangat untuk APA YANG RUN INI LAKUKAN.
+  //
+  // Sinyalnya nyata: service mencatat SERVICE_WARMED sesudah halaman produk
+  // terbuka, dan SERVICE_CHAT_WARMED sesudah komposer chat siap. Controller
+  // meneruskan keduanya sebagai status.service.warm.{pin,reply}.
+  //
+  // Tiga nilai, bukan dua:
+  //   null  belum ada kabar     -> sedang memanas
+  //   true  siap
+  //   false pemanasannya GAGAL  -> tidak akan siap, dan itu harus dikatakan
+  //
+  // `reply` hanya disyaratkan kalau run ini memang akan membalas chat. Run
+  // tanpa AutoComment yang menunggu komposer chat akan menunggu selamanya,
+  // dan layar akan mengaku "menyiapkan" untuk pekerjaan yang tidak ada.
+  //
+  // TIDAK ada detik berlalu di sini, tidak ada timeout, tidak ada perkiraan.
+  function serviceWarmth(status) {
+    var svc = (status && status.service) || null;
+    var warm = (svc && svc.warm) || null;
+    if (!warm) return WARMTH.UNKNOWN;
+
+    var mode = (status && status.mode) || null;
+    var needsReply = !!(mode && mode.reply);
+
+    if (warm.pin === false) return WARMTH.FAILED;
+    if (needsReply && warm.reply === false) return WARMTH.FAILED;
+
+    if (warm.pin !== true) return WARMTH.WARMING;
+    if (needsReply && warm.reply !== true) return WARMTH.WARMING;
+    return WARMTH.READY;
+  }
+
   // Kartu status: satu judul yang menjawab "apa yang sedang terjadi", dan satu
   // kalimat yang menjawab "lalu saya harus apa".
   function heroView(view, lang) {
@@ -1323,13 +1360,37 @@
 
     var n = ruleCount(view);
     switch (status.automation) {
-      case STATES.RUNNING:
+      case STATES.RUNNING: {
+        // RUNNING adalah otoritas runtime, dan ia TIDAK diubah di sini.
+        // Yang dipecah hanya apa yang dikatakan layar: bot bisa sudah
+        // tersambung ke chat sementara browser service masih membuka
+        // halaman produk dan komposernya. Mengaku "siap mendengarkan" di
+        // jendela itu adalah janji yang belum bisa ditepati - pemicu pertama
+        // bisa lambat atau terlewat, dan customer akan menyalahkan aturannya.
+        var warmth = serviceWarmth(status);
+        if (warmth === WARMTH.FAILED) {
+          return {
+            over: tr(lang, "ui.hero.over.running"),
+            title: tr(lang, "ui.hero.warmFailed.title"),
+            note: tr(lang, "ui.hero.warmFailed.body"),
+            tone: TONE.ERROR,
+          };
+        }
+        if (warmth !== WARMTH.READY) {
+          return {
+            over: tr(lang, "ui.hero.over.running"),
+            title: tr(lang, "ui.hero.warming.title"),
+            note: tr(lang, "ui.hero.warming.body"),
+            tone: TONE.ATTENTION,
+          };
+        }
         return {
           over: tr(lang, "ui.hero.over.running"),
           title: tr(lang, "ui.hero.running.title"),
           note: tr(lang, "ui.hero.running.body", { n: n }),
           tone: TONE.RUNNING,
         };
+      }
       case STATES.DEGRADED:
         return {
           over: tr(lang, "ui.hero.over.running"),
@@ -1589,6 +1650,8 @@
     START_STAGES: START_STAGES,
     isStartStage: isStartStage,
     startStageText: startStageText,
+    serviceWarmth: serviceWarmth,
+    WARMTH: WARMTH,
     ruleCount: ruleCount,
     realBlockers: realBlockers,
     tallyView: tallyView,

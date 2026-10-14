@@ -49,8 +49,20 @@ test("BERHENTI tapi semua syarat terpenuhi: kartunya mengajak mulai, bukan melap
   }
 });
 
+// Siap SEPENUHNYA, dan itu sekarang berarti service browser-nya sudah hangat.
+// RUNNING saja tidak lagi cukup untuk kalimat ini: bot bisa sudah tersambung
+// ke chat sementara halaman produk dan komposer masih dibuka.
 test("BERJALAN: kartunya menyebut bot mendengarkan, dan nadanya running", () => {
-  const h = U.heroView(clone({ status: { automation: "RUNNING", config: { present: true } } }), "id");
+  const h = U.heroView(
+    clone({
+      status: {
+        automation: "RUNNING",
+        config: { present: true },
+        service: { running: true, pid: 2, warm: { pin: true, reply: true } },
+      },
+    }),
+    "id"
+  );
   assert.equal(h.title, T("ui.hero.running.title"));
   assert.equal(h.over, T("ui.hero.over.running"));
   assert.equal(h.tone, "running");

@@ -104,7 +104,9 @@ test("GET /api/status saat STOPPED", async () => {
     assert.equal(status, 200);
     assert.equal(body.controller, "RUNNING");
     assert.equal(body.automation, "STOPPED");
-    assert.deepEqual(body.service, { running: false, pid: null });
+    // `warm` ikut sejak pass kejujuran pemanasan. null = belum ada kabar,
+    // yang memang keadaan yang benar saat belum pernah ada run.
+    assert.deepEqual(body.service, { running: false, pid: null, warm: { pin: null, reply: null } });
     assert.deepEqual(body.bot, { running: false, pid: null });
   });
 });
