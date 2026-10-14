@@ -101,7 +101,7 @@
       "save-btn", "save-state", "run-state", "run-note", "start-btn", "stop-btn",
       "preflight", "activity", "activity-empty", "activity-hint",
       "login-btn", "login-check-btn", "login-cancel-btn", "login-hint",
-      "settings-hint", "settings-state", "save-settings-btn",
+      "settings-hint", "settings-state", "save-settings-btn", "open-log-btn", "support-state",
       "set-tiktok-username", "set-expected-shop", "set-obs-host", "set-obs-port",
       "set-obs-password", "obs-password-label", "obs-password-change", "obs-password-cancel",
       "err-tiktokUsername", "err-expectedShop", "err-obsHost", "err-obsPort",
@@ -157,6 +157,19 @@
 
   function setText(node, text) {
     if (node) node.textContent = text === undefined || text === null ? "" : String(text);
+  }
+
+  // Niat "buka log dukungan". Nilainya HARUS sama dengan SUPPORT_LOG_URL di
+  // desktop/main.js; ada tes kontrak yang memakukan keduanya.
+  var SUPPORT_LOG_URL = "ailivehost://support-log";
+
+  // Apakah halaman ini berjalan di dalam shell desktop.
+  //
+  // Dipakai HANYA untuk memilih kalimat, bukan untuk keputusan keamanan apa
+  // pun - keamanannya diputuskan di proses utama, yang tidak mempercayai
+  // halaman ini sama sekali.
+  function inDesktopApp() {
+    return /electron/i.test(String(navigator.userAgent || ""));
   }
 
   function setTone(node, tone) {
@@ -1160,6 +1173,36 @@
     );
   }
 
+  // Buka log dukungan.
+  //
+  // Halaman ini TIDAK tahu letak log-nya, dan tidak boleh tahu. Yang dikirim
+  // hanya satu NIAT berupa URL sentinel tetap; aplikasi desktop yang
+  // meresolusi letaknya dari path miliknya sendiri. Lihat
+  // setWindowOpenHandler di desktop/main.js.
+  //
+  // Electron MENOLAK jendelanya (action: "deny") sesudah menangani niatnya,
+  // jadi nilai balik window.open() tidak membuktikan apa pun. Yang
+  // menentukan kalimat mana yang ditampilkan adalah apakah halaman ini
+  // berjalan di dalam aplikasi - di browser biasa skema ini tidak ada yang
+  // menanganinya, dan tombol yang diam tanpa penjelasan lebih buruk
+  // daripada tombol yang mengatakan kenapa ia diam.
+  function onOpenLog() {
+    var opened = null;
+    try {
+      opened = window.open(SUPPORT_LOG_URL);
+    } catch (e) {
+      opened = null;
+    }
+    if (opened && typeof opened.close === "function") {
+      try {
+        opened.close();
+      } catch (e) {
+        /* sudah ditolak Electron */
+      }
+    }
+    setText(el["support-state"], T(inDesktopApp() ? "ui.support.opening" : "ui.support.unavailable"));
+  }
+
   function onStop() {
     el["stop-btn"].disabled = true;
     return withBusy("", function () {
@@ -1357,6 +1400,7 @@
     el["start-btn"].addEventListener("click", onStart);
     el["stop-btn"].addEventListener("click", onStop);
     el["save-settings-btn"].addEventListener("click", onSaveSettings);
+    if (el["open-log-btn"]) el["open-log-btn"].addEventListener("click", onOpenLog);
     SETTINGS_FIELDS.forEach(function (pair) {
       var node = el[pair[1]];
       if (node) node.addEventListener("input", markSettingsDirty);

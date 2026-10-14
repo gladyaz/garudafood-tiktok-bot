@@ -33,7 +33,12 @@ const { spawnControllerChild, createReadinessProbe } = require("./controller-chi
 const { resolveNodePath } = require("./node-path");
 const { resolveBrowserPath } = require("./browser-path");
 const { resolveAppPaths, assertWritableOutsideCode, describePaths, PRODUCT_NAME } = require("./paths");
-const { createSupportLog } = require("./support-log");
+const path = require("node:path");
+const fs = require("node:fs");
+// BASENAME diambil dari support-log.js, bukan ditulis ulang: nama berkasnya
+// sudah punya satu pemilik, dan salinan kedua akan menyimpang begitu
+// rotasinya berubah.
+const { createSupportLog, BASENAME: SUPPORT_LOG_BASENAME } = require("./support-log");
 
 // Nama aplikasi disetel SEBELUM apa pun membaca userData.
 //
@@ -153,6 +158,49 @@ function buildLifecycle(nodeForChildren, browserForChildren) {
 
 // --- jendela ------------------------------------------------------------------
 
+// Niat "buka log dukungan" dari dashboard. Nilainya TETAP dan tidak membawa
+// informasi apa pun: ia penanda, bukan alamat.
+const SUPPORT_LOG_URL = "ailivehost://support-log";
+
+// Membuka log dukungan dengan penampil bawaan sistem.
+//
+// Letaknya DIRESOLUSI DI SINI, dari PATHS.logsDir milik desktop/paths.js. Tidak
+// ada path yang datang dari renderer, dan tidak ada yang dihitung ulang.
+//
+// Berkasnya dulu, foldernya sebagai cadangan: customer yang bertanya "apa yang
+// terjadi" lebih tertolong oleh isinya daripada oleh daftar berkas. Kalau
+// dua-duanya tidak ada, tidak ada yang dibuka dan tidak ada yang meledak -
+// aplikasi tidak boleh jatuh gara-gara log yang seharusnya menjelaskan
+// kejatuhan.
+async function openSupportLog() {
+  const dir = PATHS.logsDir;
+  const file = path.join(dir, SUPPORT_LOG_BASENAME);
+
+  let target = null;
+  try {
+    if (fs.existsSync(file)) target = file;
+    else if (fs.existsSync(dir)) target = dir;
+  } catch {
+    target = null;
+  }
+
+  if (!target) {
+    log("SUPPORT_LOG_UNAVAILABLE", {});
+    return;
+  }
+
+  try {
+    // openPath mengembalikan STRING KOSONG saat berhasil dan pesan kesalahan
+    // saat gagal - ia tidak melempar. Jadi hasilnya harus DIBACA, bukan
+    // diabaikan, kalau tidak kegagalannya tidak akan pernah terlihat.
+    const err = await shell.openPath(target);
+    if (err) log("SUPPORT_LOG_OPEN_FAILED", { detail: String(err).slice(0, 120) });
+    else log("SUPPORT_LOG_OPENED", { what: target === file ? "file" : "folder" });
+  } catch (e) {
+    log("SUPPORT_LOG_OPEN_FAILED", { detail: String((e && e.message) || "").slice(0, 120) });
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -189,6 +237,22 @@ function createWindow() {
   // Jendela baru tidak pernah dibuka di dalam aplikasi. Tautan luar (kalau suatu
   // saat ada) diserahkan ke browser customer, bukan dimuat di sini.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // Satu NIAT, bukan satu path.
+    //
+    // Dashboard tidak punya preload dan tidak punya IPC, dan itu disengaja.
+    // Jadi "buka log dukungan" dikirim sebagai satu URL sentinel TETAP yang
+    // tidak memuat informasi apa pun, dan proses INILAH yang meresolusi letak
+    // log-nya dari PATHS.logsDir. Renderer tidak pernah bisa menyebut berkas
+    // atau folder mana pun - kalau ia bisa, "buka log dukungan" berubah menjadi
+    // "buka apa saja di disk ini".
+    //
+    // Skema kustom, bukan http: di browser biasa, window.open() ke skema yang
+    // tidak dikenal tidak melakukan apa-apa. Jadi tombolnya diam kalau halaman
+    // ini dibuka di luar aplikasi, bukan membuka tab ke URL palsu.
+    if (url === SUPPORT_LOG_URL) {
+      openSupportLog();
+      return { action: "deny" };
+    }
     if (/^https?:\/\//i.test(url) && !url.startsWith(ALLOWED_ORIGIN)) {
       shell.openExternal(url).catch(() => {});
     }
