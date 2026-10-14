@@ -447,16 +447,17 @@ test("REGRESI: onStop merender SEBELUM loadDiscovery, bukan sesudahnya", () => {
   const iStatus = body.indexOf("loadStatus", iStop);
   const iRender = body.indexOf("renderAll()", iStatus);
   const iDiscovery = body.indexOf("loadDiscovery", iStatus);
-  const iValidation = body.indexOf("loadValidation", iDiscovery);
-  const iFinalRender = body.indexOf("renderAll()", iValidation);
+  const iFinalRender = body.indexOf("renderAll()", iDiscovery);
 
   assert.ok(iStop > -1, "onStop harus memanggil /api/stop");
   assert.ok(iStatus > iStop, "loadStatus sesudah /api/stop");
   // INI inti tes ini.
   assert.ok(iRender > iStatus, "render sesudah loadStatus: kebenaran dulu, baru dicat");
   assert.ok(iRender < iDiscovery, "render SEBELUM loadDiscovery — ini yang dulu salah");
-  assert.ok(iValidation > iDiscovery, "validasi sesudah discovery");
-  assert.ok(iFinalRender > iValidation, "render terakhir sesudah validasi");
+  // Dulu ada loadValidation terpisah di sini. Sejak P0-1 verdict pemetaan ikut
+  // di jawaban discovery yang sama, jadi panggilan kedua hanya akan membuka
+  // Chrome lagi untuk jawaban yang sudah dipegang.
+  assert.ok(iFinalRender > iDiscovery, "render terakhir sesudah discovery");
 });
 
 test("REGRESI: begitu status STOPPED terbaca, yang terlihat BUKAN lagi sedang tayang", async () => {

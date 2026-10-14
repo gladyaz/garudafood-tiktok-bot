@@ -211,6 +211,34 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
   // Validasi pemetaan terhadap scene OBS dan katalog LIVE yang ditemukan.
   // Endpoint terpisah karena UI memerlukannya saat customer menyunting mapping,
   // jauh sebelum ia menekan Start.
+  // Kesiapan sisi UI dari SATU pembacaan dashboard.
+  //
+  // Menggantikan tiga panggilan yang dulu berurutan di satu klik START. Yang
+  // dikirim hanya yang memang dibaca layar: identitas, status LIVE, jumlah dan
+  // daftar produk versi publik (toPublicProduct), dan verdict pemetaan. Tidak
+  // ada cookie, jalur profil, URL halaman internal, id sesi, DOM mentah, atau
+  // metadata debug yang ikut - bentuk tiap bagian sama persis dengan endpoint
+  // berdiri sendiri yang digantikannya.
+  //
+  // POST, bukan GET: ia membuka browser dan membaca halaman sungguhan, jadi ia
+  // tidak boleh pernah dianggap bisa di-cache oleh siapa pun.
+  app.post("/api/discovery", loopbackOnly, async (_req, res) => {
+    const r = await controller.discoverTikTokSnapshot();
+    res.json(
+      Object.assign({}, r, {
+        validation: r.validation
+          ? Object.assign({}, r.validation, {
+              // Satu kalimat per BARIS yang bermasalah - aturan yang sama dengan
+              // /api/mappings/validate.
+              mappings: Array.isArray(r.validation.mappings)
+                ? r.validation.mappings.map((row) => withUserMessage(row, row.reason))
+                : [],
+            })
+          : null,
+      })
+    );
+  });
+
   app.post("/api/mappings/validate", loopbackOnly, async (_req, res) => {
     const r = await controller.validateMappings();
     // Satu kalimat per BARIS yang bermasalah. Baris-nya penting: masalah yang

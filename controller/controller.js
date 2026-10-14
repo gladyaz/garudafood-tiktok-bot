@@ -28,6 +28,9 @@ const { createPreflight, firstFailure } = require("./preflight");
 const { createActivityFeed } = require("./activity");
 const { translate } = require("./errors");
 const { validateMappings } = require("./mapping-validator");
+// Proyeksi snapshot -> bentuk publik. Diimpor, BUKAN disalin: kontrak
+// status/products diputuskan di satu tempat bersama status() dan products().
+const { statusFromSnapshot, productsFromSnapshot } = require("./discovery/tiktok");
 const { memoThunk } = require("./lazy");
 const { createProfileOwnership, OWNER } = require("./profile-owner");
 // Jejak baris mentah anak. MURNI dan OPSIONAL — lihat controller/child-trace.js.
@@ -985,6 +988,107 @@ function createController({
     };
   }
 
+  // Satu pembacaan dashboard untuk SEMUA kesiapan sisi UI.
+  //
+  // Menggantikan tiga panggilan yang berurutan di satu klik START:
+  // /api/tiktok/status, /api/tiktok/products, dan /api/mappings/validate.
+  // Ketiganya membuka Chrome sendiri, membuka dashboard produk yang SAMA dengan
+  // profil yang SAMA, menjalankan readIdentity dan collectProducts yang SAMA,
+  // lalu hanya berbeda pada bentuk jawabannya. Terukur 10,34s + 10,10s + 12,16s
+  // pada satu aturan dengan profil hangat.
+  //
+  // Batas pakai-ulangnya STRUKTURAL, bukan kebijakan: snapshot-nya variabel
+  // lokal di dalam satu permintaan. Ia tidak pernah hidup lebih lama dari
+  // panggilan ini, jadi tidak ada TTL, tidak ada cache global, tidak ada yang
+  // bisa menyeberang ke START berikutnya, ke sesudah login, ke sesudah Stop,
+  // atau ke sesudah mapping/settings berubah. Tidak ada yang perlu dibatalkan
+  // karena tidak ada yang disimpan.
+  //
+  // Ini BUKAN jalur otoritatif. startAutomation() tetap menjalankan preflight
+  // dan pembacaan TikTok-nya SENDIRI yang segar tepat sebelum proses dinyalakan,
+  // dan snapshot ini TIDAK PERNAH diteruskan ke sana - kondisi LIVE, katalog,
+  // dan sesi bisa berubah di antara keduanya.
+  async function discoverTikTokSnapshot() {
+    const loaded = configManager.loadConfig();
+    if (!loaded.ok) {
+      const e = translate(loaded.code);
+      return { ok: false, tiktok: { ok: false, error: e }, products: { ok: false, error: e, count: 0, products: [] }, validation: null };
+    }
+    const config = loaded.config;
+
+    // Scene OBS lewat WebSocket, bukan profil Chrome, jadi ia tidak pernah
+    // berebut dengan pembacaan TikTok. Dibaca di sini supaya validasi pemetaan
+    // bisa memakai keduanya dari satu permintaan.
+    let obsScenes = null;
+    if (obsDiscovery) {
+      const r = await obsDiscovery.listScenes({
+        host: config.obs.host,
+        port: config.obs.port,
+        password: config.obs.password,
+      });
+      if (r.ok) obsScenes = r.scenes;
+    }
+
+    // Penjaga yang SAMA dengan discoverTikTokStatus/Products: saat automation
+    // berjalan atau login terbuka, profil Chrome sudah dipegang proses lain.
+    let tiktokView = null;
+    let productsView = null;
+    if (!tiktokDiscovery) {
+      const e = translate("discovery-not-configured");
+      tiktokView = { ok: false, error: e };
+      productsView = { ok: false, error: e, count: 0, products: [] };
+    } else if (profileBusy()) {
+      const e = translate(profileBusyReason());
+      tiktokView = { ok: false, error: e };
+      productsView = { ok: false, error: e, count: 0, products: [] };
+    } else {
+      const snap = await tiktokDiscovery.snapshot(config);
+      if (!snap.ok) {
+        // Halaman gagal dibaca: KEDUA konsumen melaporkan kegagalan yang sama,
+        // persis seperti saat masing-masing memanggilnya sendiri.
+        const e = translate(snap.reason || "tiktok-check-failed");
+        tiktokView = { ok: false, error: e };
+        productsView = { ok: false, error: e, count: 0, products: [] };
+      } else {
+        // Proyeksi terpisah: snapshot yang sama, kontrak yang BERBEDA.
+        const st = statusFromSnapshot(snap);
+        tiktokView = st.ok
+          ? st
+          : { ok: false, error: translate(st.identityReason || "tiktok-check-failed") };
+
+        const pr = productsFromSnapshot(snap);
+        productsView = pr.ok
+          ? { ok: true, count: pr.count, products: pr.products, livePinControlsAvailable: pr.livePinControlsAvailable }
+          : { ok: false, error: translate(pr.reason), count: pr.count || 0, products: [] };
+      }
+    }
+
+    // Validasi memakai katalog HANYA kalau katalognya memang sah - aturan yang
+    // sama dengan validateMappingsNow(). Katalog yang tidak ada diteruskan
+    // sebagai null, dan validator MELEWATI pemeriksaan produk alih-alih
+    // menganggapnya lolos.
+    const products = productsView && productsView.ok ? productsView.products : null;
+    const verdict = validateMappings({
+      mappings: config.mappings,
+      obsScenes,
+      products,
+      autoCommentEnabled: config.settings.autoCommentEnabled === true,
+      playableScenes: scenesOf(),
+    });
+
+    return {
+      ok: true,
+      tiktok: tiktokView,
+      products: productsView,
+      validation: {
+        ok: verdict.ok,
+        checked: { obsScenes: Array.isArray(obsScenes), products: Array.isArray(products) },
+        mappings: verdict.mappings,
+        ...(verdict.reason ? { error: translate(verdict.reason) } : {}),
+      },
+    };
+  }
+
   // --- P4: alur login TikTok ------------------------------------------------
   //
   // Controller tidak pernah melihat kredensial. Ia hanya membuka jendela dengan
@@ -1080,6 +1184,7 @@ function createController({
     discoverObsScenes,
     discoverTikTokStatus,
     discoverTikTokProducts,
+    discoverTikTokSnapshot,
     // P4
     startTikTokLogin,
     tikTokLoginStatus,

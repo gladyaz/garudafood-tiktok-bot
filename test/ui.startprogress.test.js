@@ -37,11 +37,14 @@ const running = () => ({ automation: "RUNNING", config: { present: true } });
 /* === bentuk daftar tahap ================================================= */
 
 test("START_STAGES adalah urutan NYATA onStart, beku dan tanpa duplikat", () => {
+  // Tahap `products` DIBUANG di P0-1. Pembacaan identitas/LIVE dan pembacaan
+  // katalog dulu dua kali membuka Chrome, jadi dua tahap memang dua pekerjaan.
+  // Sejak keduanya jadi SATU pembacaan, dua tahap akan berarti dua kalimat
+  // lambat untuk satu pekerjaan - kemajuan yang dikarang.
   assert.deepEqual(U.START_STAGES, [
     "saving",
     "obs",
     "tiktok",
-    "products",
     "rules",
     "preflight",
     "preparing",
@@ -135,8 +138,8 @@ test("REGRESI: teks kemajuan START tidak memuat perkiraan waktu atau persen", ()
 
 test("tahap tampil di kartu status, dengan nada perhatian", () => {
   for (const lang of LANGS) {
-    const hero = U.heroView({ status: stopped(), busy: true, startStage: "products" }, lang);
-    assert.equal(hero.title, U.startStageText("products", lang));
+    const hero = U.heroView({ status: stopped(), busy: true, startStage: "tiktok" }, lang);
+    assert.equal(hero.title, U.startStageText("tiktok", lang));
     assert.equal(hero.note, I.DICT[lang]["ui.start.note"]);
     assert.equal(hero.tone, "attention");
   }
@@ -348,9 +351,11 @@ test("setiap tahap benar-benar ditandai di app.js", () => {
 test("penanda tahap berada SEBELUM operasi yang diwakilinya", () => {
   const PAIRS = [
     ["obs", "/api/obs/scenes"],
-    ["tiktok", "/api/tiktok/status"],
-    ["products", "/api/tiktok/products"],
-    ["rules", "loadValidation()"],
+    // Satu pembacaan untuk identitas, status LIVE, katalog, DAN verdict
+    // pemetaan. Tahap `rules` ditandai saat verdict itu diterapkan, dan ia
+    // memang lewat cepat - tidak ada jeda yang ditambahkan.
+    ["tiktok", "/api/discovery"],
+    ["rules", "state.validation"],
     // Sejak P0-3 tahap ini TIDAK lagi menandai POST /api/preflight milik UI -
     // panggilan itu dibuang karena startAutomation() menjalankan preflight
     // sendiri, sehingga seluruh delapan check dikerjakan dua kali per START.

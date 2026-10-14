@@ -236,10 +236,11 @@ test("tahap preflight diturunkan dari automation === PREFLIGHT", () => {
   assert.ok(body.indexOf('setStage("connecting")') !== -1);
 });
 
-// Delapan tahap tetap utuh: optimasi ini tidak boleh menghapus satu pun kalimat
-// kemajuan yang sudah divalidasi di app terpasang.
-test("delapan tahap START masih lengkap di ketiga bahasa", () => {
-  assert.equal(U.START_STAGES.length, 8);
+// Tahapnya tetap utuh dan tetap berkalimat di ketiga bahasa. Jumlahnya turun
+// jadi tujuh di P0-1 karena `products` memang bukan pekerjaan terpisah lagi -
+// bukan karena ada kalimat kemajuan yang hilang begitu saja.
+test("tahap START masih lengkap di ketiga bahasa", () => {
+  assert.equal(U.START_STAGES.length, 7);
   for (const lang of I.LANGS) {
     for (const s of U.START_STAGES) {
       assert.ok(U.startStageText(s, lang).length > 0, lang + "/" + s);

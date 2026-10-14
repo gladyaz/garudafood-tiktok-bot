@@ -230,7 +230,93 @@ function createTikTokDiscovery({
     });
   }
 
-  return { status, products, toPublicProduct };
+  // Satu kunjungan halaman, bahan mentah untuk SEMUA konsumen penasihat.
+  //
+  // status() dan products() mengerjakan langkah yang PERSIS SAMA - withPage,
+  // readObserved, verifyIdentity, collectProducts(page, {}) - dan hanya berbeda
+  // pada bentuk yang mereka kembalikan. Dipanggil berurutan, keduanya membuka
+  // Chrome sendiri-sendiri dan membaca dashboard yang sama dua kali. Ditambah
+  // validasi pemetaan, satu START membaca halaman yang sama EMPAT kali.
+  //
+  // Fungsi ini membaca sekali dan menyerahkan bahannya. Ia TIDAK memutuskan
+  // bentuk jawaban siapa pun: itu tugas proyeksi di bawah, supaya kontrak
+  // masing-masing konsumen tetap miliknya sendiri.
+  //
+  // `ok: true` di sini berarti HALAMANNYA berhasil dibaca, bukan bahwa semuanya
+  // beres. Kegagalan membuka halaman (sesi kadaluarsa, dashboard tidak terbuka,
+  // timeout) tetap datang dari withPage dalam bentuk { ok: false, reason } yang
+  // sama persis seperti yang sudah dikembalikan status() dan products().
+  async function snapshot(config) {
+    return withPage(config, async (page) => {
+      const observed = await readObserved(page);
+      const idv = verifyIdentity(config, observed);
+      const snap = await collectProducts(page, {});
+      const raw = snap && Array.isArray(snap.products) ? snap.products : [];
+      const livePins = Number(snap && snap.livePinButtonsOnPage) || 0;
+
+      return {
+        ok: true,
+        identity: observed[0] || null,
+        identityOk: idv.ok,
+        identityReason: idv.ok ? null : idv.reason,
+        // "LIVE sedang berjalan" tidak bisa dijawab dari URL: dashboard tetap
+        // terbuka saat LIVE mati. Yang membedakan adalah ada tombol Pin per
+        // produk atau tidak - sama seperti di status() dan products().
+        live: livePins > 0,
+        rawCount: raw.length,
+        products: raw.map(toPublicProduct),
+      };
+    });
+  }
+
+  return { status, products, snapshot, toPublicProduct };
 }
 
-module.exports = { createTikTokDiscovery, toPublicProduct, DEFAULT_TIMEOUT_MS };
+// Proyeksi snapshot -> bentuk publik. SENGAJA dua fungsi terpisah.
+//
+// Snapshot yang sama TIDAK berarti jawaban yang sama. status() dan products()
+// punya semantik kegagalan yang BERBEDA, dan perbedaannya bukan kebetulan:
+//
+//   katalog kosong  -> status(): ok mengikuti identitas, productCount 0
+//                      products(): ok=false, reason no-live-products
+//   identitas gagal -> status(): ok=false TAPI tetap melaporkan apa yang terbaca
+//                      products(): ok=false dan katalog DITAHAN sepenuhnya,
+//                      karena katalog dari toko yang salah lebih berbahaya
+//                      daripada tidak ada katalog - ia terlihat benar.
+//
+// Menyatukan keduanya "karena sumbernya sama" akan mengubah apa yang dilaporkan
+// panel kesiapan saat etalase kosong. Itu risiko utama perubahan ini.
+function statusFromSnapshot(s) {
+  return {
+    ok: s.identityOk,
+    identity: s.identity,
+    identityOk: s.identityOk,
+    identityReason: s.identityReason,
+    live: s.live,
+    dashboardReady: true,
+    // Kesiapan komposer chat butuh membuka tab chat; di luar yang dibutuhkan
+    // untuk menyusun mapping. null = belum diperiksa, bukan "chat rusak".
+    chatReady: null,
+    productCount: s.rawCount,
+  };
+}
+
+function productsFromSnapshot(s) {
+  if (!s.identityOk) return { ok: false, reason: s.identityReason };
+  if (s.rawCount === 0) return { ok: false, reason: "no-live-products", count: 0, products: [] };
+  return {
+    ok: true,
+    count: s.products.length,
+    products: s.products,
+    livePinControlsAvailable: s.live,
+    identity: s.identity,
+  };
+}
+
+module.exports = {
+  createTikTokDiscovery,
+  toPublicProduct,
+  statusFromSnapshot,
+  productsFromSnapshot,
+  DEFAULT_TIMEOUT_MS,
+};

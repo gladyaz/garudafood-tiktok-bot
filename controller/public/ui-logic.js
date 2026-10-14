@@ -1264,9 +1264,15 @@
   var START_STAGES = Object.freeze([
     "saving",     // saveConfig(), hanya kalau ada perubahan
     "obs",        // GET /api/obs/scenes
-    "tiktok",     // GET /api/tiktok/status
-    "products",   // GET /api/tiktok/products
-    "rules",      // POST /api/mappings/validate
+    // SATU pembacaan dashboard: identitas, status LIVE, dan katalog produk
+    // sekaligus. Dulu dua tahap terpisah karena memang dua kali membuka Chrome.
+    // Sejak keduanya jadi satu operasi, dua tahap akan jadi dua kalimat lambat
+    // untuk satu pekerjaan - persis jenis kemajuan yang dikarang.
+    "tiktok",     // POST /api/discovery
+    // Verdict pemetaan ikut di jawaban yang sama, dihitung dari katalog yang
+    // baru dibaca. Tahap ini LEWAT CEPAT, dan itu jujur: tidak ada jeda yang
+    // ditambahkan supaya urutannya terlihat lebih panjang.
+    "rules",      // verdict dari POST /api/discovery
     "preflight",  // POST /api/preflight
     "preparing",  // POST /api/start berjalan; service belum/baru menyala
     "connecting", // status server melaporkan bot hidup, menunggu chat LIVE

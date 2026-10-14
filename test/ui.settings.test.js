@@ -704,27 +704,33 @@ test("REGRESI: Refresh, Start, dan Stop tidak menulis ke label mana pun", () => 
 // benar-benar dibaca. Angka itu sekarang ikut menentukan apakah START BOT boleh
 // ditekan, jadi ia harus benar.
 
-test("REGRESI: dua panggilan discovery TikTok TIDAK dijalankan bersamaan", () => {
+test("REGRESI: pembacaan TikTok di jalur discovery tidak pernah bersamaan", () => {
   const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
   const body = /function loadDiscovery\([^)]*\)[\s\S]*?\n  \}/.exec(app);
   assert.ok(body, "loadDiscovery tidak ditemukan - tanda tangannya berubah?");
 
-  // Keduanya TIDAK boleh berada di dalam daftar yang sama-sama di-Promise.all.
-  assert.ok(
-    !/jobs\.push\([\s\S]*?api\("\/api\/tiktok\/status"\)/.test(body[0]),
-    "status tidak boleh ikut jobs paralel"
-  );
-  assert.ok(
-    !/jobs\.push\([\s\S]*?api\("\/api\/tiktok\/products"\)/.test(body[0]),
-    "products tidak boleh ikut jobs paralel"
+  // Yang dijaga tes ini sejak P4.1.1: /api/tiktok/status dan
+  // /api/tiktok/products MASING-MASING membuka Chrome dengan profil yang SAMA,
+  // dan Chrome mengunci satu direktori profil ke satu proses. Dijalankan
+  // bersamaan, salah satunya kalah dengan `profile-in-use`. Terlihat di UI
+  // sungguhan pada 2026-10-08.
+  //
+  // Jaminan itu TIDAK hilang - ia sekarang dipenuhi secara STRUKTURAL. Keduanya
+  // membaca halaman yang sama dengan profil yang sama dan hanya berbeda bentuk
+  // jawabannya, jadi sejak P0-1 keduanya diganti SATU pembacaan. Tidak ada lagi
+  // dua panggilan yang bisa berebut, dan tidak ada urutan yang bisa terbalik.
+  const tiktokCalls = body[0].match(/api\("\/api\/(discovery|tiktok\/[a-z]+)"/g) || [];
+  assert.deepEqual(
+    tiktokCalls,
+    ['api("/api/discovery"'],
+    "jumlah pembacaan TikTok di loadDiscovery berubah: " + JSON.stringify(tiktokCalls)
   );
 
-  // Dan products diminta SESUDAH status selesai.
-  const iStatus = body[0].indexOf('api("/api/tiktok/status")');
-  const iProducts = body[0].indexOf('api("/api/tiktok/products")');
-  assert.ok(iStatus > -1 && iProducts > -1, "keduanya harus tetap dipanggil");
-  assert.ok(iStatus < iProducts, "status lebih dulu, lalu products");
-  assert.match(body[0], /\.then\(function \(r\) \{[\s\S]*?return guarded\(api\("\/api\/tiktok\/products"\)\);/);
+  // Dan ia TIDAK boleh ikut daftar yang di-Promise.all bersama OBS.
+  assert.ok(
+    !/jobs\.push\([\s\S]*?api\("\/api\/discovery"\)/.test(body[0]),
+    "pembacaan TikTok tidak boleh ikut jobs paralel"
+  );
 });
 
 test("REGRESI: discovery OBS tetap boleh paralel (sumber dayanya berbeda)", () => {

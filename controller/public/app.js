@@ -885,19 +885,34 @@
     // kesiapan melaporkan "Products: None detected" padahal katalognya tidak
     // pernah benar-benar dibaca. Angka yang salah itu sekarang ikut menentukan
     // apakah START BOT boleh ditekan, jadi ia harus benar.
+    // SATU panggilan, satu pembacaan dashboard.
+    //
+    // Dulu di sini ada /api/tiktok/status lalu /api/tiktok/products, DISERIALKAN
+    // karena keduanya membuka profil Chrome yang sama. Keduanya tetap tidak
+    // boleh paralel - dan sekarang pertanyaannya tidak muncul lagi, karena yang
+    // tersisa cuma satu pembacaan. Validasi pemetaan ikut di jawaban yang sama,
+    // dihitung server dari katalog yang baru saja dibaca.
+    //
+    // Kedua endpoint lama TETAP ADA dan tidak berubah perilakunya; ia hanya
+    // tidak lagi dipakai jalur ini.
     return Promise.all(jobs).then(function () {
       if (!c.discoveryAllowed) return null;
       stage("tiktok");
-      return guarded(api("/api/tiktok/status"))
-        .then(function (r) {
-          if (r) state.tiktok = r.body;
-          stage("products");
-          return guarded(api("/api/tiktok/products"));
-        })
-        .then(function (r) {
-          if (!r) return;
-          state.products = r.body && Array.isArray(r.body.products) ? r.body.products : [];
-        });
+      return guarded(api("/api/discovery", { method: "POST" })).then(function (r) {
+        if (!r) return;
+        var b = r.body || {};
+        if (b.tiktok) state.tiktok = b.tiktok;
+        state.products = b.products && Array.isArray(b.products.products) ? b.products.products : [];
+        // Verdict pemetaan sudah ikut. Tahapnya ditandai di sini, dan ia memang
+        // lewat cepat: pekerjaannya sudah dikerjakan server dari katalog yang
+        // sama. Tidak ada jeda yang ditambahkan supaya urutannya terlihat lebih
+        // panjang - kemajuan yang diperlambat untuk penampilan adalah kebohongan
+        // yang sama dengan persentase palsu.
+        if (b.validation) {
+          stage("rules");
+          state.validation = b.validation;
+        }
+      });
     });
   }
 
@@ -990,7 +1005,6 @@
     return withBusy("", function () {
       return loadDiscovery()
         .then(loadStatus)
-        .then(loadValidation)
         .then(function () {
           renderAll();
         });
@@ -1020,10 +1034,6 @@
       return chain
         .then(function () {
           return loadDiscovery(setStage);
-        })
-        .then(function () {
-          setStage("rules");
-          return loadValidation();
         })
         .then(function () {
           // TIDAK ada POST /api/preflight di sini lagi.
@@ -1179,7 +1189,6 @@
         // tepat untuk mengisinya kembali. Lambat, dan boleh lambat: layar sudah
         // jujur sejak baris di atas.
         .then(loadDiscovery)
-        .then(loadValidation)
         .then(function () {
           renderAll();
         });
@@ -1240,7 +1249,6 @@
         // menjawab, dan LOGIN TIKTOK boleh dipakai.
         return loadStatus()
           .then(loadDiscovery)
-          .then(loadValidation)
           .then(function () {
             renderAll();
             return { ok: true };
@@ -1302,7 +1310,6 @@
         .then(loadStatus)
         // Login yang berhasil melepas profil, jadi katalog produk bisa dibaca lagi.
         .then(loadDiscovery)
-        .then(loadValidation)
         .then(renderAll);
     }, null, "loginCheck");
   }
@@ -1434,7 +1441,6 @@
     loadStatus()
       .then(loadConfig)
       .then(loadDiscovery)
-      .then(loadValidation)
       .then(loadActivity)
       .then(function () {
         renderAll();
