@@ -148,6 +148,44 @@
             <div id="mappings" class="rules"></div>
             <p id="mappings-empty" class="empty" hidden></p>
 
+            <!-- Interaksi saat sepi. Satu bagian di dalam panel aturan, bukan
+                 tab baru: ia bagian dari "apa yang dilakukan bot saat LIVE",
+                 dan memisahkannya ke tab sendiri hanya menyembunyikannya. -->
+            <div class="group idle-group">
+              <div class="group-head">
+                <h4 data-t="ui.idle.title"></h4>
+                <p class="muted small" data-t="ui.idle.help"></p>
+              </div>
+
+              <label class="toggle-row" for="idle-enabled">
+                <span>
+                  <span class="toggle-name" data-t="ui.idle.toggle"></span>
+                  <span class="note" id="idle-cooldown-note"></span>
+                </span>
+                <input id="idle-enabled" type="checkbox" class="tgl" />
+              </label>
+
+              <div class="field">
+                <label data-t="ui.idle.after"></label>
+                <div class="idle-after">
+                  <input id="idle-after" type="number" min="5" max="3600" step="1" />
+                  <span class="muted small" data-t="ui.idle.afterUnit"></span>
+                </div>
+                <div class="field-error" id="idle-after-error" hidden></div>
+              </div>
+
+              <div class="field wide">
+                <label data-t="ui.idle.scenes"></label>
+                <div id="idle-items" class="idle-items"></div>
+                <p id="idle-empty" class="empty" hidden></p>
+                <div class="field-error" id="idle-items-error" hidden></div>
+              </div>
+
+              <div class="panel-foot idle-foot">
+                <button id="add-idle-btn" type="button" class="btn btn-sm" data-t="ui.idle.add"></button>
+              </div>
+            </div>
+
             <div class="panel-foot">
               <button id="add-mapping-btn" type="button" class="btn" data-t="ui.btn.addRule"></button>
               <button id="save-btn" type="button" class="btn btn-accent" data-t="ui.btn.save"></button>

@@ -103,6 +103,11 @@ const CATALOG = Object.freeze({
   "reply-required-when-autocomment-enabled": "This scene needs a reply, because automatic replies are turned on.",
   "mapping-validation-failed": "Some of your scene mappings need fixing.",
 
+  // --- v0.2.0: interaksi saat sepi ---
+  "idle-no-items": "Idle engagement is on, but no scenes are set up for it.",
+  "idle-scene-conflicts-with-rule": "This scene is already used by an automation rule.",
+  "duplicate-scene": "This scene is listed more than once.",
+
   // --- v0.2.0: aksi per-aturan ---
   // Setiap kalimat di sini menyebut AKSI yang menyala, bukan field yang kosong.
   // Yang perlu customer tahu adalah pilihan mana yang belum lengkap, bukan nama
@@ -195,6 +200,8 @@ const FIELD_PROBLEMS = Object.freeze({
   "port-conflicts-with-obs": "cannot be the same as the OBS port",
   "product-missing": "needs a product, or null if this scene pins nothing",
   "no-actions-enabled": "needs at least one action turned on",
+  "idle-after-out-of-range": "must be between 5 seconds and 1 hour",
+  "idle-scene-conflicts-with-rule": "is already used by an automation rule",
 });
 
 function translateFieldErrors(errors = []) {

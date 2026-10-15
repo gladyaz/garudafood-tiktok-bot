@@ -629,7 +629,12 @@ test("kesalahan dicocokkan ke baris lewat INDEKS, bukan nama scene", () => {
   };
   const issues = U.mappingIssues(validation, 2);
   assert.equal(issues[0], null);
-  assert.equal(issues[1].message, "is mapped more than once");
+  // Yang diuji di sini adalah PENCOCOKAN BARIS, bukan asal kalimatnya. Sejak
+  // v0.2.0 `duplicate-scene` punya kalimatnya sendiri di kamus (ia dipakai juga
+  // oleh baris interaksi saat sepi), jadi kamus yang menang atas kalimat server
+  // — urutan jatuh yang memang dirancang di messageOf(). Kalimat server untuk
+  // kode yang BELUM diterjemahkan tetap diuji oleh dua tes di bawah.
+  assert.equal(issues[1].message, T("err.duplicate-scene"));
   assert.equal(issues[1].reason, "duplicate-scene");
 });
 

@@ -49,6 +49,8 @@ const crypto = require("node:crypto");
 // artefak. Anak yang membacanya tidak perlu tahu aturan bawaan versi mana pun:
 // yang tertulis di berkas adalah yang berlaku. Lihat runtime/rule-actions.js.
 const { resolveActions, ACTION_NAMES } = require("./rule-actions");
+// Interaksi saat sepi. DISELESAIKAN sekali di sini, lalu ditulis apa adanya.
+const { resolveIdle } = require("./idle");
 
 const RUNTIME_CONFIG_VERSION = 1;
 
@@ -77,12 +79,17 @@ function computeRuntimeConfigId(payload) {
       // artefak yang mengerjakan hal yang sama adalah satu generasi yang sama.
       actions: resolveActions(m),
     })),
+    // Interaksi saat sepi ikut dalam hash: ia mengubah apa yang DIKERJAKAN
+    // artefak ini. Tanpa ini, menyalakan interaksi menghasilkan id generasi yang
+    // sama dengan sebelumnya, dan id generasi adalah satu-satunya bukti bahwa
+    // bot dan service membaca pemetaan yang sama.
+    idle: resolveIdle(payload.idle),
   });
   return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
 }
 
 // Bentuk artefak. Sengaja sempit: ia bukan tempat menumpuk pengaturan.
-function buildRuntimeConfig({ mappings = [], configVersion = null, createdAt = null } = {}) {
+function buildRuntimeConfig({ mappings = [], idle = null, configVersion = null, createdAt = null } = {}) {
   const payload = {
     version: RUNTIME_CONFIG_VERSION,
     // Versi config CUSTOMER yang menghasilkan artefak ini, untuk jejak audit.
@@ -102,6 +109,7 @@ function buildRuntimeConfig({ mappings = [], configVersion = null, createdAt = n
       // adanya, jadi anak tidak pernah perlu menerka bawaan.
       actions: resolveActions(m),
     })),
+    idle: resolveIdle(idle),
   };
   payload.id = computeRuntimeConfigId(payload);
   return payload;
@@ -134,6 +142,23 @@ function validateRuntimeConfig(raw) {
       return { ok: false, reason: "product-invalid" };
     }
     if (m.reply !== null && typeof m.reply !== "string") return { ok: false, reason: "reply-invalid" };
+  }
+
+  // --- idle ---
+  // Bentuknya SELALU ada di artefak (buildRuntimeConfig menyelesaikannya), jadi
+  // yang hilang di sini bukan "artefak lama" tapi artefak yang rusak.
+  if (!raw.idle || typeof raw.idle !== "object" || Array.isArray(raw.idle)) {
+    return { ok: false, reason: "idle-invalid" };
+  }
+  if (typeof raw.idle.enabled !== "boolean") return { ok: false, reason: "idle-invalid" };
+  if (!Number.isInteger(raw.idle.afterSeconds) || raw.idle.afterSeconds <= 0) {
+    return { ok: false, reason: "idle-invalid" };
+  }
+  if (!Array.isArray(raw.idle.items)) return { ok: false, reason: "idle-invalid" };
+  for (const it of raw.idle.items) {
+    if (!it || typeof it !== "object") return { ok: false, reason: "idle-invalid" };
+    if (typeof it.scene !== "string" || it.scene.trim() === "") return { ok: false, reason: "idle-invalid" };
+    if (it.reply !== null && typeof it.reply !== "string") return { ok: false, reason: "idle-invalid" };
   }
 
   // Hash harus cocok dengan isinya. Berkas yang disunting tangan sesudah dibuat

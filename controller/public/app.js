@@ -68,6 +68,11 @@
     settingsDirty: false,
     changingPassword: false, // customer sedang mengganti password OBS
     rows: [], // baris formulir yang sedang disunting
+    // Interaksi saat sepi. `idleForm` adalah bentuk FORMULIR (balasan sebagai
+    // string kosong, bukan null); `idleItems` adalah bentuk CONFIG yang dipakai
+    // kartu "sedang tayang" untuk mengenali scene interaksi.
+    idleForm: null,
+    idleItems: [],
     scenes: [], // dari /api/obs/scenes
     products: [], // dari /api/tiktok/products
     obs: null,
@@ -101,6 +106,8 @@
     [
       "automation-pill", "refresh-btn", "banner", "readiness", "readiness-hint",
       "setup", "mappings", "mappings-empty", "mapping-hint", "add-mapping-btn",
+      "idle-enabled", "idle-after", "idle-after-error", "idle-items", "idle-empty",
+      "idle-items-error", "idle-cooldown-note", "add-idle-btn",
       "save-btn", "save-state", "run-state", "run-note", "start-btn", "stop-btn",
       "preflight", "activity", "activity-empty", "activity-hint",
       "login-btn", "login-check-btn", "login-cancel-btn", "login-hint",
@@ -160,6 +167,15 @@
 
   function setText(node, text) {
     if (node) node.textContent = text === undefined || text === null ? "" : String(text);
+  }
+
+  // Pesan kesalahan per field: tampil HANYA kalau ada isinya. Bentuknya sama
+  // dengan yang dipakai Settings (lihat renderSettings), jadi tidak ada dua cara
+  // berbeda menampilkan hal yang sama.
+  function setError(node, message) {
+    if (!node) return;
+    node.hidden = !message;
+    setText(node, message || "");
   }
 
   // Niat "buka log dukungan". Nilainya HARUS sama dengan SUPPORT_LOG_URL di
@@ -571,6 +587,100 @@
     return grid;
   }
 
+  // --- interaksi saat sepi --------------------------------------------------
+
+  // SEMUA keputusan datang dari U.idleView(); di sini hanya pemasangan ke DOM.
+  function renderIdle() {
+    var lang = L();
+    var v = U.idleView(state, lang);
+    var issues = U.idleIssues(state.validation, v.items.length, lang);
+
+    // disabled DITULIS ULANG setiap render, tidak hanya saat berubah. Pelajaran
+    // Settings: field yang hanya ditulis saat berubah akan mati PERMANEN begitu
+    // satu render kebetulan terjadi selagi tombolnya sibuk.
+    el["idle-enabled"].checked = v.enabled;
+    el["idle-enabled"].disabled = v.toggleDisabled;
+    setText(el["idle-cooldown-note"], v.cooldownNote);
+
+    el["idle-after"].value = String(v.afterSeconds);
+    el["idle-after"].disabled = v.afterDisabled;
+    setError(el["idle-after-error"], v.afterError);
+
+    el["add-idle-btn"].disabled = v.addDisabled;
+    el["idle-empty"].hidden = v.emptyText === "";
+    setText(el["idle-empty"], v.emptyText);
+    setError(el["idle-items-error"], v.itemsError);
+
+    el["idle-items"].textContent = "";
+    var sceneOpts = U.sceneOptions(state.scenes, { playableScenes: null }, lang);
+
+    v.items.forEach(function (item, index) {
+      var row = document.createElement("div");
+      row.className = "idle-item" + (issues[index] ? " has-error" : "");
+
+      var n = document.createElement("div");
+      n.className = "rule-n";
+      n.textContent = String(index + 1);
+      row.appendChild(n);
+
+      // --- scene ---
+      var sel = document.createElement("select");
+      sel.disabled = v.itemsDisabled;
+      sel.appendChild(option("", state.scenes.length ? T("ui.rule.f.scenePick") : T("ui.rule.f.noScenes")));
+      sceneOpts.forEach(function (o) {
+        sel.appendChild(option(o.value, o.supported ? o.label : o.label + " (" + o.note + ")"));
+      });
+      // Scene tersimpan yang tidak ada di daftar discovery tetap tampil, supaya
+      // nilainya tidak hilang diam-diam dari formulir.
+      if (item.scene && !state.scenes.some(function (sc) { return sc === item.scene; })) {
+        sel.appendChild(option(item.scene, T("ui.rule.f.sceneMissing", { scene: item.scene })));
+      }
+      sel.value = item.scene || "";
+      sel.addEventListener("change", function () {
+        item.scene = sel.value;
+        markDirty();
+        renderIdle();
+      });
+      row.appendChild(field(T("ui.idle.scene"), sel));
+
+      // --- balasan (opsional) ---
+      // TIDAK ada pemilih produk di bagian ini, dan itu disengaja: interaksi
+      // saat sepi tidak pernah mem-pin apa pun.
+      var rep = document.createElement("input");
+      rep.type = "text";
+      rep.disabled = v.itemsDisabled;
+      rep.maxLength = U.MAX_REPLY_LENGTH;
+      rep.value = item.reply || "";
+      rep.addEventListener("input", function () {
+        item.reply = rep.value;
+        markDirty();
+      });
+      var repField = field(T("ui.idle.replyOptional"), rep);
+      repField.className = "field wide";
+      row.appendChild(repField);
+
+      if (issues[index]) {
+        var err = document.createElement("p");
+        err.className = "rule-error";
+        err.textContent = issues[index].message;
+        row.appendChild(err);
+      }
+
+      var del = document.createElement("div");
+      del.className = "rule-actions";
+      del.appendChild(
+        button(T("ui.btn.deleteRule"), "btn btn-sm", function () {
+          state.idleForm.items.splice(index, 1);
+          markDirty();
+          renderIdle();
+        }, v.itemsDisabled)
+      );
+      row.appendChild(del);
+
+      el["idle-items"].appendChild(row);
+    });
+  }
+
   // --- aktivitas ------------------------------------------------------------
 
   function renderActivity() {
@@ -828,6 +938,7 @@
     renderSettings();
     renderLogin();
     renderMappings();
+    renderIdle();
     renderControls();
     renderActivity();
   }
@@ -890,11 +1001,15 @@
       if (r.body && r.body.ok && r.body.config) {
         state.config = r.body.config;
         state.rows = (r.body.config.mappings || []).map(U.mappingToRow);
+        state.idleForm = U.idleToForm(r.body.config.idle);
+        state.idleItems = U.idleFormToConfig(state.idleForm).items;
       } else if (r.body && r.body.defaults) {
         // Belum ada config: pakai default yang aman sebagai titik awal, dan
         // biarkan operator membuat yang pertama dari UI.
         state.config = r.body.defaults;
         state.rows = [];
+        state.idleForm = U.idleToForm(r.body.defaults.idle);
+        state.idleItems = [];
       }
       // Formulir Settings dibangun dari config yang sama. Password tersimpan TIDAK
       // ikut — server hanya mengirim passwordSet.
@@ -1031,7 +1146,7 @@
   }
 
   function saveConfig() {
-    var payload = U.buildConfigPayload(state.config, state.rows);
+    var payload = U.buildConfigPayload(state.config, state.rows, state.idleForm);
     if (!payload) return Promise.resolve({ ok: false });
     return api("/api/config", { method: "PUT", body: payload }).then(function (r) {
       if (r.body && r.body.ok) {
@@ -1500,6 +1615,37 @@
       state.confirmDelete = null;
       markDirty();
       renderMappings();
+    });
+
+    // --- interaksi saat sepi ---
+    //
+    // "change", bukan "input": itulah peristiwa checkbox.
+    el["idle-enabled"].addEventListener("change", function () {
+      if (!state.idleForm) state.idleForm = U.idleToForm(null);
+      state.idleForm.enabled = el["idle-enabled"].checked;
+      markDirty();
+      // Digambar ulang supaya field yang tidak lagi terpakai langsung mati.
+      // Nilai yang sudah diketik TIDAK disentuh: ia hidup di state.idleForm,
+      // bukan di DOM, jadi menyalakannya kembali memulihkan isiannya.
+      renderIdle();
+    });
+
+    el["idle-after"].addEventListener("input", function () {
+      if (!state.idleForm) state.idleForm = U.idleToForm(null);
+      var n = parseInt(el["idle-after"].value, 10);
+      // Nilai yang belum sah TIDAK dibuang dan tidak dibetulkan diam-diam:
+      // disimpan apa adanya, lalu idleView() yang mengatakan apa yang salah.
+      state.idleForm.afterSeconds = Number.isNaN(n) ? 0 : n;
+      markDirty();
+      var v = U.idleView(state, L());
+      setError(el["idle-after-error"], v.afterError);
+    });
+
+    el["add-idle-btn"].addEventListener("click", function () {
+      if (!state.idleForm) state.idleForm = U.idleToForm(null);
+      state.idleForm.items.push(U.blankIdleItem());
+      markDirty();
+      renderIdle();
     });
 
     // Tab.

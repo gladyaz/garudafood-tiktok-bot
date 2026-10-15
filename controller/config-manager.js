@@ -29,6 +29,8 @@ const { LOCK_FILE_ENV } = require("../runtime/single-instance");
 // validator dunia nyata, preflight, snapshot runtime, dan penyunting di UI.
 // Lihat runtime/rule-actions.js untuk alasan panjangnya.
 const { resolveActions, validateActionsShape, anyEnabled } = require("../runtime/rule-actions");
+// Interaksi saat sepi. Bawaan dan batasnya DIIMPOR, bukan ditulis ulang di sini.
+const { defaultIdle, MIN_AFTER_SECONDS, MAX_AFTER_SECONDS } = require("../runtime/idle");
 
 const CONFIG_VERSION = 1;
 
@@ -79,6 +81,9 @@ function defaultConfig() {
       chromePath: "",
     },
     mappings: [],
+    // Interaksi saat sepi. MATI untuk instalasi baru maupun lama: aplikasi yang
+    // mendadak bicara sendiri sesudah diperbarui bukan yang diminta siapa pun.
+    idle: defaultIdle(),
   };
 }
 
@@ -291,6 +296,76 @@ function validateConfig(raw) {
         else if (/[\x00-\x1f\x7f]/.test(m.reply)) add(where, "control-chars");
       }
     });
+  }
+
+  // --- idle (interaksi saat sepi) ------------------------------------------
+  //
+  // Blok yang TIDAK ADA = mati, dan itu sah. Inilah yang membuat setiap config
+  // yang ditulis sebelum fitur ini ada tetap terbaca tanpa ditulis ulang.
+  if (raw.idle !== undefined) {
+    if (!isPlainObject(raw.idle)) {
+      add("idle", "must-be-object");
+    } else {
+      const idle = raw.idle;
+      if (typeof idle.enabled !== "boolean") add("idle.enabled", "must-be-boolean");
+      if (!isPositiveInt(idle.afterSeconds)) {
+        add("idle.afterSeconds", "must-be-positive-int");
+      } else if (idle.afterSeconds < MIN_AFTER_SECONDS || idle.afterSeconds > MAX_AFTER_SECONDS) {
+        // Di bawah batas bawah bot akan bicara menimpa percakapan yang sedang
+        // berjalan; di atas batas atas ia tidak akan pernah terpicu dalam satu
+        // sesi LIVE. Keduanya bukan nilai yang customer maksud.
+        add("idle.afterSeconds", "idle-after-out-of-range");
+      }
+
+      if (idle.items !== undefined && !Array.isArray(idle.items)) {
+        add("idle.items", "must-be-array");
+      } else {
+        const items = Array.isArray(idle.items) ? idle.items : [];
+        // Menyala tanpa satu pun scene berarti sebuah saklar yang tidak
+        // melakukan apa pun. Dikatakan, bukan didiamkan.
+        if (idle.enabled === true && items.length === 0) add("idle.items", "must-not-be-empty");
+
+        const seenIdle = new Set();
+        items.forEach((it, i) => {
+          const at = "idle.items[" + i + "]";
+          if (!isPlainObject(it)) {
+            add(at, "must-be-object");
+            return;
+          }
+          if (!isNonEmptyString(it.scene)) {
+            add(at + ".scene", "must-be-non-empty-string");
+          } else {
+            const scene = it.scene.trim();
+            if (NEVER_MAPPED_SCENES.includes(scene)) add(at + ".scene", "scene-never-mappable");
+            // Dua item untuk scene yang sama: rotasi akan memutar scene itu dua
+            // kali per putaran, dan cooldown-nya membuat yang kedua selalu
+            // terbuang. Ditolak, bukan disimpan sebagai baris mati.
+            if (seenIdle.has(scene)) add(at + ".scene", "duplicate-scene");
+            else seenIdle.add(scene);
+            // Dan ia tidak boleh juga menjadi scene sebuah aturan penonton:
+            // keduanya memakai cooldown per-scene dan playedScenes yang SAMA,
+            // jadi satu scene yang dimiliki dua konsep akan saling membuang.
+            if (Array.isArray(raw.mappings)) {
+              const clash = raw.mappings.some(
+                (m) => isPlainObject(m) && typeof m.scene === "string" && m.scene.trim() === scene
+              );
+              if (clash) add(at + ".scene", "idle-scene-conflicts-with-rule");
+            }
+          }
+
+          // Balasan opsional, dengan aturan yang SAMA seperti balasan aturan
+          // penonton. Diperiksa lewat jalur yang sama, bukan lewat salinannya.
+          if (it.reply !== undefined && it.reply !== null) {
+            const where = at + ".reply";
+            if (typeof it.reply !== "string") add(where, "must-be-string");
+            else if (it.reply.trim() === "") add(where, "must-not-be-empty");
+            else if (it.reply.length > MAX_REPLY_LENGTH) add(where, "reply-too-long");
+            else if (/[<>]/.test(it.reply)) add(where, "html-not-allowed");
+            else if (/[ -]/.test(it.reply)) add(where, "control-chars");
+          }
+        });
+      }
+    }
   }
 
   return { ok: errors.length === 0, errors };

@@ -205,6 +205,40 @@
     return typeof key === "string" && key.indexOf(SYNTHETIC_PREFIX) === 0;
   }
 
+  // ---------------------------------------------------------------------------
+  // INTERAKSI SAAT SEPI
+  //
+  // Dua fungsi kecil yang dipakai BERSAMA oleh bot dan dashboard, jadi ia
+  // tinggal di modul yang sudah disajikan ke halaman. Logika timer dan rotasi
+  // milik runtime/idle.js (hanya Node); yang di sini hanya "aksi apa yang
+  // dimiliki sebuah item interaksi", dan itu memang perlu dijawab di dua sisi:
+  // bot memakainya untuk menjalankan, dashboard memakainya untuk menggambar
+  // rantai "sedang tayang" dengan jujur.
+  //
+  // autoPin SELALU false. Bukan kebetulan dan bukan bawaan yang bisa diubah:
+  // interaksi saat sepi tidak pernah boleh menyentuh daftar produk, dan bentuk
+  // fungsi ini yang menjaminnya di kedua sisi sekaligus.
+  function idleActionsFor(item) {
+    var reply = item && typeof item.reply === "string" ? item.reply.trim() : "";
+    return { switchScene: true, autoPin: false, autoReply: reply !== "" };
+  }
+
+  // Item interaksi yang memiliki sebuah scene, atau null.
+  //
+  // Dipakai dashboard untuk mengenali scene yang sedang tayang sebagai scene
+  // interaksi SEBELUM ia jatuh ke bawaan lama. Pencarian pakai nama scene apa
+  // adanya: nama scene milik customer dan tidak pernah dinormalkan.
+  function findIdleItem(items, scene) {
+    var list = Array.isArray(items) ? items : [];
+    var want = typeof scene === "string" ? scene : "";
+    if (want === "") return null;
+    for (var i = 0; i < list.length; i += 1) {
+      var it = list[i];
+      if (it && typeof it.scene === "string" && it.scene === want) return it;
+    }
+    return null;
+  }
+
   return {
     ACTION_NAMES: ACTION_NAMES,
     LEGACY_ACTIONS: LEGACY_ACTIONS,
@@ -216,5 +250,7 @@
     ruleKeys: ruleKeys,
     isSyntheticKey: isSyntheticKey,
     SYNTHETIC_PREFIX: SYNTHETIC_PREFIX,
+    idleActionsFor: idleActionsFor,
+    findIdleItem: findIdleItem,
   };
 });

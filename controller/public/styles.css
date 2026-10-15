@@ -1121,3 +1121,46 @@ textarea.bad {
     transition: none !important;
   }
 }
+
+/* ======================================= interaksi saat sepi ====== */
+
+/* Satu bagian di dalam panel aturan, dibatasi garis supaya terbaca sebagai
+   kelompok tersendiri tanpa menjadi tab baru. */
+.idle-group {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.idle-after {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.idle-after input {
+  width: 96px;
+}
+.idle-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.idle-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 12px;
+  align-items: start;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.idle-item.has-error {
+  border-color: var(--danger, var(--border-strong));
+}
+.idle-item .field.wide,
+.idle-item .rule-error,
+.idle-item .rule-actions {
+  grid-column: 1 / -1;
+}
+.idle-foot {
+  margin-top: 4px;
+}

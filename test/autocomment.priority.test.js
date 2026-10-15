@@ -343,8 +343,17 @@ test("PAGAR: jeda high BUKAN permukaan config maupun environment", () => {
   // dan saklar headless. Dibaca dari SUMBERNYA, pola yang sama dengan
   // test/browser.mode.test.js, karena yang dijaga di sini adalah keputusan yang
   // tertulis di sana.
-  const src = require("node:fs").readFileSync(require.resolve("../controller/controller.js"), "utf8");
-  const base = src.slice(src.indexOf("const env = toEnv(config, {"), src.indexOf("paths,\n    });"));
+  // Akhiran baris dinormalkan: core.autocrlf=true membuat berkas kerja CRLF
+  // sementara jangkar di bawah memakai "\n". Tanpa ini indexOf() mengembalikan
+  // -1 dan sayatannya menjadi hampir seluruh berkas — pagar yang lolos karena
+  // kebetulan, bukan karena isinya benar.
+  const src = require("node:fs")
+    .readFileSync(require.resolve("../controller/controller.js"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const from = src.indexOf("const env = toEnv(config, {");
+  const to = src.indexOf("paths,\n    });");
+  assert.ok(from !== -1 && to > from, "jangkar basis env anak harus ada");
+  const base = src.slice(from, to);
   assert.ok(base.includes("PATH: process.env.PATH"), "basis env anak tidak boleh berubah bentuk");
   assert.ok(!base.includes("AUTOCOMMENT_HIGH"), "jangan selundupkan knob ini ke basis env anak");
 });

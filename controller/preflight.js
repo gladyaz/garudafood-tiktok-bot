@@ -23,6 +23,8 @@ const { validateMappings } = require("./mapping-validator");
 // Aksi per-aturan, DIIMPOR: check scene di bawah hanya boleh menuntut scene
 // dari aturan yang benar-benar menggantinya. Lihat runtime/rule-actions.js.
 const { resolveActions } = require("../runtime/rule-actions");
+// Interaksi saat sepi: scene-nya ikut diperiksa, HANYA kalau menyala.
+const { resolveIdle } = require("../runtime/idle");
 const { memoThunk } = require("./lazy");
 const fsDefault = require("node:fs");
 const pathDefault = require("node:path");
@@ -263,6 +265,12 @@ function createPreflight({
         .filter((m) => resolveActions(m).switchScene)
         .map((m) => String((m && m.scene) || "").trim())
         .filter((name) => name !== "");
+      // Scene interaksi saat sepi ikut dituntut ada di OBS, tapi HANYA kalau
+      // fiturnya menyala. Blok yang mati tidak boleh bisa memblokir START.
+      const idleCfg = resolveIdle(config.idle);
+      if (idleCfg.enabled) {
+        for (const item of idleCfg.items) if (item.scene) wanted.push(item.scene);
+      }
       if (config.mappings.length === 0) {
         // Tidak ada pemetaan = AutoPIN tidak akan pernah melakukan apa pun. Itu
         // bukan kondisi siap-jalan untuk sebuah produk yang gunanya memin produk.
@@ -327,19 +335,21 @@ function createPreflight({
     try {
       const verdict = validateMappings({
         mappings: config.mappings,
+        idle: config.idle,
         obsScenes,
         products: catalogue,
         autoCommentEnabled: s.autoCommentEnabled === true,
         playableScenes: scenesOf(),
       });
       checks.mappings = verdict.ok
-        ? { ok: true, count: config.mappings.length }
+        ? { ok: true, count: config.mappings.length, idleCount: verdict.idle.length }
         : {
             ok: false,
             reason: verdict.reason || "mapping-validation-failed",
             // Hasil per baris ikut, supaya UI bisa menyorot pemetaan yang salah
             // tanpa menebak dari kalimat ringkasannya.
             mappings: verdict.mappings.filter((row) => !row.ok),
+            idle: verdict.idle.filter((row) => !row.ok),
           };
     } catch {
       checks.mappings = { ok: false, reason: "mapping-validation-failed" };

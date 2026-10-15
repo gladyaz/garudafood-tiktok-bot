@@ -315,7 +315,7 @@ test("tidak ada rahasia di artefak config runtime", () => {
   //
   // Daftar kunci yang TERTUTUP inilah jaminannya: apa pun yang baru harus lewat
   // sini dulu, dengan sadar.
-  assert.deepEqual(Object.keys(parsed).sort(), ["configVersion", "createdAt", "id", "mappings", "version"]);
+  assert.deepEqual(Object.keys(parsed).sort(), ["configVersion", "createdAt", "id", "idle", "mappings", "version"]);
   for (const m of parsed.mappings) {
     assert.deepEqual(Object.keys(m).sort(), ["actions", "product", "reply", "scene", "triggers"]);
     if (m.product !== null) assert.deepEqual(Object.keys(m.product), ["title"]);
@@ -330,6 +330,13 @@ test("tidak ada rahasia di artefak config runtime", () => {
   // Nama field rahasia maupun nilainya tidak pernah ada di artefak. Diperiksa
   // dengan nama field, bukan dengan nilai sentinel: artefak ini dibuat dari
   // MAPPINGS yang memang tidak memuat blok obs sama sekali.
+  // Blok idle juga lewat daftar tertutup ini dengan sadar: bentuknya sempit dan
+  // tidak memuat apa pun selain nama scene dan kalimat yang akan dikirim.
+  assert.deepEqual(Object.keys(parsed.idle).sort(), ["afterSeconds", "enabled", "items"]);
+  for (const it of parsed.idle.items) {
+    assert.deepEqual(Object.keys(it).sort(), ["reply", "scene"]);
+  }
+
   assert.ok(!("obs" in parsed), "blok obs tidak boleh ikut");
   assert.ok(!("settings" in parsed), "settings tidak boleh ikut");
   assert.ok(!raw.includes("AUTOPIN_PROFILE_DIR"), "path profil browser tidak boleh ikut");

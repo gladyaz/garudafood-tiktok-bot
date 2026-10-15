@@ -39,7 +39,7 @@ const M = [
 
 test("build menghasilkan bentuk yang sempit dan tetap", () => {
   const a = buildRuntimeConfig({ mappings: M, configVersion: 1 });
-  assert.deepEqual(Object.keys(a).sort(), ["configVersion", "createdAt", "id", "mappings", "version"]);
+  assert.deepEqual(Object.keys(a).sort(), ["configVersion", "createdAt", "id", "idle", "mappings", "version"]);
   assert.equal(a.version, RUNTIME_CONFIG_VERSION);
   assert.equal(a.configVersion, 1);
   assert.equal(typeof a.id, "string");

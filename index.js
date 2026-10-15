@@ -167,6 +167,7 @@ const RULES = [
 const { createRuntimeMappings } = require("./runtime/mappings");
 const { readRuntimeConfig, RUNTIME_CONFIG_ENV } = require("./runtime/runtime-config");
 const { LEGACY_ACTIONS } = require("./runtime/rule-actions");
+const { IDLE_PRIORITY, pickIdle, shouldEngage } = require("./runtime/idle");
 const { formatSceneMessage: defaultFormatSceneMessage } = require("./autocomment/formatter");
 // Dipindahkan ke atas sini dari blok require AutoPIN di bawah: peta produk mode
 // legacy dibentuk di blok ini, dan `const` di bawah belum terjangkau dari sini.
@@ -191,6 +192,7 @@ function loadRuntimeSnapshot(env) {
   return {
     snapshot: createRuntimeMappings({
       mappings: loaded.config.mappings,
+      idle: loaded.config.idle,
       baseRules: RULES,
       defaultFormat: defaultFormatSceneMessage,
       generation: loaded.config.id,
@@ -250,6 +252,151 @@ const ruleActionsOf = (rule) => (rule && rule.actions ? rule.actions : LEGACY_AC
 // dengan nama scene-nya, jadi mode legacy dan seluruh config yang sudah ada
 // mencari di tempat yang sama seperti sebelumnya.
 const ruleKeyOf = (rule, sceneName) => (rule && rule.key ? rule.key : sceneName || (rule ? rule.scene : "") || "");
+
+// --- interaksi saat sepi ----------------------------------------------------
+//
+// Empat variabel dan satu timer. Tidak ada penjadwal umum, tidak ada antrean
+// kedua, dan tidak ada mesin pemutaran kedua: yang dilakukan blok ini hanyalah
+// MENITIPKAN satu entri ke antrean yang sudah ada, dengan prioritas -1 yang
+// selalu kalah terhadap permintaan penonton.
+//
+// Keputusan "boleh atau belum" dan "yang mana" ada di runtime/idle.js, murni dan
+// bisa diuji tanpa timer. Yang di sini hanya jam dan efeknya.
+const IDLE = runtime.idle || { enabled: false, afterMs: 0, items: [], rules: [] };
+let idleTimer = null;
+let lastActivityAt = 0;
+let idleArmed = false;
+let idleCursor = 0;
+
+const idleSceneSet = new Set(IDLE.rules.map((r) => r.scene));
+const isIdleScene = (scene) => idleSceneSet.has(scene);
+
+function clearIdleTimer() {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+}
+
+// Satu-satunya tempat timer interaksi dipasang. `delayMs` selalu dihitung dari
+// keadaan, bukan ditebak, dan timer lama selalu dibuang lebih dulu supaya tidak
+// pernah ada dua yang hidup bersamaan.
+function scheduleIdle(delayMs) {
+  clearIdleTimer();
+  if (!IDLE.enabled || !idleArmed) return;
+  idleTimer = setTimeout(onIdleDue, Math.max(0, delayMs));
+}
+
+// Entri interaksi yang MASIH MENUNGGU di antrean dibuang.
+//
+// Kenapa ini perlu ada, dan bukan kehati-hatian berlebihan: gerbang interaksi
+// menuntut antrean kosong, jadi entri interaksi masuk saat sepi — lalu kick
+// 50ms milik antrean memberi penonton satu celah untuk menyalip. Prioritas -1
+// membuat penonton MENANG di celah itu, tapi entri interaksi yang kalah TETAP
+// TERTINGGAL di antrean. Begitu scene penonton selesai, endCurrentScene melihat
+// antrean belum kosong dan LANGSUNG memutarnya — tanpa kembali ke MAIN dan
+// tanpa menunggu satu periode sepi pun.
+//
+// Akibatnya persis kebalikan dari maksud fitur ini: bot berinteraksi "karena
+// sepi" tepat sesudah seorang penonton baru saja berbicara. Terbukti dengan
+// probe sebelum perbaikan ini: PAX-1 selesai -> PAX-9 langsung tayang.
+//
+// Yang dibuang HANYA entri interaksi. Entri penonton tidak pernah disentuh.
+//
+// Scene yang SEDANG tayang tidak ada di antrean — processQueue() sudah
+// mengeluarkannya sebelum memutar — jadi fungsi ini tidak mungkin membatalkan
+// interaksi yang sudah mulai. Yang menangani kasus itu tetap forceCurrent()
+// lewat jalur preempsi, dan jalur itu tidak berubah.
+function dropQueuedIdle(reason) {
+  let removed = 0;
+  for (let i = sceneAggregates.length - 1; i >= 0; i -= 1) {
+    const agg = sceneAggregates[i];
+    if (!agg || !isIdleScene(agg.scene)) continue;
+    sceneAggregates.splice(i, 1);
+    removed += 1;
+  }
+  if (removed > 0) {
+    console.log(`[IDLE_QUEUE_DROPPED] count=${removed} reason=${reason} queueLen=${sceneAggregates.length}`);
+  }
+  return removed;
+}
+
+// Dipanggil saat ada komentar penonton yang SUDAH lolos gerbang chat.
+//
+// Letaknya di handleChat, bukan di listener konektor, dan itu menentukan:
+// gerbang chat (tiktok/chat-gate.js) menolak pesan BOT SENDIRI sebagai
+// self-message. Kalau aktivitas dihitung sebelum gerbang, balasan interaksi yang
+// baru dikirim bot akan kembali sebagai "aktivitas" dan mereset timernya sendiri
+// — bot bicara, mendengar dirinya, lalu menyimpulkan ruangan sedang ramai.
+//
+// Satu komentar penonton membatalkan interaksi yang masih menunggu, bukan hanya
+// mengulang hitungannya. Tanpa itu, hitungan yang diulang tidak ada artinya:
+// entri yang sudah masuk antrean akan tetap diputar pada kesempatan pertama.
+function noteViewerActivity() {
+  lastActivityAt = Date.now();
+  dropQueuedIdle("viewer-activity");
+  scheduleIdle(IDLE.afterMs);
+}
+
+// Dipanggil saat sebuah scene BENAR-BENAR berakhir (lihat finishActiveScene).
+// Hitungan sepi dimulai dari nol lagi, jadi scene -> MAIN -> scene interaksi
+// tidak bisa terjadi tanpa satu periode sepi yang penuh.
+function noteSceneEnded() {
+  lastActivityAt = Date.now();
+  scheduleIdle(IDLE.afterMs);
+}
+
+function armIdle(reason) {
+  if (!IDLE.enabled) return;
+  idleArmed = true;
+  console.log(`[IDLE_ARMED] reason=${reason} afterMs=${IDLE.afterMs} items=${IDLE.rules.length}`);
+  noteViewerActivity();
+}
+
+function disarmIdle(reason) {
+  if (!idleArmed && !idleTimer) return;
+  idleArmed = false;
+  clearIdleTimer();
+  console.log(`[IDLE_DISARMED] reason=${reason}`);
+}
+
+// Timer jatuh tempo. Semua gerbangnya ada di shouldEngage(); di sini hanya efek.
+//
+// Kalau belum boleh, timer dipasang ULANG sekali — bukan diulang secepat
+// mungkin. Tidak ada polling rapat: jarak coba-lagi minimalnya satu periode
+// sepi, kecuali memang hanya perlu menunggu sisa waktunya.
+function onIdleDue() {
+  idleTimer = null;
+  const verdict = shouldEngage({
+    enabled: IDLE.enabled,
+    armed: idleArmed,
+    busy,
+    queueLength: sceneAggregates.length,
+    now: Date.now(),
+    lastActivityAt,
+    afterMs: IDLE.afterMs,
+    ruleCount: IDLE.rules.length,
+  });
+  if (!verdict.ok) {
+    if (verdict.reason === "disabled" || verdict.reason === "not-armed" || verdict.reason === "no-items") return;
+    scheduleIdle(verdict.reason === "too-soon" ? verdict.remainingMs : IDLE.afterMs);
+    return;
+  }
+
+  // Rotasi deterministik, melewati scene yang masih dalam cooldown.
+  const pick = pickIdle({ rules: IDLE.rules, cursor: idleCursor, isCoolingDown: (sc) => sceneCooldownRemaining(sc) > 0 });
+  if (!pick) {
+    // Semua item sedang cooldown. DIAM, dan coba lagi sesudah satu periode —
+    // bukan menyibukkan diri menanyakan hal yang sama berulang kali.
+    console.log(`[IDLE_SKIPPED] reason=all-items-cooling items=${IDLE.rules.length}`);
+    scheduleIdle(IDLE.afterMs);
+    return;
+  }
+
+  idleCursor = pick.nextCursor;
+  console.log(`[IDLE_ENGAGE] scene=${pick.rule.scene} index=${pick.index} sinceActivityMs=${Date.now() - lastActivityAt}`);
+  enqueueTrigger(pick.rule, null, { priority: IDLE_PRIORITY });
+}
 
 
 // durasi maksimal kembali ke MAIN / cooldown (bisa diubah runtime)
@@ -545,6 +692,8 @@ function finishActiveScene(reason) {
     console.log(`[COOLDOWN_START] scene=${activeScene} duration=${SCENE_REPLAY_COOLDOWN_MS}`);
   }
   activeScene = null;
+  // Scene berakhir: hitungan sepi mulai dari nol lagi.
+  noteSceneEnded();
 }
 
 // Aggregation + anti-spam config
@@ -576,10 +725,27 @@ function findAggregateForScene(sceneName) {
 }
 
 // --- FIX: enqueueTrigger sekarang auto-process queue & merge dengan benar ---
-function enqueueTrigger(rule, requesterNickname = null) {
+function enqueueTrigger(rule, requesterNickname = null, { priority = 0 } = {}) {
   if (!rule) return;
 
   const scene = rule.scene;
+
+  // --- penonton mendahului interaksi saat sepi -----------------------------
+  //
+  // Diputuskan PALING DULU, sebelum satu pun gerbang antrean dibaca: kalau yang
+  // sedang tayang adalah scene interaksi, permintaan penonton tidak boleh
+  // menunggu sampai video generik itu habis.
+  //
+  // Yang dipakai adalah forceCurrent() yang SUDAH ADA dan sudah diuji — bukan
+  // mekanisme penghentian kedua. Ia membersihkan media-wait, timer, cooldown
+  // scene, lalu melepas busy dan memanggil processQueue(); dan karena
+  // finishActiveScene() menyetel activePlayId = 0, pin/balasan milik scene
+  // interaksi yang masih di udara otomatis menjadi basi dan tidak pernah
+  // terkirim sesudah scene-nya hilang.
+  //
+  // Scene PENONTON tidak pernah diinterupsi: syaratnya isIdleScene(activeScene).
+  const fromViewer = priority >= 0;
+  const preemptIdle = fromViewer && activeScene !== null && isIdleScene(activeScene);
 
   // --- aturan yang tidak mengganti scene -----------------------------------
   //
@@ -677,10 +843,23 @@ if (playedScenes.has(scene)) {
       requesters: new Set(requesterNickname ? [requesterNickname] : []),
       firstAt: Date.now(),
       lastAt: Date.now(),
-      priority: 0,
+      // Entri interaksi memakai -1, jadi processQueue() (yang memilih prioritas
+      // tertinggi lebih dulu) tidak pernah bisa mendahulukannya di atas satu pun
+      // permintaan penonton.
+      priority,
     };
     sceneAggregates.push(agg);
     console.log(`[QUEUE] scene=${scene} queueLen=${sceneAggregates.length}`);
+  }
+
+  // --- PREEMPSI: hentikan scene interaksi yang sedang tayang ---------------
+  // Dilakukan SESUDAH entri penonton masuk antrean, supaya processQueue() yang
+  // dipanggil forceCurrent() langsung menemukannya.
+  if (preemptIdle) {
+    console.log(`[IDLE_PREEMPTED] scene=${activeScene} by=${scene || "(tanpa scene)"}`);
+    const task = forceCurrent();
+    if (task && typeof task.catch === "function") task.catch(() => {});
+    return;
   }
 
   // --- AUTO PROCESS QUEUE ---
@@ -1100,6 +1279,15 @@ function handleChat(data) {
   let msgRaw = (data.comment || "").toLowerCase().trim();
   console.log(`💬 ${nickname}: ${msgRaw}`);
 
+  // AKTIVITAS. Dihitung di sini, yaitu SESUDAH gerbang chat meloloskan pesan
+  // ini (lihat attachTikTokListeners): pesan bot sendiri, backlog, dan antaran
+  // ulang tidak pernah sampai ke fungsi ini, jadi tidak satu pun dari mereka
+  // bisa mereset hitungan sepi.
+  //
+  // Dicatat sebelum pemeriksaan spam: penonton yang sedang dibungkam tetap
+  // seseorang yang mengetik, dan ruangan itu tidak sepi.
+  noteViewerActivity();
+
   // spam check
   const check = recordUserMessage(nickname, msgRaw);
   if (check.muted) {
@@ -1186,6 +1374,9 @@ async function forceAll() {
   waitingRule = null;
   clearAllSceneTimers();
   busy = false;
+  // forceAll tidak melewati finishActiveScene, jadi hitungan sepi dimulai di
+  // sini. Tanpa ini interaksi diam selamanya sesudah satu hard reset operator.
+  noteSceneEnded();
 
   await switchToMainForOperator("force all");
 
@@ -1386,6 +1577,9 @@ function attachTikTokListeners(conn) {
 
   conn.on("disconnected", (d) => {
     console.warn(`[TIKTOK_DISCONNECTED] code=${d?.code ?? "?"} reason="${d?.reason ?? ""}"`);
+    // Memutar scene interaksi ke LIVE yang sudah terputus adalah bicara ke
+    // ruangan kosong.
+    disarmIdle("disconnected");
     chatGate.markDisconnected(); // backlog akan diantar ulang saat reconnect
     scheduleTikTokReconnect("disconnected");
   });
@@ -1402,6 +1596,10 @@ async function connectTikTok() {
     const roomId = tiktokConn?.roomId || state?.roomId || "(tidak terekspos)";
     // Satu baris per peristiwa: RECONNECTED kalau ini pemulihan, CONNECTED kalau koneksi pertama.
     console.log(`[TIKTOK_${reconnecting ? "RECONNECTED" : "CONNECTED"}] roomId=${roomId}`);
+    // Interaksi saat sepi baru boleh hidup SESUDAH ini. Inilah juga definisi
+    // "bot siap" milik Controller (BOT_READY_TYPES), jadi pemanasan START
+    // terlewati secara struktural, bukan lewat penjaga tambahan.
+    armIdle(reconnecting ? "reconnected" : "connected");
     // Baru DI SINI chat dianggap live. Apa pun yang tiba sebelum titik ini adalah
     // riwayat yang diantar konektor, dan sudah dicatat supaya antaran ulangnya tertolak.
     chatGate.markConnected();
@@ -1471,6 +1669,7 @@ function startLive() {
   // Timer reconnect harus mati bersih saat proses berakhir.
   const shutdown = () => {
     stopTikTok();
+    disarmIdle("shutdown");
     lock.release();
     process.exit(0);
   };
@@ -1478,6 +1677,7 @@ function startLive() {
   process.on("SIGTERM", shutdown);
   process.on("exit", () => {
     stopTikTok();
+    disarmIdle("exit");
     lock.release();
   });
 }
@@ -1563,6 +1763,22 @@ module.exports = {
     runtimeReplyFor: (scene) => runtime.getReplyForScene(scene),
     runtimeFormat: (scene) => runtime.formatSceneMessage(scene),
     autopinEnabled: () => AUTOPIN_ENABLED,
+    // Interaksi saat sepi. Dibuka untuk tes supaya seluruh daur hidupnya bisa
+    // dijalankan tanpa TikTok sungguhan: arm/disarm, jatuh tempo timer, dan
+    // keadaan internalnya.
+    idle: {
+      config: () => ({ enabled: IDLE.enabled, afterMs: IDLE.afterMs, scenes: IDLE.rules.map((r) => r.scene) }),
+      state: () => ({ armed: idleArmed, cursor: idleCursor, hasTimer: !!idleTimer, lastActivityAt }),
+      arm: (reason) => armIdle(reason || "test"),
+      disarm: (reason) => disarmIdle(reason || "test"),
+      due: () => onIdleDue(),
+      noteActivity: () => noteViewerActivity(),
+      dropQueued: (reason) => dropQueuedIdle(reason || "test"),
+      // Prioritas entri antrean dibuka DI SINI, bukan dengan melebarkan bentuk
+      // getState().queue — bentuk itu dipaku tes antrean yang sudah ada.
+      queued: () => sceneAggregates.map((a) => ({ scene: a.scene, priority: a.priority })),
+      isIdleScene,
+    },
     // sisipkan entry mentah ke antrean (untuk uji fail-safe entry tidak valid)
     injectAggregate: agg => sceneAggregates.push(agg),
     reset: () => {
@@ -1577,6 +1793,10 @@ module.exports = {
       activePlayId = 0;
       lastScene = null;
       busy = false;
+      clearIdleTimer();
+      idleArmed = false;
+      idleCursor = 0;
+      lastActivityAt = 0;
     },
   },
 };

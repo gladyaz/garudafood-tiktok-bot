@@ -990,6 +990,110 @@
     return out;
   }
 
+  // ---------------------------------------------------------------------------
+  // INTERAKSI SAAT SEPI
+  // ---------------------------------------------------------------------------
+
+  var IDLE_AFTER_MIN = 5;
+  var IDLE_AFTER_MAX = 3600;
+  var IDLE_AFTER_DEFAULT = 30;
+
+  // config -> formulir. Bentuknya sengaja datar supaya app.js tidak perlu
+  // mengambil keputusan apa pun.
+  function idleToForm(idle) {
+    var i = idle && typeof idle === "object" ? idle : {};
+    var items = Array.isArray(i.items) ? i.items : [];
+    return {
+      enabled: i.enabled === true,
+      afterSeconds: typeof i.afterSeconds === "number" && i.afterSeconds > 0 ? i.afterSeconds : IDLE_AFTER_DEFAULT,
+      items: items.map(function (it) {
+        return {
+          scene: it && it.scene ? String(it.scene) : "",
+          // null di config berarti "tanpa balasan"; di formulir ia string
+          // kosong, karena itulah yang bisa diketik orang.
+          reply: it && typeof it.reply === "string" ? it.reply : "",
+        };
+      }),
+    };
+  }
+
+  // formulir -> config. Balasan kosong menjadi null, bukan string kosong:
+  // bedanya sama dengan produk pada aturan penonton, dan backend menolak string
+  // kosong sebagai field yang lupa diisi.
+  function idleFormToConfig(form) {
+    var f = form && typeof form === "object" ? form : {};
+    var items = Array.isArray(f.items) ? f.items : [];
+    return {
+      enabled: f.enabled === true,
+      afterSeconds: typeof f.afterSeconds === "number" ? f.afterSeconds : IDLE_AFTER_DEFAULT,
+      items: items
+        .map(function (it) {
+          var scene = it && it.scene ? String(it.scene).trim() : "";
+          var reply = it && it.reply ? String(it.reply).trim() : "";
+          return { scene: scene, reply: reply === "" ? null : reply };
+        })
+        .filter(function (it) {
+          // Baris tanpa scene belum selesai diisi. Ia tidak dikirim, dan juga
+          // tidak membuat penyimpanan gagal.
+          return it.scene !== "";
+        }),
+    };
+  }
+
+  function blankIdleItem() {
+    return { scene: "", reply: "" };
+  }
+
+  // Keadaan bagian "Interaksi saat sepi" di layar. SETIAP keputusan tampilan ada
+  // di sini, termasuk field mana yang mati saat fiturnya dimatikan.
+  function idleView(view, lang) {
+    var form = (view && view.idleForm) || idleToForm(null);
+    var controls = controlsFor(view, lang);
+    var editable = !!(controls && controls.editingEnabled);
+    var n = form.items.length;
+    var afterOk =
+      typeof form.afterSeconds === "number" &&
+      form.afterSeconds === Math.floor(form.afterSeconds) &&
+      form.afterSeconds >= IDLE_AFTER_MIN &&
+      form.afterSeconds <= IDLE_AFTER_MAX;
+    return {
+      enabled: form.enabled,
+      toggleDisabled: !editable,
+      afterSeconds: form.afterSeconds,
+      // Field mati karena penyuntingan terkunci ATAU fiturnya dimatikan.
+      // Ditulis ulang setiap render; lihat pelajaran latch di penyunting aturan.
+      afterDisabled: !editable || !form.enabled,
+      afterError: form.enabled && !afterOk ? tr(lang, "ui.idle.afterRange", { min: IDLE_AFTER_MIN, max: IDLE_AFTER_MAX }) : "",
+      itemsDisabled: !editable || !form.enabled,
+      items: form.items,
+      count: n,
+      emptyText: n === 0 ? tr(lang, "ui.idle.empty") : "",
+      // Menyala tanpa satu pun scene adalah saklar yang tidak mengerjakan apa
+      // pun. Dikatakan di layar, bukan baru saat START ditolak.
+      itemsError: form.enabled && n === 0 ? tr(lang, "ui.idle.needsScene") : "",
+      cooldownNote: tr(lang, "ui.idle.cooldownNote"),
+      addDisabled: !editable || !form.enabled,
+    };
+  }
+
+  // Masalah per baris interaksi, dari hasil validasi server. Sejajar dengan
+  // mappingIssues(), dan TERPISAH darinya: dua daftar berbeda, jadi nomor
+  // barisnya tidak boleh tercampur.
+  function idleIssues(validation, count, lang) {
+    var rows = validation && Array.isArray(validation.idle) ? validation.idle : [];
+    var n = typeof count === "number" ? count : rows.length;
+    var out = [];
+    for (var i = 0; i < n; i += 1) {
+      var r = rows[i];
+      if (!r || r.ok === true) {
+        out.push(null);
+        continue;
+      }
+      out.push({ message: messageOf(lang, r, "ui.row.needsAttention"), reason: r.reason || null });
+    }
+    return out;
+  }
+
   // Baris pemetaan kosong, untuk tombol Add Mapping.
   //
   // Aturan baru lahir dengan ketiga aksinya MENYALA, bukan mati: itulah bentuk
@@ -1143,11 +1247,15 @@
   // passwordSet), dan backend memperlakukan password yang tidak dikirim sebagai
   // "jangan diubah". Jadi passwordSet dibuang di sini supaya ia tidak pernah
   // terkirim sebagai field yang tidak dikenal.
-  function buildConfigPayload(baseConfig, rows) {
+  function buildConfigPayload(baseConfig, rows, idleForm) {
     var base = baseConfig ? JSON.parse(JSON.stringify(baseConfig)) : null;
     if (!base) return null;
     if (base.obs && Object.prototype.hasOwnProperty.call(base.obs, "passwordSet")) delete base.obs.passwordSet;
     base.mappings = (Array.isArray(rows) ? rows : []).map(rowToMapping);
+    // Blok idle ikut HANYA kalau formulirnya memang dibaca. Tanpa penjaga ini,
+    // menyimpan dari layar yang belum memuat idle akan menuliskan blok kosong di
+    // atas interaksi yang sudah dikonfigurasi customer.
+    if (idleForm) base.idle = idleFormToConfig(idleForm);
     return base;
   }
 
@@ -1681,17 +1789,44 @@
         break;
       }
     }
-    var act = owner ? rowActions(owner) : RA.LEGACY_ACTIONS;
+    // Scene interaksi saat sepi dikenali SEBELUM jatuh ke bawaan lama.
+    //
+    // Bawaan lama (kedua langkah tampil) tetap BENAR untuk kasusnya sendiri:
+    // dashboard yang baru dibuka belum punya daftar aturan, dan menyembunyikan
+    // langkah berdasarkan daftar yang belum ada adalah pernyataan yang salah
+    // tentang keadaan sistem. Jadi ia TIDAK diubah — yang ditambahkan hanya satu
+    // cabang di depannya.
+    //
+    // Tanpa cabang ini, scene interaksi memamerkan "Produk di-pin: menunggu"
+    // selamanya: sebuah langkah yang tidak akan pernah datang, karena interaksi
+    // saat sepi tidak pernah mem-pin apa pun.
+    var idleItem = owner ? null : RA.findIdleItem(view && view.idleItems, scene);
+    var act;
+    if (owner) act = rowActions(owner);
+    else if (idleItem) act = RA.idleActionsFor(idleItem);
+    else act = RA.LEGACY_ACTIONS;
 
     var chain = [];
-    if (act.autoPin) chain.push(step("ui.onair.pinned", pinOk, pinBad));
-    if (act.autoReply) chain.push(step("ui.onair.replied", repOk, repBad));
+    if (idleItem) {
+      // Scene-nya memang SEDANG diputar, jadi langkah ini selalu sudah terjadi.
+      // Untuk interaksi tanpa balasan inilah satu-satunya langkah — rantai
+      // kosong akan membuat kartunya terlihat rusak.
+      chain.push({ label: tr(lang, "ui.onair.scenePlaying"), value: activityTime(play.time, lang), tone: TONE.READY });
+      if (act.autoReply) chain.push(step("ui.onair.replied", repOk, repBad));
+    } else {
+      if (act.autoPin) chain.push(step("ui.onair.pinned", pinOk, pinBad));
+      if (act.autoReply) chain.push(step("ui.onair.replied", repOk, repBad));
+    }
 
     return {
       visible: true,
       scene: scene,
-      title: product || sceneLine,
-      sub: product ? sceneLine : "",
+      idle: !!idleItem,
+      // Untuk interaksi saat sepi, judulnya menyebut APA yang sedang terjadi.
+      // Tanpa ini operator melihat nama scene tanpa konteks dan tidak tahu
+      // kenapa sesuatu diputar padahal tidak ada yang meminta.
+      title: idleItem ? tr(lang, "ui.onair.idleTitle") : product || sceneLine,
+      sub: idleItem ? sceneLine : product ? sceneLine : "",
       elapsed: clock(sec),
       elapsedSeconds: sec,
       elapsedLabel: tr(lang, "ui.onair.elapsed", { sec: I18N.num(lang, sec, 0) }),
@@ -1805,6 +1940,14 @@
     rowToMapping: rowToMapping,
     mappingToRow: mappingToRow,
     rowActions: rowActions,
+    idleToForm: idleToForm,
+    idleFormToConfig: idleFormToConfig,
+    blankIdleItem: blankIdleItem,
+    idleView: idleView,
+    idleIssues: idleIssues,
+    IDLE_AFTER_MIN: IDLE_AFTER_MIN,
+    IDLE_AFTER_MAX: IDLE_AFTER_MAX,
+    IDLE_AFTER_DEFAULT: IDLE_AFTER_DEFAULT,
     toggleAction: toggleAction,
     ruleEditorView: ruleEditorView,
     ACTION_NAMES: RA.ACTION_NAMES,

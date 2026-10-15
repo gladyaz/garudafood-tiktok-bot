@@ -382,6 +382,7 @@ function createController({
   function createRuntimeArtifact(config) {
     const payload = buildRuntimeConfig({
       mappings: config.mappings,
+      idle: config.idle,
       configVersion: config.version,
     });
     const file = path.join(runtimeRoot, "runtime-" + payload.id + ".json");
@@ -1022,6 +1023,7 @@ function createController({
 
     const verdict = validateMappings({
       mappings: config.mappings,
+      idle: config.idle,
       obsScenes,
       products,
       autoCommentEnabled: config.settings.autoCommentEnabled === true,
@@ -1035,6 +1037,7 @@ function createController({
       // ada yang membantahnya.
       checked: { obsScenes: Array.isArray(obsScenes), products: Array.isArray(products) },
       mappings: verdict.mappings,
+      idle: verdict.idle,
       ...(verdict.reason ? { error: translate(verdict.reason) } : {}),
     };
   }
@@ -1121,6 +1124,7 @@ function createController({
     const products = productsView && productsView.ok ? productsView.products : null;
     const verdict = validateMappings({
       mappings: config.mappings,
+      idle: config.idle,
       obsScenes,
       products,
       autoCommentEnabled: config.settings.autoCommentEnabled === true,
@@ -1135,6 +1139,7 @@ function createController({
         ok: verdict.ok,
         checked: { obsScenes: Array.isArray(obsScenes), products: Array.isArray(products) },
         mappings: verdict.mappings,
+        idle: verdict.idle,
         ...(verdict.reason ? { error: translate(verdict.reason) } : {}),
       },
     };

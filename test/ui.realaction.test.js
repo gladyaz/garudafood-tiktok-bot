@@ -278,8 +278,19 @@ test("saklar dimatikan saat automation berjalan, sama seperti field lain", () =>
   // Mengubah mode di tengah run tidak akan berlaku (snapshot runtime sudah
   // dibuat), jadi membiarkannya bisa diklik hanya menjanjikan sesuatu yang tidak
   // terjadi.
-  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
-  const block = app.slice(app.indexOf("SETTINGS_TOGGLES.forEach(function (pair) {\n      var node = el[pair[1]];"));
+  // Akhiran baris DINORMALKAN sebelum disayat.
+  //
+  // Repo ini berjalan dengan core.autocrlf=true, jadi berkas di direktori kerja
+  // berakhiran CRLF sementara jangkar di bawah menuliskan "\n". Tanpa
+  // normalisasi, indexOf() mengembalikan -1 dan slice(-1) menghasilkan SATU
+  // karakter terakhir berkas — yang lolos atau gagal karena kebetulan, bukan
+  // karena isi app.js. Terbukti: tes ini merah di direktori kerja yang baru
+  // di-checkout, dan hijau hanya kalau app.js kebetulan berakhiran LF.
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const anchor = "SETTINGS_TOGGLES.forEach(function (pair) {\n      var node = el[pair[1]];";
+  const at = app.indexOf(anchor);
+  assert.notEqual(at, -1, "jangkar harus ada; kalau renderSettings berubah bentuk, perbarui jangkarnya");
+  const block = app.slice(at);
   assert.match(block.slice(0, 400), /node\.disabled = !sv\.editable/);
 });
 

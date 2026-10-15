@@ -32,6 +32,8 @@ const { normalizeTitleKey } = require("../autopin/core");
 // mati tidak punya prasyarat, karena ia tidak akan dijalankan. Lihat
 // runtime/rule-actions.js, termasuk kenapa `declaresActions` ada.
 const { resolveActions, declaresActions, anyEnabled } = require("../runtime/rule-actions");
+// Interaksi saat sepi: bentuk yang berlaku. Lihat runtime/idle.js.
+const { resolveIdle } = require("../runtime/idle");
 
 // Mengembalikan { ok, reason?, count?, product? } untuk satu kunci judul.
 function resolveProduct(catalogue, titleKey) {
@@ -50,6 +52,8 @@ function resolveProduct(catalogue, titleKey) {
 // yang bermasalah tanpa menebak dari kalimat.
 function validateMappings({
   mappings = [],
+  // Blok `idle` dari config customer. null/undefined = tidak diperiksa.
+  idle = null,
   obsScenes = null,
   products = null,
   autoCommentEnabled = false,
@@ -188,13 +192,70 @@ function validateMappings({
     rows.push(row);
   }
 
-  const ok = mappings.length > 0 && rows.every((r) => r.ok);
+  // --- interaksi saat sepi -------------------------------------------------
+  //
+  // Diperiksa HANYA kalau menyala. Blok yang mati, atau tidak ada sama sekali,
+  // tidak boleh bisa memblokir START — itu akan membuat sebuah fitur opsional
+  // menjadi prasyarat.
+  //
+  // Scene interaksi diperiksa terhadap DUA hal yang sama dengan scene pemetaan:
+  // benar-benar ada di OBS, dan dikenal mesin pemutaran. Tidak ada pelonggaran
+  // untuk interaksi: Decision 1 MVP menyatakan ia memakai kontrak pemutaran yang
+  // sama, jadi scene yang ada di OBS tapi tidak punya detail pemutaran ditolak
+  // dengan jujur lewat kode yang sama, bukan diberi durasi cadangan.
+  //
+  // Yang TIDAK pernah diperiksa untuk interaksi: produk. Tidak ada satu pun
+  // jalur yang bisa membuatnya memin, jadi tidak ada prasyarat produk untuknya.
+  const idleCfg = resolveIdle(idle);
+  const idleRows = [];
+  let idleOk = true;
+  let idleReason = null;
+  if (idle !== null && idle !== undefined && idleCfg.enabled) {
+    if (idleCfg.items.length === 0) {
+      idleOk = false;
+      idleReason = "idle-no-items";
+    }
+    const seenIdle = new Map();
+    const ruleScenes = new Set(
+      mappings
+        .filter((m) => resolveActions(m).switchScene)
+        .map((m) => String((m && m.scene) || "").trim())
+        .filter((name) => name !== "")
+    );
+    for (const item of idleCfg.items) {
+      const scene = item.scene;
+      const row = { scene, ok: true, reason: null };
+      const problems = [];
+
+      if (Array.isArray(obsScenes) && !obsScenes.includes(scene)) problems.push("obs-scene-missing");
+      if (Array.isArray(playableScenes) && !playableScenes.includes(scene)) problems.push("scene-playback-unknown");
+      if (seenIdle.has(scene)) problems.push("duplicate-scene");
+      else seenIdle.set(scene, true);
+      // Satu scene tidak boleh dimiliki dua konsep: cooldown per-scene dan
+      // playedScenes dipakai bersama, jadi keduanya akan saling membuang.
+      if (ruleScenes.has(scene)) problems.push("idle-scene-conflicts-with-rule");
+
+      if (problems.length > 0) {
+        row.ok = false;
+        row.reason = problems[0];
+        row.reasons = problems;
+        idleOk = false;
+        if (!idleReason) idleReason = problems[0];
+      }
+      idleRows.push(row);
+    }
+  }
+
+  const ok = mappings.length > 0 && rows.every((r) => r.ok) && idleOk;
   return {
     ok,
     // Pemetaan kosong bukan "semua lolos": sistem yang gunanya memin produk
     // tidak siap jalan tanpa satu pun pemetaan.
-    reason: mappings.length === 0 ? "no-mappings" : null,
+    reason: mappings.length === 0 ? "no-mappings" : idleOk ? null : idleReason,
     mappings: rows,
+    // Baris interaksi TERPISAH dari baris pemetaan: UI menyorot dua daftar yang
+    // berbeda, dan menggabungkannya akan membuat nomor barisnya salah.
+    idle: idleRows,
   };
 }
 

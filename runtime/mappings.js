@@ -56,6 +56,8 @@ const SOURCES = Object.freeze({ LEGACY: "legacy", CONFIG: "config" });
 // Aksi per-aturan, DIIMPOR. Keputusan "aksi mana yang berlaku" hidup di satu
 // tempat saja; lihat runtime/rule-actions.js.
 const { resolveActions, ruleKeys } = require("./rule-actions");
+// Interaksi saat sepi: bentuk yang berlaku + aksinya. Lihat runtime/idle.js.
+const { resolveIdle, idleActionsFor } = require("./idle");
 
 function freezeDeep(value) {
   if (value === null || typeof value !== "object") return value;
@@ -135,6 +137,8 @@ function buildRuleFromMapping(mapping, baseRule, key, actions) {
 function createRuntimeMappings({
   // Dari config customer. null/undefined = mode legacy.
   mappings = null,
+  // Blok `idle` dari config customer. null = mati.
+  idle = null,
   // Array RULES dari index.js. Sumber tunggal untuk detail pemutaran.
   baseRules = [],
   // Peta scene->kunci judul dari environment (AUTOPIN_PRODUCT_*), hanya dipakai
@@ -168,6 +172,9 @@ function createRuntimeMappings({
       formatSceneMessage: (scene) =>
         typeof defaultFormat === "function" ? defaultFormat(scene) : { ok: false, reason: "no-formatter" },
       scenes: () => rules.map((r) => r.scene),
+      // Mode legacy tidak punya interaksi saat sepi. `node index.js` tanpa
+      // Controller berperilaku persis seperti sebelum fitur ini ada.
+      idle: { enabled: false, afterMs: 0, items: [], rules: [] },
     };
     return freezeSnapshotOnly(snapshot);
   }
@@ -232,9 +239,58 @@ function createRuntimeMappings({
     if (actions.autoReply && reply) replies[key] = reply;
   });
 
+  // --- interaksi saat sepi -------------------------------------------------
+  //
+  // Scene interaksi memakai KONTRAK PEMUTARAN YANG SAMA dengan scene lain: ia
+  // harus punya base rule di RULES (mediaInputs + durasi). Tidak ada durasi
+  // cadangan, tidak ada skema detail pemutaran kedua, dan tidak ada mesin OBS
+  // khusus interaksi. Scene yang tidak dikenal mesin pemutaran dicatat sebagai
+  // unknownPlayback dan TIDAK dijalankan — sama seperti scene pemetaan yang
+  // tidak dikenal, dan validator Controller sudah menolaknya lebih dulu.
+  const idleCfg = resolveIdle(idle);
+  const idleRules = [];
+  const idleItems = [];
+  for (const item of idleCfg.items) {
+    const scene = item.scene;
+    if (!scene || NEVER_MAPPED.includes(scene)) continue;
+    const baseRule = baseByScene.get(scene);
+    if (!baseRule) {
+      unknownPlayback.push(scene);
+      continue;
+    }
+    const actions = idleActionsFor(item);
+    idleRules.push({
+      ...baseRule,
+      scene,
+      key: scene,
+      actions,
+      // TIDAK punya kata kunci, dan itu bukan kelalaian: scene interaksi tidak
+      // diminta penonton, ia dipicu oleh keheningan. Daftar kosong membuatnya
+      // mustahil masuk ke indeks matcher kalau suatu saat ada yang
+      // memasukkannya ke sana.
+      keywords: [],
+      mediaInputs: Array.isArray(baseRule.mediaInputs) ? baseRule.mediaInputs.slice() : baseRule.mediaInputs,
+      idle: true,
+    });
+    idleItems.push({ scene, reply: item.reply });
+    // Balasannya masuk ke peta balasan yang SAMA, jadi formatSceneMessage()
+    // menjawabnya tanpa jalur teks kedua. Produknya TIDAK pernah masuk ke peta
+    // produk: idleActionsFor() memaksa autoPin false, dan di sini tidak ada
+    // satu pun baris yang menulis productMap.
+    if (actions.autoReply && item.reply) replies[scene] = item.reply;
+  }
+
   const snapshot = {
     source: SOURCES.CONFIG,
     generation: generation || null,
+    idle: {
+      // Menyala HANYA kalau ada yang benar-benar bisa diputar. Saklar yang
+      // menyala di atas nol scene yang bisa diputar adalah saklar yang bohong.
+      enabled: idleCfg.enabled && idleRules.length > 0,
+      afterMs: idleCfg.afterSeconds * 1000,
+      items: idleItems,
+      rules: idleRules,
+    },
     rules,
     productMap,
     replies,
