@@ -295,6 +295,9 @@
 
     <p class="foot" data-t="ui.local"></p>
 
+    <!-- Modul bersama backend+dashboard, disajikan Controller dari
+         runtime/rule-actions.js. Dimuat SEBELUM ui-logic.js, yang memakainya. -->
+    <script src="rule-actions.js"></script>
     <script src="i18n.js"></script>
     <script src="prefs.js"></script>
     <script src="ui-logic.js"></script>

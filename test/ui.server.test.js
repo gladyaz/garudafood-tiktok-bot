@@ -116,9 +116,15 @@ test("berkas statis tersaji dengan tipe yang benar", async () => {
   });
 });
 
-test("halaman menunjuk ke berkas yang MEMANG ADA", async () => {
+test("halaman menunjuk ke berkas yang MEMANG TERSAJI", async () => {
   // Satu salah ketik di <script src> membuat dashboard kosong tanpa satu pun tes
   // logika jadi merah.
+  //
+  // Diperiksa lewat HTTP, bukan dengan mencari berkasnya di public/. Tidak
+  // semua yang dimuat halaman ini hidup di public/: runtime/rule-actions.js
+  // dibagi dengan backend dan disajikan lewat rute sendiri (lihat
+  // controller/server.js). Yang benar-benar penting bukan "berkasnya ada di
+  // direktori itu" tapi "halaman bisa mengambilnya".
   const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
   const refs = [];
   html.replace(/(?:src|href)="([^"]+)"/g, (_m, p1) => {
@@ -126,10 +132,29 @@ test("halaman menunjuk ke berkas yang MEMANG ADA", async () => {
     return _m;
   });
   assert.ok(refs.length >= 3, "harus ada rujukan css/js: " + refs.join(","));
-  for (const ref of refs) {
-    assert.ok(!/^https?:/i.test(ref), "tidak boleh ada CDN eksternal: " + ref);
-    assert.equal(fs.existsSync(path.join(PUBLIC_DIR, ref)), true, "berkas tidak ada: " + ref);
-  }
+  await withServer({}, async ({ base }) => {
+    for (const ref of refs) {
+      assert.ok(!/^https?:/i.test(ref), "tidak boleh ada CDN eksternal: " + ref);
+      const r = await get(base, "/" + ref.replace(/^\//, ""));
+      assert.equal(r.status, 200, "tidak tersaji: " + ref);
+      assert.ok(r.body.length > 0, "tersaji kosong: " + ref);
+    }
+  });
+});
+
+test("modul aksi aturan yang dipakai dashboard adalah berkas backend yang SAMA", async () => {
+  // Bukan salinan. Kalau suatu hari ada yang menaruh salinannya di public/,
+  // halaman akan memuat salinan itu dan diam-diam memakai aturan aksi yang
+  // berbeda dari yang dijalankan bot — penyimpangan yang persis sama bentuknya
+  // dengan salinan normalizeTitleKey yang sudah pernah menyesatkan Controller.
+  const onDisk = fs.readFileSync(path.join(PUBLIC_DIR, "..", "..", "runtime", "rule-actions.js"), "utf8");
+  await withServer({}, async ({ base }) => {
+    const r = await get(base, "/rule-actions.js");
+    assert.equal(r.status, 200);
+    assert.ok(/javascript/.test(r.type), "type=" + r.type);
+    assert.equal(r.body, onDisk);
+  });
+  assert.equal(fs.existsSync(path.join(PUBLIC_DIR, "rule-actions.js")), false, "tidak boleh ada salinan di public/");
 });
 
 test("berkas statis TIDAK menaungi endpoint /api", async () => {

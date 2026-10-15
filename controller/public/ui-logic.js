@@ -21,9 +21,16 @@
  * dari aslinya dan membuat Controller mengatakan hal yang tidak benar.
  */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory(require("./i18n.js"));
-  else root.AiLiveUI = factory(root.AiLiveI18N);
-})(typeof self !== "undefined" ? self : this, function (I18N) {
+  if (typeof module === "object" && module.exports) {
+    // Modul aksi aturan DIIMPOR dari runtime/, bukan disalin ke sini. Di
+    // browser ia datang sebagai window.AiLiveRuleActions lewat rute
+    // /rule-actions.js yang disajikan controller/server.js. Satu implementasi
+    // untuk backend dan halaman ini; lihat runtime/rule-actions.js.
+    module.exports = factory(require("./i18n.js"), require("../../runtime/rule-actions.js"));
+  } else {
+    root.AiLiveUI = factory(root.AiLiveI18N, root.AiLiveRuleActions);
+  }
+})(typeof self !== "undefined" ? self : this, function (I18N, RA) {
   "use strict";
 
   // SETIAP kalimat customer datang dari i18n.js. Tidak ada satu pun literal
@@ -43,6 +50,20 @@
   var PAX_RE = /^PAX-(\d{1,2})$/;
 
   var MAX_ACTIVITY_ITEMS = 50;
+
+  // Batas panjang balasan, dipaku ke MAX_REPLY_LENGTH di
+  // controller/config-manager.js oleh tes kontrak. Angka ini mengikuti indikator
+  // "0/100" di LIVE Manager; halaman ini tidak boleh menjanjikan ruang yang
+  // nanti ditolak server.
+  var MAX_REPLY_LENGTH = 100;
+
+  // Kunci kalimat untuk tiap aksi. Nama kunci internalnya (switchScene, autoPin,
+  // autoReply) tidak pernah tampil; yang dibaca customer selalu lewat kamus.
+  var ACTION_LABEL_KEYS = {
+    switchScene: "ui.rule.f.actScene",
+    autoPin: "ui.rule.f.actPin",
+    autoReply: "ui.rule.f.actReply",
+  };
 
   // State automation yang dikenal, dari controller/state-machine.js.
   var STATES = {
@@ -970,8 +991,91 @@
   }
 
   // Baris pemetaan kosong, untuk tombol Add Mapping.
+  //
+  // Aturan baru lahir dengan ketiga aksinya MENYALA, bukan mati: itulah bentuk
+  // aturan etalase, yang merupakan sebagian besar aturan yang dibuat orang. Yang
+  // ingin aturan FAQ mematikan satu kotak; yang ingin aturan etalase tidak perlu
+  // menyalakan apa pun.
   function blankMapping() {
-    return { scene: "", product: { title: "" }, triggers: [], reply: "" };
+    return {
+      scene: "",
+      product: { title: "" },
+      triggers: [],
+      reply: "",
+      actions: RA.normalizeActions(null),
+    };
+  }
+
+  // Aksi yang berlaku untuk sebuah BARIS FORMULIR.
+  //
+  // Baris formulir menyimpan aksinya sebagai objek lengkap sejak dibaca dari
+  // config (lihat mappingToRow), jadi di sini ia hanya dibersihkan. Yang
+  // memutuskan arti "tidak ada aksi" tetap satu fungsi di runtime/rule-actions.js.
+  function rowActions(row) {
+    return RA.resolveActions({ actions: row && row.actions });
+  }
+
+  // Satu aksi dicentang/dilepas -> objek aksi yang BARU.
+  //
+  // Objeknya diganti, tidak diubah di tempatnya: row.actions bisa berasal dari
+  // pembacaan config, dan menulis ke dalamnya berarti mengubah objek yang bukan
+  // milik formulir ini.
+  function toggleAction(row, key, on) {
+    var cur = rowActions(row);
+    var next = { switchScene: cur.switchScene, autoPin: cur.autoPin, autoReply: cur.autoReply };
+    if (key === "switchScene" || key === "autoPin" || key === "autoReply") next[key] = on === true;
+    return next;
+  }
+
+  // KEADAAN PENYUNTING SATU ATURAN: field mana yang mati, dan catatan apa yang
+  // tampil di bawahnya.
+  //
+  // Keputusannya ada DI SINI, bukan di dalam handler DOM app.js. Tanpa jsdom,
+  // logika yang bersembunyi di handler adalah logika yang tidak pernah diuji —
+  // dan yang disembunyikan di sini justru hal yang paling mudah salah: satu
+  // field yang mati PERMANEN karena `disabled` hanya ditulis saat berubah.
+  //
+  // Dua sebab sebuah field mati, dan keduanya digabung di sini:
+  //   editing mati   seluruh penyuntingan sedang tidak boleh (mis. saat LIVE)
+  //   aksi mati      field itu tidak dipakai aturan ini
+  function ruleEditorView(row, controls, resolvedTitle, lang) {
+    var act = rowActions(row);
+    var editable = !!(controls && controls.editingEnabled);
+    var resolved = resolvedTitle ? String(resolvedTitle) : "";
+    var any = RA.anyEnabled(act);
+    return {
+      actions: act,
+      // Setiap kotak centang: nyala/mati, dan boleh ditekan atau tidak.
+      boxes: RA.ACTION_NAMES.map(function (key) {
+        return {
+          key: key,
+          label: tr(lang, ACTION_LABEL_KEYS[key]),
+          checked: act[key] === true,
+          disabled: !editable,
+        };
+      }),
+      actionsHelp: any ? tr(lang, "ui.rule.f.actionsHelp") : "",
+      // Pesan validasi "minimal satu aksi", di kartunya sendiri — bukan baru
+      // muncul saat Save ditolak server.
+      actionsError: any ? "" : tr(lang, "ui.rule.f.actionsNone"),
+      sceneDisabled: !editable || !act.switchScene,
+      sceneNote: act.switchScene ? "" : tr(lang, "ui.rule.f.sceneOffNote"),
+      productDisabled: !editable || !act.autoPin,
+      // Catatan di bawah dropdown produk menjawab pertanyaan yang BERBEDA
+      // tergantung aksinya: kalau mem-pin, "produk mana yang sesungguhnya
+      // terpilih"; kalau tidak, "kenapa ini mati". Judul yang terlihat di LIVE
+      // tidak berarti apa pun untuk aturan yang tidak akan mem-pin.
+      productNote: !act.autoPin
+        ? tr(lang, "ui.rule.f.pinOffNote")
+        : resolved
+          ? tr(lang, "ui.rule.f.resolved", { title: resolved })
+          : "",
+      triggersDisabled: !editable,
+      replyDisabled: !editable || !act.autoReply,
+      replyNote: act.autoReply
+        ? tr(lang, "ui.rule.f.replyHelp", { n: (row && row.reply ? String(row.reply) : "").length, max: MAX_REPLY_LENGTH })
+        : tr(lang, "ui.rule.f.replyOffNote"),
+    };
   }
 
   // Bentuk formulir -> bentuk config. Trigger ditulis satu per baris di textarea
@@ -994,6 +1098,18 @@
   // sengaja tidak memin apa pun" dan diterima backend, sementara judul kosong
   // ditolak sebagai field yang lupa diisi. Bedanya disengaja (lihat
   // controller/config-manager.js), dan UI harus menghormatinya.
+  // Aksi SELALU ditulis lengkap, juga untuk aturan yang tidak mengubah apa pun.
+  // Aturan yang sudah disunting customer menyatakan ketiga aksinya apa adanya,
+  // jadi tidak ada yang perlu menebak bawaan versi mana yang berlaku saat baris
+  // itu ditulis.
+  //
+  // Nilai yang SUDAH DIKETIK tetap disimpan meski aksinya mati — scene yang
+  // terpilih, produk yang terpilih, dan teks balasan. Mematikan "Pin produk"
+  // adalah keputusan tentang apa yang DIKERJAKAN aturan, bukan perintah
+  // menghapus pilihan customer; dan kalau ia menyalakannya lagi besok,
+  // pilihannya masih ada. Yang menjaga agar nilai itu tidak dipakai adalah
+  // aksinya: validator melewatinya, dan snapshot runtime tidak memasukkannya
+  // ke peta produk/balasan sama sekali.
   function rowToMapping(row) {
     var title = row && row.productTitle ? String(row.productTitle).trim() : "";
     var reply = row && row.reply ? String(row.reply).trim() : "";
@@ -1001,6 +1117,7 @@
       scene: row && row.scene ? String(row.scene).trim() : "",
       product: title === "" ? null : { title: title },
       triggers: parseTriggers(row && row.triggersText),
+      actions: RA.normalizeActions(row && row.actions),
     };
     if (reply !== "") m.reply = reply;
     return m;
@@ -1012,6 +1129,10 @@
       productTitle: m && m.product && m.product.title ? m.product.title : "",
       triggersText: formatTriggers(m && m.triggers),
       reply: (m && m.reply) || "",
+      // Aturan lama tanpa field actions menjadi ketiganya menyala — satu
+      // keputusan, satu tempat. Membacanya di sini TIDAK menulis apa pun ke
+      // berkas: config hanya tersimpan kalau customer menekan Save.
+      actions: RA.resolveActions(m),
     };
   }
 
@@ -1541,6 +1662,31 @@
     var product = pinOk && pinOk.product ? String(pinOk.product) : "";
     var sceneLine = scene ? tr(lang, "ui.onair.scene", { scene: scene }) : "";
 
+    // Rantai langkah hanya memuat aksi yang BENAR-BENAR akan terjadi.
+    //
+    // Tanpa ini, scene FAQ yang sengaja tidak memin apa pun menampilkan
+    // "Produk di-pin: menunggu" selamanya — sebuah langkah yang tidak pernah
+    // datang, di kartu yang dibaca operator untuk memutuskan kapan bicara.
+    // Langkah yang menunggu sesuatu yang tidak akan terjadi lebih buruk
+    // daripada tidak ada langkah.
+    //
+    // Aksinya dicari dari aturan yang scene-nya SEDANG tayang. Kalau barisnya
+    // belum terbaca (dashboard baru dibuka), yang berlaku adalah bawaan lama:
+    // kedua langkah tampil, persis seperti sebelum v0.2.0.
+    var rows = Array.isArray(view && view.rows) ? view.rows : [];
+    var owner = null;
+    for (var k = 0; k < rows.length; k += 1) {
+      if (rows[k] && String(rows[k].scene || "") === scene) {
+        owner = rows[k];
+        break;
+      }
+    }
+    var act = owner ? rowActions(owner) : RA.LEGACY_ACTIONS;
+
+    var chain = [];
+    if (act.autoPin) chain.push(step("ui.onair.pinned", pinOk, pinBad));
+    if (act.autoReply) chain.push(step("ui.onair.replied", repOk, repBad));
+
     return {
       visible: true,
       scene: scene,
@@ -1549,7 +1695,7 @@
       elapsed: clock(sec),
       elapsedSeconds: sec,
       elapsedLabel: tr(lang, "ui.onair.elapsed", { sec: I18N.num(lang, sec, 0) }),
-      chain: [step("ui.onair.pinned", pinOk, pinBad), step("ui.onair.replied", repOk, repBad)],
+      chain: chain,
     };
   }
 
@@ -1569,29 +1715,49 @@
     var product = row && row.productTitle ? String(row.productTitle) : "";
     var scenes = Array.isArray(c.scenes) ? c.scenes : [];
     var resolved = c.resolvedTitle ? String(c.resolvedTitle) : "";
+    var act = rowActions(row);
 
     return {
+      // Aksi yang berlaku, supaya app.js bisa menyusun kalimat aturan dari
+      // bagian yang BENAR-BENAR terjadi. Kalimat yang menyebut "pin" untuk
+      // aturan FAQ adalah kalimat yang salah tentang sistemnya sendiri.
+      actions: act,
+      // Aturan yang semua aksinya mati: dikatakan di kartunya, bukan hanya
+      // nanti saat Save ditolak.
+      actionsNone: RA.anyEnabled(act) ? "" : tr(lang, "ui.rule.f.actionsNone"),
       triggers: triggers,
       // Kosong itu KEADAAN, bukan kesalahan: aturan yang baru ditambahkan memang
       // belum punya pemicu, dan ia belum disimpan ke mana pun.
       triggersEmpty: triggers.length === 0 ? tr(lang, "ui.rule.f.triggersEmpty") : "",
       scene: scene,
-      // Hanya mengaku "tidak ada di OBS" kalau daftar scene MEMANG sudah dibaca.
+      // Hanya mengaku "tidak ada di OBS" kalau daftar scene MEMANG sudah dibaca,
+      // DAN kalau aturan ini memang akan berpindah ke scene itu. Scene yang
+      // tersimpan pada aturan yang tidak mengganti scene tidak akan pernah
+      // dicari di OBS, jadi mengeluhkannya hanya memberi customer pekerjaan
+      // yang tidak ada gunanya.
+      //
       // Dengan daftar kosong, discovery belum pernah berhasil — dan menuduh
       // scene customer hilang berdasarkan daftar yang belum ada adalah
       // pernyataan yang salah tentang keadaan sistem.
-      sceneMissing: scene !== "" && scenes.length > 0 && scenes.indexOf(scene) === -1
+      sceneMissing: act.switchScene && scene !== "" && scenes.length > 0 && scenes.indexOf(scene) === -1
         ? tr(lang, "ui.rule.f.sceneMissing", { scene: scene })
         : "",
       product: product,
-      productNone: product === "" ? tr(lang, "ui.rule.f.productNone") : "",
+      // "Tidak mem-pin apa pun" hanya berarti sesuatu untuk aturan yang MEMANG
+      // bisa memin. Untuk aturan yang mematikan Pin produk, kalimat yang benar
+      // adalah kalimat tentang aksinya.
+      productNone: product === "" && act.autoPin ? tr(lang, "ui.rule.f.productNone") : "",
+      pinOff: act.autoPin ? "" : tr(lang, "ui.rule.f.pinOffNote"),
       // Judul yang BENAR-BENAR terlihat di LIVE, dan hanya kalau ia berbeda dari
       // potongan judul yang disimpan customer.
-      resolved: resolved && product && resolved !== product
+      resolved: act.autoPin && resolved && product && resolved !== product
         ? tr(lang, "ui.rule.f.resolved", { title: resolved })
         : "",
-      reply: row && row.reply ? String(row.reply) : "",
-      noReply: row && row.reply ? "" : tr(lang, "ui.rule.noReply"),
+      // Teks balasan hanya ditampilkan kalau aturan ini akan mengirimkannya.
+      // Kalimat yang tersimpan tapi tidak akan dikirim bukan janji yang boleh
+      // dipamerkan di kartu aturan.
+      reply: act.autoReply && row && row.reply ? String(row.reply) : "",
+      noReply: !act.autoReply || (row && row.reply) ? "" : tr(lang, "ui.rule.noReply"),
     };
   }
 
@@ -1638,6 +1804,12 @@
     formatTriggers: formatTriggers,
     rowToMapping: rowToMapping,
     mappingToRow: mappingToRow,
+    rowActions: rowActions,
+    toggleAction: toggleAction,
+    ruleEditorView: ruleEditorView,
+    ACTION_NAMES: RA.ACTION_NAMES,
+    anyActionEnabled: RA.anyEnabled,
+    MAX_REPLY_LENGTH: MAX_REPLY_LENGTH,
     buildConfigPayload: buildConfigPayload,
     activityText: activityText,
     activityTone: activityTone,

@@ -103,6 +103,14 @@ const CATALOG = Object.freeze({
   "reply-required-when-autocomment-enabled": "This scene needs a reply, because automatic replies are turned on.",
   "mapping-validation-failed": "Some of your scene mappings need fixing.",
 
+  // --- v0.2.0: aksi per-aturan ---
+  // Setiap kalimat di sini menyebut AKSI yang menyala, bukan field yang kosong.
+  // Yang perlu customer tahu adalah pilihan mana yang belum lengkap, bukan nama
+  // field di berkas yang tidak pernah ia buka.
+  "no-actions-enabled": "This rule does nothing yet. Turn on at least one action.",
+  "scene-required": "This rule switches scenes, so it needs a scene.",
+  "reply-required": "This rule replies in chat, so it needs reply text.",
+
   // --- P2: config runtime ---
   "runtime-config-missing": "AI LIVE HOST could not prepare this run. Press START BOT again.",
   "runtime-config-unreadable": "AI LIVE HOST could not prepare this run. Press START BOT again.",
@@ -186,6 +194,7 @@ const FIELD_PROBLEMS = Object.freeze({
   "version-unsupported": "was made by a different version of the app",
   "port-conflicts-with-obs": "cannot be the same as the OBS port",
   "product-missing": "needs a product, or null if this scene pins nothing",
+  "no-actions-enabled": "needs at least one action turned on",
 });
 
 function translateFieldErrors(errors = []) {

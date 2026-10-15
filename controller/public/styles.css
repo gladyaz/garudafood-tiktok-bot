@@ -810,6 +810,49 @@ textarea {
   grid-column: 1 / -1;
 }
 
+/* Aksi saat terpicu: tiga kotak centang dalam satu baris yang bisa dibaca
+   sekilas. Sengaja BUKAN sakelar besar seperti di Pengaturan - yang di sana
+   adalah dua tombol darurat untuk seluruh aplikasi, yang di sini tiga pilihan
+   per aturan, dan penyuntingnya harus tetap padat. */
+.act-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.act-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 13.5px;
+}
+.act-box input {
+  flex: none;
+  margin: 0;
+  cursor: pointer;
+}
+.act-box input:disabled,
+.act-box input:disabled + .act-name {
+  cursor: default;
+  opacity: 0.55;
+}
+.act-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Field yang dimatikan sebuah aksi tetap TERLIHAT, hanya diredam. Menyembunyikannya
+   akan membuat formulir berubah tinggi setiap kali satu kotak dicentang, dan
+   customer kehilangan tempat untuk melihat bahwa pilihannya masih tersimpan. */
+.rule-edit select:disabled,
+.rule-edit input:disabled,
+.rule-edit textarea:disabled {
+  opacity: 0.55;
+}
+
 /* =========================================================== field ====== */
 
 .field {

@@ -129,7 +129,27 @@ function createAutoComment({
 
       // 3.5 Bukti pin. Dicek SEBELUM pesan dibentuk dan sebelum jatah rate
       // limit terpakai, supaya penolakan di sini tidak membakar kuota.
-      if (pinPolicy !== PIN_POLICY.IGNORE) {
+      //
+      // `requirePin:false` mematikan gerbang ini UNTUK SATU PERMINTAAN, dan
+      // hanya itu — kebijakan instance tidak berubah untuk permintaan lain.
+      //
+      // Kenapa itu benar dan bukan pelemahan: gerbang ini ada untuk menjaga
+      // satu kalimat tertentu, "sudah aku pin", agar tidak pernah terucap tanpa
+      // bukti. Kalimat itu hanya ada pada aturan yang MEMIN. Aturan FAQ tidak
+      // menjanjikan pin apa pun — balasannya milik customer dan tidak menyebut
+      // pin — jadi menuntut bukti pin darinya bukan kehati-hatian, melainkan
+      // cara membuat setiap balasan FAQ hilang tanpa jejak yang bisa dilihat
+      // customer. Dengan transport browser, pinPolicy=CONFIRMED akan menolak
+      // SETIAP balasan FAQ sebagai pin-not-confirmed.
+      //
+      // Yang memutuskan nilai ini adalah aksi aturan (actions.autoPin) di
+      // index.js, bukan hasil pin: aturan yang memin dan gagal memin TETAP
+      // dibungkam, persis seperti sebelumnya.
+      const requirePin = req.requirePin !== false;
+      if (!requirePin && pinPolicy !== PIN_POLICY.IGNORE) {
+        log(`[AUTOCOMMENT_NO_PIN_CLAIM] scene=${scene} playId=${playId} note="aturan ini tidak memin; bukti pin tidak dituntut"`);
+      }
+      if (requirePin && pinPolicy !== PIN_POLICY.IGNORE) {
         const pin = req.pin;
         let gate;
         if (pinPolicy === PIN_POLICY.CONFIRMED) {

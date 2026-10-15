@@ -288,6 +288,24 @@ function createServer({ controller, port = DEFAULT_PORT } = {}) {
     res.status(r.ok ? 200 : 409).json(r);
   });
 
+  // --- modul yang DIBAGI backend dan dashboard ------------------------------
+  //
+  // runtime/rule-actions.js memutuskan aksi mana yang berlaku untuk sebuah
+  // aturan. Ia dipakai oleh validator config, validator pemetaan, preflight,
+  // snapshot runtime, DAN penyunting aturan di halaman ini.
+  //
+  // Disajikan, bukan disalin ke public/. Salinan di dua tempat akhirnya
+  // menyimpang, dan penyimpangan di modul INI berarti dashboard menampilkan
+  // aturan yang berbeda dari yang dijalankan bot — kelas kegagalan yang persis
+  // sama dengan salinan normalizeTitleKey yang sudah pernah menyesatkan
+  // Controller soal produk yang "ketemu". Satu implementasi, dua pemuat.
+  app.get("/rule-actions.js", (_req, res) => {
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.sendFile(path.join(__dirname, "..", "runtime", "rule-actions.js"));
+  });
+
   // --- dashboard statis -----------------------------------------------------
   //
   // Dipasang SESUDAH semua rute /api, jadi berkas statis tidak mungkin

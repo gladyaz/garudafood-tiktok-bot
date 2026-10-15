@@ -54,7 +54,10 @@
     return I18N.t(L(), key, vars);
   }
 
-  var REPLY_MAX = 100;
+  // Batas panjang balasan datang dari ui-logic.js, yang dipaku ke
+  // MAX_REPLY_LENGTH di controller/config-manager.js oleh tes kontrak. Angka
+  // yang ditulis ulang di sini pernah menjadi dua angka yang berbeda.
+  var REPLY_MAX = U.MAX_REPLY_LENGTH;
 
   // --- state halaman --------------------------------------------------------
 
@@ -349,12 +352,23 @@
       } else {
         flow.appendChild(chip(chips.triggersEmpty, "trig off"));
       }
-      flow.appendChild(word("→", "arrow"));
-      flow.appendChild(word(T("ui.rule.thenScene")));
-      flow.appendChild(chip(chips.scene || T("ui.rule.f.scenePick"), chips.scene ? "scene" : "scene off"));
-      flow.appendChild(word("→", "arrow"));
-      flow.appendChild(word(T("ui.rule.thenPin")));
-      flow.appendChild(chip(chips.product || chips.productNone, chips.product ? "prod" : "prod off"));
+      // Kalimat aturan hanya menyebut aksi yang BENAR-BENAR terjadi. Menuliskan
+      // "→ pin" untuk aturan FAQ bukan sekadar berlebihan: ia pernyataan yang
+      // salah tentang apa yang akan dilakukan sistem saat penonton mengetik itu.
+      if (chips.actions.switchScene) {
+        flow.appendChild(word("→", "arrow"));
+        flow.appendChild(word(T("ui.rule.thenScene")));
+        flow.appendChild(chip(chips.scene || T("ui.rule.f.scenePick"), chips.scene ? "scene" : "scene off"));
+      }
+      if (chips.actions.autoPin) {
+        flow.appendChild(word("→", "arrow"));
+        flow.appendChild(word(T("ui.rule.thenPin")));
+        flow.appendChild(chip(chips.product || chips.productNone, chips.product ? "prod" : "prod off"));
+      }
+      if (chips.actions.autoReply) {
+        flow.appendChild(word("→", "arrow"));
+        flow.appendChild(word(T("ui.rule.thenReply")));
+      }
       body.appendChild(flow);
 
       if (chips.reply) {
@@ -367,9 +381,10 @@
         body.appendChild(rep);
       }
 
-      // Catatan tentang isi aturan: scene yang tidak ada di OBS, dan judul yang
-      // sebenarnya terlihat di LIVE.
-      [chips.sceneMissing, chips.resolved].forEach(function (note) {
+      // Catatan tentang isi aturan: aksi yang semuanya mati, scene yang tidak
+      // ada di OBS, aturan yang tidak mem-pin, dan judul yang sebenarnya
+      // terlihat di LIVE.
+      [chips.actionsNone, chips.sceneMissing, chips.pinOff, chips.resolved].forEach(function (note) {
         if (!note) return;
         var p = document.createElement("div");
         p.className = "rule-reply muted";
@@ -430,9 +445,56 @@
     var grid = document.createElement("div");
     grid.className = "rule-edit";
 
+    // SETIAP keputusan di penyunting ini datang dari ui-logic.js: field mana
+    // yang mati, catatan apa yang tampil, dan pesan validasi mana yang muncul.
+    // app.js hanya memasangnya ke DOM — itulah yang membuat perilakunya bisa
+    // diuji tanpa jsdom.
+    var ed = U.ruleEditorView(row, controls, resolved[index], L());
+
+    // --- Aksi saat terpicu ---
+    //
+    // Paling atas, dan itu disengaja: aksi yang menentukan field mana yang
+    // berarti. Membacanya dari atas ke bawah berarti "pilih apa yang terjadi,
+    // lalu isi yang dibutuhkan" — bukan mengisi lima field lalu menemukan tiga
+    // di antaranya tidak terpakai.
+    var actRow = document.createElement("div");
+    actRow.className = "act-row";
+    ed.boxes.forEach(function (b) {
+      var lab = document.createElement("label");
+      lab.className = "act-box";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = b.checked;
+      // disabled DITULIS ULANG di setiap render, tidak hanya saat berubah.
+      // Pelajaran Settings: yang menuliskan disabled harus menuliskannya lagi
+      // setiap kali, kalau tidak field-nya mati PERMANEN begitu satu render
+      // kebetulan terjadi selagi tombolnya sibuk.
+      box.disabled = b.disabled;
+      box.addEventListener("change", function () {
+        row.actions = U.toggleAction(row, b.key, box.checked);
+        markDirty();
+        // Digambar ulang supaya field yang tidak lagi terpakai langsung mati.
+        // Nilai yang sudah diketik TIDAK disentuh — ia hidup di `row`, bukan di
+        // DOM — jadi menyalakan aksinya kembali memulihkan isiannya.
+        renderMappings();
+      });
+      lab.appendChild(box);
+      lab.appendChild(word(b.label, "act-name"));
+      actRow.appendChild(lab);
+    });
+    var actField = field(T("ui.rule.f.actions"), actRow, ed.actionsHelp);
+    actField.className = "field wide";
+    if (ed.actionsError) {
+      var actErr = document.createElement("div");
+      actErr.className = "field-error";
+      actErr.textContent = ed.actionsError;
+      actField.appendChild(actErr);
+    }
+    grid.appendChild(actField);
+
     // --- Scene ---
     var sceneSel = document.createElement("select");
-    sceneSel.disabled = !controls.editingEnabled;
+    sceneSel.disabled = ed.sceneDisabled;
     sceneSel.appendChild(option("", state.scenes.length ? T("ui.rule.f.scenePick") : T("ui.rule.f.noScenes")));
     sceneOpts.forEach(function (o) {
       sceneSel.appendChild(option(o.value, o.supported ? o.label : o.label + " (" + o.note + ")"));
@@ -452,11 +514,11 @@
       markDirty();
       renderMappings();
     });
-    grid.appendChild(field(T("ui.rule.f.scene"), sceneSel));
+    grid.appendChild(field(T("ui.rule.f.scene"), sceneSel, ed.sceneNote));
 
     // --- Product ---
     var prodSel = document.createElement("select");
-    prodSel.disabled = !controls.editingEnabled;
+    prodSel.disabled = ed.productDisabled;
     prodSel.appendChild(option("", state.products.length ? T("ui.rule.f.productNone") : T("ui.rule.f.noProducts")));
     productOpts.forEach(function (o) {
       prodSel.appendChild(option(o.value, o.sub ? o.label + " — " + o.sub : o.label));
@@ -474,13 +536,11 @@
       markDirty();
       renderMappings();
     });
-    grid.appendChild(
-      field(T("ui.rule.f.product"), prodSel, resolved[index] ? T("ui.rule.f.resolved", { title: resolved[index] }) : "")
-    );
+    grid.appendChild(field(T("ui.rule.f.product"), prodSel, ed.productNote));
 
     // --- Trigger ---
     var trig = document.createElement("textarea");
-    trig.disabled = !controls.editingEnabled;
+    trig.disabled = ed.triggersDisabled;
     trig.rows = 3;
     trig.value = row.triggersText || "";
     trig.placeholder = T("ui.rule.f.triggersPlaceholder");
@@ -493,14 +553,10 @@
     // --- Reply ---
     var reply = document.createElement("input");
     reply.type = "text";
-    reply.disabled = !controls.editingEnabled;
+    reply.disabled = ed.replyDisabled;
     reply.value = row.reply || "";
     reply.maxLength = REPLY_MAX;
-    var replyField = field(
-      T("ui.rule.f.reply"),
-      reply,
-      T("ui.rule.f.replyHelp", { n: (row.reply || "").length, max: REPLY_MAX })
-    );
+    var replyField = field(T("ui.rule.f.reply"), reply, ed.replyNote);
     reply.addEventListener("input", function () {
       row.reply = reply.value;
       // Hitungan hurufnya ikut mengetik. Tanpa ini customer baru tahu batasnya

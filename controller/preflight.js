@@ -20,6 +20,9 @@
 
 const netDefault = require("node:net");
 const { validateMappings } = require("./mapping-validator");
+// Aksi per-aturan, DIIMPOR: check scene di bawah hanya boleh menuntut scene
+// dari aturan yang benar-benar menggantinya. Lihat runtime/rule-actions.js.
+const { resolveActions } = require("../runtime/rule-actions");
 const { memoThunk } = require("./lazy");
 const fsDefault = require("node:fs");
 const pathDefault = require("node:path");
@@ -252,11 +255,24 @@ function createPreflight({
     } else if (obsScenes === null) {
       checks.scenes = { ok: false, reason: "obs-scene-list-unreadable" };
     } else {
-      const wanted = config.mappings.map((m) => String(m.scene).trim());
-      if (wanted.length === 0) {
+      // HANYA scene dari aturan yang benar-benar mengganti scene. Aturan yang
+      // mematikan "Ganti scene" tidak menyebut scene mana pun, jadi menuntut
+      // scene itu ada di OBS berarti memblokir START karena sesuatu yang tidak
+      // akan pernah dipakai.
+      const wanted = config.mappings
+        .filter((m) => resolveActions(m).switchScene)
+        .map((m) => String((m && m.scene) || "").trim())
+        .filter((name) => name !== "");
+      if (config.mappings.length === 0) {
         // Tidak ada pemetaan = AutoPIN tidak akan pernah melakukan apa pun. Itu
         // bukan kondisi siap-jalan untuk sebuah produk yang gunanya memin produk.
         checks.scenes = { ok: false, reason: "no-mappings" };
+      } else if (wanted.length === 0) {
+        // Ada aturan, tapi tidak satu pun yang mengganti scene. Itu config yang
+        // sah — aturan balas-saja tidak butuh OBS — jadi check ini tidak punya
+        // apa pun untuk dibandingkan, dan ia mengatakannya daripada mengaku
+        // sudah memeriksa sesuatu.
+        checks.scenes = { ok: true, count: 0, skipped: true, reason: "no-scene-switching-rules" };
       } else {
         const missing = wanted.filter((name) => !obsScenes.includes(name));
         checks.scenes =

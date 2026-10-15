@@ -166,6 +166,7 @@ const RULES = [
 // kedua, dan tidak berubah sedikit pun.
 const { createRuntimeMappings } = require("./runtime/mappings");
 const { readRuntimeConfig, RUNTIME_CONFIG_ENV } = require("./runtime/runtime-config");
+const { LEGACY_ACTIONS } = require("./runtime/rule-actions");
 const { formatSceneMessage: defaultFormatSceneMessage } = require("./autocomment/formatter");
 // Dipindahkan ke atas sini dari blok require AutoPIN di bawah: peta produk mode
 // legacy dibentuk di blok ini, dan `const` di bawah belum terjangkau dari sini.
@@ -230,6 +231,25 @@ if (runtime.unknownPlayback.length > 0) {
 // Definisi + keyword tetap tersimpan di RULES; cukup set enabled:true untuk mengaktifkan lagi.
 // Sejak P2 sumbernya adalah snapshot runtime — yang di mode legacy berisi RULES apa adanya.
 const activeRules = () => runtime.activeRules();
+
+// --- aksi per-aturan --------------------------------------------------------
+//
+// Aksi mana yang berlaku untuk sebuah rule, dan kunci apa yang dipakai untuk
+// mencari produk serta balasannya. Keduanya punya jawaban yang AMAN untuk rule
+// yang tidak membawa informasi itu:
+//
+//   rule dari RULES (mode legacy)      tidak punya actions -> ketiganya menyala
+//   rule null (switch dari operator)   tidak punya actions -> ketiganya menyala
+//   rule dari config (mode config)     membawa actions + key dari snapshot
+//
+// Jadi setiap jalur yang sudah ada berperilaku persis seperti sebelumnya, dan
+// yang baru hanyalah jalur yang memang membawa aksinya sendiri.
+const ruleActionsOf = (rule) => (rule && rule.actions ? rule.actions : LEGACY_ACTIONS);
+
+// Kunci pencarian produk/balasan. Untuk setiap rule yang punya scene ia SAMA
+// dengan nama scene-nya, jadi mode legacy dan seluruh config yang sudah ada
+// mencari di tempat yang sama seperti sebelumnya.
+const ruleKeyOf = (rule, sceneName) => (rule && rule.key ? rule.key : sceneName || (rule ? rule.scene : "") || "");
 
 
 // durasi maksimal kembali ke MAIN / cooldown (bisa diubah runtime)
@@ -358,19 +378,51 @@ let currentPlayRequesters = 0;
 // berhak bicara. Dijalankan sebagai satu tugas latar: jalur playback tidak
 // pernah menunggu browser, dan kegagalan di sini tidak punya jalan untuk
 // menyentuh busy / activeScene / cooldown / timer / antrean.
-async function runAuxiliaries(sceneName, playId, requesters) {
+// AKSI YANG MATI TIDAK PERNAH DICOBA.
+//
+// Bukan "dicoba lalu dilewati": tidak ada permintaan yang dikirim, tidak ada
+// jatah rate limit yang terpakai, dan tidak ada baris gagal yang muncul di
+// Activity. Aturan FAQ yang tidak memin apa pun tidak boleh menghasilkan
+// product-not-found, karena tidak ada produk yang pernah dicari.
+//
+// Dua lapis saklar, dan keduanya harus menyala:
+//   saklar global   AUTOPIN_ENABLED / AUTOCOMMENT_ENABLED, sudah tertanam di
+//                   instance scenePin/autoComment (enabled:false = nol aksi)
+//   aksi aturan     diperiksa di sini
+// Jadi aturan yang menyalakan Pin produk sementara saklar global AutoPIN mati
+// tetap tidak memin apa pun — saklar global tetap tombol darurat.
+async function runAuxiliaries(rule, key, sceneName, playId, requesters) {
+  const actions = ruleActionsOf(rule);
+
   let pin;
-  try {
-    pin = await scenePin.requestPin({ scene: sceneName, playId });
-  } catch (err) {
-    console.warn(`[AUTOPIN_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
-    pin = { ok: false, reason: "dispatch-threw" };
+  if (actions.autoPin) {
+    try {
+      pin = await scenePin.requestPin({ scene: key, playId });
+    } catch (err) {
+      console.warn(`[AUTOPIN_FAILED] scene=${key} playId=${playId} reason=dispatch-threw`);
+      pin = { ok: false, reason: "dispatch-threw" };
+    }
+  } else {
+    // Bentuknya tetap bentuk hasil pin, supaya pembacanya tidak perlu tahu
+    // kenapa ia tidak ada. `skipped` membedakannya dari pin yang GAGAL.
+    pin = { ok: false, reason: "action-disabled", skipped: true };
   }
 
+  if (!actions.autoReply) return;
+
   try {
-    await autoComment.requestComment({ scene: sceneName, playId, requesters, pin });
+    await autoComment.requestComment({
+      scene: key,
+      playId,
+      requesters,
+      pin,
+      // Aturan yang tidak memin tidak menjanjikan pin, jadi bukti pin tidak
+      // dituntut darinya. Aturan yang memin tetap dituntut seperti sebelumnya.
+      // Lihat autocomment/core.js.
+      requirePin: actions.autoPin,
+    });
   } catch (err) {
-    console.warn(`[AUTOCOMMENT_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+    console.warn(`[AUTOCOMMENT_FAILED] scene=${key} playId=${playId} reason=dispatch-threw`);
   }
 }
 
@@ -379,17 +431,59 @@ async function runAuxiliaries(sceneName, playId, requesters) {
 // (atau scene lain sudah menggantikan) selagi OBS masih memproses, scene ini
 // tidak pernah benar-benar "mulai" bagi penonton -> jangan pin, jangan komentar,
 // dan jangan habiskan jatah rate limit untuknya.
-function dispatchAuxiliaries(sceneName, playId, requesters) {
+function dispatchAuxiliaries(sceneName, playId, requesters, rule = null) {
   if (activeScene !== sceneName) {
     console.log(`[AUX_SKIPPED] scene=${sceneName} playId=${playId} reason=scene-no-longer-active active=${activeScene}`);
     return;
   }
   // fire-and-forget: hasilnya tidak pernah ditunggu oleh playback.
   try {
-    const task = runAuxiliaries(sceneName, playId, requesters);
+    const task = runAuxiliaries(rule, ruleKeyOf(rule, sceneName), sceneName, playId, requesters);
     if (task && typeof task.catch === "function") task.catch(() => {});
   } catch (err) {
     console.warn(`[AUX_FAILED] scene=${sceneName} playId=${playId} reason=dispatch-threw`);
+  }
+}
+
+// Aturan yang TIDAK mengganti scene.
+//
+// Tidak ada scene yang diputar, jadi tidak ada gerbang "scene masih aktif"
+// seperti di dispatchAuxiliaries, dan tidak ada pemutaran yang bisa menjadi
+// basi.
+//
+// Yang SENGAJA tidak disentuh satu pun: busy, activeScene, antrean, timer,
+// playedScenes, dan jeda global. Aturan balas-saja tidak boleh bisa menahan
+// atau mendahului satu pun pemutaran scene — ia berjalan di sampingnya.
+//
+// ---------------------------------------------------------------------------
+// KENAPA TIDAK ADA playId DI SINI
+//
+// playId adalah NOMOR GENERASI PEMUTARAN, dan kedua dispatcher memakainya
+// dengan satu arti: "nomor yang lebih kecil dari yang terakhir dilihat adalah
+// sisa dari scene yang sudah tidak tayang, buang". Arti itu benar selama hanya
+// penggantian scene yang menaikkan nomornya.
+//
+// Kalau aturan tanpa scene ikut menaikkannya, arti itu rusak secara diam-diam:
+// scene yang sedang menunggu hasil pin-nya (satu sampai tiga detik) akan
+// melihat nomornya tersalip oleh sebuah balasan FAQ, lalu balasan scene itu
+// sendiri dibuang sebagai `stale`. Penonton kehilangan kalimat "sudah aku pin"
+// karena ada orang lain yang bertanya soal harga — kegagalan yang tidak muncul
+// sebagai error di mana pun.
+//
+// Jadi nomornya tidak dipakai, dan proteksi stale/dedupe milik scene tetap
+// berarti persis seperti sebelumnya. Yang menggantikannya untuk aturan ini
+// adalah cooldown per-aturan di enqueueTrigger, yang JAUH lebih ketat daripada
+// dedupe playId: dedupe playId hanya mencegah satu scene-start dikerjakan dua
+// kali, sementara cooldown mencegah aturan yang sama terpicu lagi selama
+// SCENE_REPLAY_COOLDOWN_MS penuh.
+function dispatchRuleOnly(rule, requesters) {
+  const key = ruleKeyOf(rule, "");
+  console.log(`[RULE_ONLY] key=${key} requesters=${requesters}`);
+  try {
+    const task = runAuxiliaries(rule, key, "", undefined, requesters);
+    if (task && typeof task.catch === "function") task.catch(() => {});
+  } catch (err) {
+    console.warn(`[AUX_FAILED] scene=${key} reason=dispatch-threw`);
   }
 }
 
@@ -473,6 +567,45 @@ function enqueueTrigger(rule, requesterNickname = null) {
   if (!rule) return;
 
   const scene = rule.scene;
+
+  // --- aturan yang tidak mengganti scene -----------------------------------
+  //
+  // Diperiksa PALING DULU, sebelum satu pun keadaan antrean dibaca atau
+  // ditulis. Aturan ini tidak punya nama scene; membiarkannya sampai ke
+  // pemeriksaan di bawah akan membuatnya tercatat sebagai INVALID_SCENE —
+  // sebuah kesalahan konfigurasi yang tidak pernah terjadi — dan setiap jalur
+  // sesudahnya (busy, activeScene, playedScenes, timer) menganggap dirinya
+  // milik sebuah pemutaran yang tidak ada.
+  if (!ruleActionsOf(rule).switchScene) {
+    const key = ruleKeyOf(rule, "");
+    if (!key) {
+      console.error(`[INVALID_RULE] reason=no-rule-key → request diabaikan`);
+      return;
+    }
+    // Cooldown yang SAMA yang dipakai scene, hanya dengan kunci aturan ini.
+    // Tanpa ini, dua puluh penonton yang bertanya soal harga menjadi dua puluh
+    // permintaan balasan, dan satu-satunya yang menahannya adalah rate limit
+    // AutoComment — yaitu enam kalimat identik per menit ke chat yang sama.
+    const left = sceneCooldownRemaining(key);
+    if (left > 0) {
+      console.log(`[SKIP_COOLDOWN] scene=${key} remaining=${left}`);
+      return;
+    }
+    if (requesterNickname) {
+      const rec = userState.get(requesterNickname);
+      if (rec && Date.now() < rec.mutedUntil) {
+        console.log(`⚠ Ignore: ${requesterNickname} is muted`);
+        return;
+      }
+    }
+    if (SCENE_REPLAY_COOLDOWN_MS > 0) {
+      sceneCooldownUntil.set(key, Date.now() + SCENE_REPLAY_COOLDOWN_MS);
+      console.log(`[COOLDOWN_START] scene=${key} duration=${SCENE_REPLAY_COOLDOWN_MS}`);
+    }
+    dispatchRuleOnly(rule, requesterNickname ? 1 : 0);
+    return;
+  }
+
   if (!isValidSceneName(scene)) {
     console.error(`[INVALID_SCENE] scene=${scene} → request diabaikan (cek SCENES/RULES)`);
     return;
@@ -792,7 +925,13 @@ let _fuzzyIndex = null;
 let _fuzzySig = "";
 function fuzzyIndex() {
   const rules = activeRules();
-  const sig = rules.map((r) => r.scene).join("|") + "#" + rules.length;
+  // Tanda tangan dibentuk dari KUNCI aturan, bukan dari nama scene-nya.
+  //
+  // Aturan tanpa penggantian scene punya scene kosong, jadi dengan nama scene
+  // dua aturan FAQ yang berbeda menghasilkan tanda tangan "|" yang sama dan
+  // indeks basi akan dipakai terus — pemicu yang baru disunting tidak pernah
+  // berlaku, tanpa ada apa pun yang terlihat salah.
+  const sig = rules.map((r) => ruleKeyOf(r, r.scene)).join("|") + "#" + rules.length;
   if (_fuzzyIndex === null || sig !== _fuzzySig) {
     _fuzzyIndex = buildMatcherIndex(rules, { normalize: normalizeForMatching });
     _fuzzySig = sig;
@@ -878,7 +1017,7 @@ function switchScene(sceneName, rule = null) {
         }, fallbackMs);
 
         // playback sudah aman (scene aktif + failsafe terpasang) -> baru pin
-        dispatchAuxiliaries(sceneName, playId, requesters);
+        dispatchAuxiliaries(sceneName, playId, requesters, rule);
         return;
       }
 
@@ -898,7 +1037,7 @@ function switchScene(sceneName, rule = null) {
       }, dur);
 
       // failsafe sudah terpasang -> baru saudara-saudara auxiliary dipanggil
-      dispatchAuxiliaries(sceneName, playId, requesters);
+      dispatchAuxiliaries(sceneName, playId, requesters, rule);
     })
     .catch((err) => {
       console.error("❌ Error ganti scene:", err?.message || err);
@@ -938,7 +1077,7 @@ obs.on("MediaInputPlaybackEnded", (data) => {
 });
 
 function matchAndEnqueue(rule, nickname, via) {
-  console.log(`[MATCH] scene=${rule.scene} user=${nickname} via=${via}`);
+  console.log(`[MATCH] scene=${ruleKeyOf(rule, rule.scene)} user=${nickname} via=${via}`);
   enqueueTrigger(rule, nickname);
 }
 

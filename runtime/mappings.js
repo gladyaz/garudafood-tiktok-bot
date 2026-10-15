@@ -53,6 +53,10 @@ const NEVER_MAPPED = Object.freeze(["MAIN"]);
 
 const SOURCES = Object.freeze({ LEGACY: "legacy", CONFIG: "config" });
 
+// Aksi per-aturan, DIIMPOR. Keputusan "aksi mana yang berlaku" hidup di satu
+// tempat saja; lihat runtime/rule-actions.js.
+const { resolveActions, ruleKeys } = require("./rule-actions");
+
 function freezeDeep(value) {
   if (value === null || typeof value !== "object") return value;
   if (Object.isFrozen(value)) return value;
@@ -79,15 +83,44 @@ function freezeSnapshotOnly(snapshot) {
   return Object.freeze(snapshot);
 }
 
+function triggersOf(mapping) {
+  return Array.isArray(mapping.triggers) ? mapping.triggers.filter((t) => typeof t === "string" && t.trim() !== "") : [];
+}
+
+// Aturan yang TIDAK mengganti scene.
+//
+// Ia tidak punya nama scene, tidak punya mediaInputs, dan tidak punya durasi —
+// karena tidak ada yang akan diputar. Yang dimilikinya hanya pemicu dan aksi,
+// dan itu cukup: matcher bekerja atas keywords, dan jalur pemutaran tidak
+// pernah menyentuhnya karena index.js memeriksa actions.switchScene SEBELUM
+// menyentuh antrean.
+//
+// `scene` tetap ada sebagai string KOSONG, bukan dihilangkan. Seluruh jalur
+// playback membaca rule.scene; field yang hilang akan menjadi undefined yang
+// menyebar sebagai "undefined" di log dan di nama scene yang dikirim ke OBS.
+function buildSceneLessRule(mapping, key, actions) {
+  return {
+    scene: "",
+    key,
+    actions,
+    keywords: triggersOf(mapping),
+  };
+}
+
 // Satu baris rule seperti yang dipahami matcher dan jalur pemutaran. Bentuknya
 // sengaja sama dengan entri RULES di index.js, karena konsumennya memang sama.
-function buildRuleFromMapping(mapping, baseRule) {
-  const triggers = Array.isArray(mapping.triggers) ? mapping.triggers.filter((t) => typeof t === "string" && t.trim() !== "") : [];
+function buildRuleFromMapping(mapping, baseRule, key, actions) {
+  const triggers = triggersOf(mapping);
   return {
     // Semua detail pemutaran diwarisi dari base rule: mediaInputs,
     // waitForMediaEnd, duration, dan pattern kalau ada.
     ...baseRule,
     scene: baseRule.scene,
+    // Kunci pencarian produk dan balasan. Untuk aturan yang punya scene ia
+    // SELALU sama dengan nama scene-nya, jadi setiap config yang sudah ada
+    // menghasilkan peta yang identik — bukan yang mirip.
+    key,
+    actions,
     // mediaInputs DISALIN, tidak dibagi. Tanpa salinan ini, pembekuan snapshot
     // mode config akan ikut membekukan array yang masih dimiliki RULES di
     // index.js — modul ini tidak boleh mengubah sifat objek milik orang lain.
@@ -148,28 +181,56 @@ function createRuntimeMappings({
   const replies = {};
   const unknownPlayback = [];
 
-  for (const m of mappings) {
-    const scene = String(m.scene || "").trim();
-    if (!scene || NEVER_MAPPED.includes(scene)) continue;
+  // Kunci dihitung untuk SELURUH daftar lebih dulu, bukan per baris: kunci
+  // buatan untuk aturan tanpa scene harus menghindari semua nama scene di
+  // config yang sama, termasuk yang tertulis sesudahnya.
+  const keys = ruleKeys(mappings);
 
-    const baseRule = baseByScene.get(scene);
-    if (!baseRule) {
-      // Tidak ada detail pemutaran untuk scene ini. Dicatat, TIDAK dijalankan.
-      unknownPlayback.push(scene);
-      continue;
+  mappings.forEach((m, index) => {
+    const scene = String(m.scene || "").trim();
+    const actions = resolveActions(m);
+    const key = keys[index];
+
+    // --- aturan yang mengganti scene -----------------------------------------
+    if (actions.switchScene) {
+      if (!scene || NEVER_MAPPED.includes(scene)) return;
+
+      const baseRule = baseByScene.get(scene);
+      if (!baseRule) {
+        // Tidak ada detail pemutaran untuk scene ini. Dicatat, TIDAK dijalankan.
+        unknownPlayback.push(scene);
+        return;
+      }
+      rules.push(buildRuleFromMapping(m, baseRule, key, actions));
+    } else {
+      // --- aturan tanpa penggantian scene ------------------------------------
+      //
+      // TIDAK dicatat sebagai unknownPlayback, dan itu bukan kelalaian:
+      // unknownPlayback berarti "scene ini ingin diputar tapi kami tidak tahu
+      // caranya". Aturan ini tidak ingin diputar sama sekali, jadi tidak ada
+      // detail pemutaran yang hilang dan tidak ada yang perlu dikeluhkan.
+      //
+      // Tanpa pemicu ia tidak akan pernah bisa diminta penonton, jadi ia tidak
+      // punya alasan untuk ada di indeks matcher.
+      if (triggersOf(m).length === 0) return;
+      rules.push(buildSceneLessRule(m, key, actions));
     }
 
-    rules.push(buildRuleFromMapping(m, baseRule));
-
+    // --- produk --------------------------------------------------------------
+    // Hanya aturan yang BENAR-BENAR memin yang masuk ke peta produk. Aturan yang
+    // mematikan Pin produk tapi masih menyimpan pilihan judulnya tidak boleh
+    // bisa memin apa pun lewat peta ini: gerbang aksinya ada di index.js, dan
+    // ini lapis keduanya. Dua lapis, pola yang sama dengan AutoComment.
+    //
     // product boleh null secara eksplisit: scene yang punya trigger tapi tidak
-    // pernah dipin (mis. scene FAQ). Yang ditolak validator adalah judul KOSONG,
-    // yaitu field yang lupa diisi — bukan "memang tidak ada produk".
+    // pernah dipin (mis. scene FAQ). Yang ditolak validator adalah judul KOSONG
+    // pada aturan yang memin — yaitu field yang lupa diisi.
     const title = m.product && typeof m.product.title === "string" ? m.product.title.trim() : "";
-    if (title) productMap[scene] = title;
+    if (actions.autoPin && title) productMap[key] = title;
 
     const reply = typeof m.reply === "string" ? m.reply.trim() : "";
-    if (reply) replies[scene] = reply;
-  }
+    if (actions.autoReply && reply) replies[key] = reply;
+  });
 
   const snapshot = {
     source: SOURCES.CONFIG,
@@ -179,20 +240,28 @@ function createRuntimeMappings({
     replies,
     unknownPlayback,
     activeRules: () => rules.filter((r) => r.enabled !== false),
-    getProductForScene: (scene) => productMap[scene] || null,
-    getReplyForScene: (scene) => replies[scene] || null,
+    // Argumennya adalah KUNCI ATURAN, yang untuk setiap aturan ber-scene sama
+    // dengan nama scene-nya (lihat ruleKeys di runtime/rule-actions.js). Nama
+    // fungsinya dipertahankan karena itulah arti yang berlaku untuk hampir
+    // semua aturan, dan mengubahnya hanya memaksa setiap pemanggil berubah
+    // tanpa ada yang menjadi lebih benar.
+    getProductForScene: (key) => productMap[key] || null,
+    getReplyForScene: (key) => replies[key] || null,
     // Drop-in untuk opsi `format` di createAutoComment. Bentuk hasilnya sama
     // dengan formatSceneMessage: { ok, text } atau { ok:false, reason }.
     //
     // Balasan dipakai APA ADANYA, tanpa placeholder dan tanpa interpolasi.
     // Teks ini dibaca penonton; ia tidak boleh bisa berubah bentuk karena
     // sesuatu di dalam kode.
-    formatSceneMessage: (scene) => {
-      const text = replies[scene];
+    formatSceneMessage: (key) => {
+      const text = replies[key];
       if (!text) return { ok: false, reason: "no-reply-configured" };
       return { ok: true, text };
     },
-    scenes: () => rules.map((r) => r.scene),
+    // Hanya scene yang BENAR-BENAR diputar. Aturan tanpa penggantian scene
+    // tidak punya nama scene, dan memasukkan string kosong ke daftar ini akan
+    // membuat pemanggilnya mengira ada scene bernama "".
+    scenes: () => rules.filter((r) => r.scene).map((r) => r.scene),
   };
   return freezeDeep(snapshot);
 }

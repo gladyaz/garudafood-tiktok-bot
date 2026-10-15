@@ -25,6 +25,10 @@ const { loadConfig: autopinConfig } = require("../autopin/config");
 // bukan ditulis ulang, supaya pengisi dan pembacanya tidak bisa menyimpang —
 // pola yang sama dengan RUNTIME_CONFIG_ENV di controller/index.js.
 const { LOCK_FILE_ENV } = require("../runtime/single-instance");
+// Aksi per-aturan. Satu implementasi dipakai validator bentuk (di sini),
+// validator dunia nyata, preflight, snapshot runtime, dan penyunting di UI.
+// Lihat runtime/rule-actions.js untuk alasan panjangnya.
+const { resolveActions, validateActionsShape, anyEnabled } = require("../runtime/rule-actions");
 
 const CONFIG_VERSION = 1;
 
@@ -184,9 +188,30 @@ function validateConfig(raw) {
         return;
       }
 
-      if (!isNonEmptyString(m.scene)) {
+      // Aksi aturan: mana dari ganti-scene / pin-produk / balas-komentar yang
+      // berlaku. Field ini OPSIONAL, dan ketiadaannya berarti ketiganya menyala
+      // — itulah yang membuat config yang ditulis v0.1.1 tetap terbaca dan tetap
+      // berperilaku sama. Lihat runtime/rule-actions.js.
+      for (const problem of validateActionsShape(m.actions)) {
+        add(at + ".actions" + (problem.key ? "." + problem.key : ""), problem.code);
+      }
+      const actions = resolveActions(m);
+      // Aturan yang tidak melakukan apa pun saat terpicu bukan aturan. Ia hanya
+      // bisa terjadi kalau customer mematikan ketiganya dengan sengaja, jadi
+      // yang benar adalah mengatakannya — bukan menyimpan baris yang diam.
+      if (!anyEnabled(actions)) add(at + ".actions", "no-actions-enabled");
+
+      // Scene DIBUTUHKAN hanya kalau aturan ini memang mengganti scene.
+      //
+      // Ini pelonggaran, bukan pengetatan: setiap aturan yang sudah ada punya
+      // scene dan switchScene-nya menyala, jadi tidak satu pun config yang
+      // sudah tersimpan berubah artinya di sini.
+      if (actions.switchScene && !isNonEmptyString(m.scene)) {
         add(at + ".scene", "must-be-non-empty-string");
-      } else {
+      } else if (!actions.switchScene && m.scene !== undefined && m.scene !== null && typeof m.scene !== "string") {
+        add(at + ".scene", "must-be-string");
+      }
+      if (isNonEmptyString(m.scene)) {
         const scene = m.scene.trim();
         if (NEVER_MAPPED_SCENES.includes(scene)) add(at + ".scene", "scene-never-mappable");
         // Satu scene = satu produk. Dua baris untuk scene yang sama berarti satu
@@ -209,7 +234,25 @@ function validateConfig(raw) {
       //
       // Bedanya null dan judul kosong disengaja: yang satu pernyataan, yang satu
       // kelalaian, dan keduanya tidak boleh diperlakukan sama.
-      if (m.product === null) {
+      //
+      // Sejak v0.2.0 ada keadaan KEEMPAT, dan hanya untuk aturan yang mematikan
+      // Pin produk: field-nya boleh TIDAK ADA sama sekali, dan judul kosong pun
+      // sah. Aturan FAQ tidak punya pendapat tentang produk, dan memaksa
+      // customer menuliskan null untuk sesuatu yang tidak ia pakai hanya
+      // memindahkan kelalaian ke tempat lain.
+      //
+      // Judul yang TERSIMPAN pada aturan yang tidak memin tetap dibiarkan apa
+      // adanya: itu pilihan customer yang masih berguna kalau ia menyalakan Pin
+      // produk lagi nanti. Yang menjaga agar ia tidak dipakai adalah aksinya,
+      // bukan hilangnya nilai.
+      if (!actions.autoPin) {
+        if (m.product !== null && m.product !== undefined) {
+          if (!isPlainObject(m.product)) add(at + ".product", "must-be-object");
+          else if (m.product.title !== undefined && typeof m.product.title !== "string") {
+            add(at + ".product.title", "must-be-string");
+          }
+        }
+      } else if (m.product === null) {
         /* sengaja tanpa produk: sah */
       } else if (m.product === undefined) {
         add(at + ".product", "product-missing");

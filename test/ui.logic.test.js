@@ -479,6 +479,10 @@ test("baris formulir -> pemetaan config", () => {
     product: { title: "O'CORN Sea Salt" },
     triggers: ["spill etalase 1", "etalase satu"],
     reply: "sudah dipin",
+    // Baris yang disunting SELALU menyatakan ketiga aksinya. Baris tanpa aksi
+    // yang tertulis adalah baris yang artinya bergantung pada bawaan versi
+    // mana yang membacanya nanti.
+    actions: { switchScene: true, autoPin: true, autoReply: true },
   });
 });
 
@@ -501,17 +505,72 @@ test("pemetaan config -> baris formulir, dan kembali lagi utuh", () => {
     triggers: ["etalase dua", "kode dua"],
     reply: "siap kak",
   };
-  assert.deepEqual(U.rowToMapping(U.mappingToRow(original)), original);
+  // Satu-satunya yang DITAMBAHKAN bolak-balik adalah aksi yang dinyatakan apa
+  // adanya; untuk aturan lama itu ketiganya menyala, yaitu perilakunya hari ini.
+  assert.deepEqual(U.rowToMapping(U.mappingToRow(original)), Object.assign({}, original, { actions: { switchScene: true, autoPin: true, autoReply: true } }));
+});
+
+test("bolak-balik kedua tidak mengubah apa pun lagi", () => {
+  // Sifat yang sesungguhnya diandalkan: menyimpan dua kali tidak menghasilkan
+  // dua berkas yang berbeda.
+  const once = U.rowToMapping(U.mappingToRow({ scene: "PAX-2", product: { title: "x" }, triggers: ["a"], reply: "b" }));
+  assert.deepEqual(U.rowToMapping(U.mappingToRow(once)), once);
 });
 
 test("pemetaan produk null bolak-balik tetap null", () => {
   const original = { scene: "AI LIVE_FAQ_CO", product: null, triggers: ["cara order"] };
-  assert.deepEqual(U.rowToMapping(U.mappingToRow(original)), original);
+  const back = U.rowToMapping(U.mappingToRow(original));
+  assert.equal(back.product, null);
+  assert.deepEqual(back, Object.assign({}, original, { actions: { switchScene: true, autoPin: true, autoReply: true } }));
+});
+
+test("AKSI: aturan lama tanpa field actions dibaca sebagai ketiganya menyala", () => {
+  // Inti kompatibilitas v0.2.0, dan tempatnya di UI: kartu aturan harus
+  // menggambarkan aturan lama persis seperti sebelumnya.
+  const row = U.mappingToRow({ scene: "PAX-1", product: { title: "x" }, triggers: ["a"], reply: "b" });
+  assert.deepEqual(row.actions, { switchScene: true, autoPin: true, autoReply: true });
+});
+
+test("AKSI: aksi yang tertulis di config MENANG atas bawaan", () => {
+  const row = U.mappingToRow({ scene: "FAQ-HARGA", product: null, triggers: ["berapa harganya"], reply: "cek etalase ya kak", actions: { switchScene: true, autoPin: false, autoReply: true } });
+  assert.deepEqual(row.actions, { switchScene: true, autoPin: false, autoReply: true });
+  assert.deepEqual(U.rowToMapping(row).actions, { switchScene: true, autoPin: false, autoReply: true });
+});
+
+test("AKSI: nilai yang sudah diketik TIDAK hilang karena aksinya dimatikan", () => {
+  // Mematikan Pin produk adalah keputusan tentang apa yang DIKERJAKAN aturan,
+  // bukan perintah membuang pilihan customer. Kalau ia menyalakannya lagi,
+  // pilihannya harus masih ada - termasuk setelah disimpan dan dibaca ulang.
+  const row = {
+    scene: "FAQ-HARGA",
+    productTitle: "O'CORN Sea Salt",
+    triggersText: "berapa harganya",
+    reply: "cek etalase ya kak",
+    actions: { switchScene: true, autoPin: false, autoReply: false },
+  };
+  const saved = U.rowToMapping(row);
+  assert.deepEqual(saved.product, { title: "O'CORN Sea Salt" });
+  assert.equal(saved.reply, "cek etalase ya kak");
+  const back = U.mappingToRow(saved);
+  assert.equal(back.productTitle, "O'CORN Sea Salt");
+  assert.equal(back.reply, "cek etalase ya kak");
+  assert.equal(back.scene, "FAQ-HARGA");
+  // Dan menyalakannya kembali memulihkan aturan yang utuh, tanpa mengetik ulang.
+  back.actions = { switchScene: true, autoPin: true, autoReply: true };
+  assert.deepEqual(U.rowToMapping(back), {
+    scene: "FAQ-HARGA",
+    product: { title: "O'CORN Sea Salt" },
+    triggers: ["berapa harganya"],
+    reply: "cek etalase ya kak",
+    actions: { switchScene: true, autoPin: true, autoReply: true },
+  });
 });
 
 test("baris baru kosong dan aman", () => {
   const row = U.mappingToRow(U.blankMapping());
-  assert.deepEqual(row, { scene: "", productTitle: "", triggersText: "", reply: "" });
+  // Aturan baru lahir dengan ketiga aksinya menyala: itu bentuk aturan etalase,
+  // dan itulah aturan yang paling sering dibuat orang.
+  assert.deepEqual(row, { scene: "", productTitle: "", triggersText: "", reply: "", actions: { switchScene: true, autoPin: true, autoReply: true } });
 });
 
 test("payload config menukar HANYA mappings, sisanya utuh", () => {
@@ -526,7 +585,15 @@ test("payload config menukar HANYA mappings, sisanya utuh", () => {
   assert.equal(out.version, 1);
   assert.equal(out.tiktok.username, "akun");
   assert.equal(out.settings.autopinEnabled, true);
-  assert.deepEqual(out.mappings, [{ scene: "PAX-1", product: { title: "A" }, triggers: ["a"], reply: "r" }]);
+  assert.deepEqual(out.mappings, [
+    {
+      scene: "PAX-1",
+      product: { title: "A" },
+      triggers: ["a"],
+      reply: "r",
+      actions: { switchScene: true, autoPin: true, autoReply: true },
+    },
+  ]);
 });
 
 test("payload config MEMBUANG passwordSet, dan tidak pernah mengirim password", () => {
@@ -793,7 +860,17 @@ test("modul bisa dimuat sebagai skrip browser maupun modul Node", () => {
   assert.ok(src.includes("root.AiLiveUI"), "harus memasang diri di window untuk browser");
 
   // Dan benar-benar dijalankan sebagai skrip browser, dengan global tiruan.
+  //
+  // Dependensinya dimuat lebih dulu DALAM URUTAN YANG SAMA dengan index.html,
+  // sebagai skrip browser juga. Itu bagian dari yang diuji: ui-logic.js memakai
+  // window.AiLiveRuleActions dan window.AiLiveI18N, jadi urutan <script> yang
+  // salah di halaman akan membuat dashboard kosong — dan di sini ia terlihat.
   const sandbox = {};
+  for (const dep of ["../runtime/rule-actions.js", "../controller/public/i18n.js"]) {
+    new Function("self", fs.readFileSync(require.resolve(dep), "utf8")).call(sandbox, sandbox);
+  }
+  assert.equal(typeof sandbox.AiLiveRuleActions, "object", "modul aksi aturan harus terpasang lebih dulu");
+  assert.equal(typeof sandbox.AiLiveI18N, "object");
   new Function("self", src).call(sandbox, sandbox);
   assert.equal(typeof sandbox.AiLiveUI, "object");
   assert.equal(typeof sandbox.AiLiveUI.suggestForScene, "function");

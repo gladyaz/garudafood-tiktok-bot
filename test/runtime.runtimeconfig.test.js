@@ -49,7 +49,7 @@ test("build menghasilkan bentuk yang sempit dan tetap", () => {
 test("setiap mapping punya tepat empat field", () => {
   const a = buildRuntimeConfig({ mappings: M });
   for (const m of a.mappings) {
-    assert.deepEqual(Object.keys(m).sort(), ["product", "reply", "scene", "triggers"]);
+    assert.deepEqual(Object.keys(m).sort(), ["actions", "product", "reply", "scene", "triggers"]);
   }
 });
 
@@ -58,7 +58,7 @@ test("field asing di mapping dibuang, tidak diteruskan", () => {
   const a = buildRuntimeConfig({
     mappings: [{ scene: "PAX-1", product: { title: "x" }, triggers: ["a"], reply: "b", rahasia: "jangan ikut", obsPassword: "bocor" }],
   });
-  assert.deepEqual(Object.keys(a.mappings[0]).sort(), ["product", "reply", "scene", "triggers"]);
+  assert.deepEqual(Object.keys(a.mappings[0]).sort(), ["actions", "product", "reply", "scene", "triggers"]);
   assert.ok(!JSON.stringify(a).includes("bocor"));
 });
 
@@ -184,7 +184,15 @@ test("BERKAS YANG DISUNTING TANGAN ditolak lewat id-mismatch", () => {
 
 test("menambah pemetaan tanpa memperbarui id juga tertolak", () => {
   const a = buildRuntimeConfig({ mappings: M });
-  a.mappings.push({ scene: "PAX-9", product: { title: "x" }, triggers: ["a"], reply: null });
+  // Pemetaan yang diselundupkan dibuat LENGKAP, termasuk aksinya: yang sedang
+  // diuji di sini adalah hash yang tidak lagi cocok, bukan bentuk yang salah.
+  a.mappings.push({
+    scene: "PAX-9",
+    product: { title: "x" },
+    triggers: ["a"],
+    reply: null,
+    actions: { switchScene: true, autoPin: true, autoReply: true },
+  });
   assert.equal(validateRuntimeConfig(a).reason, "id-mismatch");
 });
 

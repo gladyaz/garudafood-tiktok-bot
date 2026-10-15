@@ -317,8 +317,12 @@ test("tidak ada rahasia di artefak config runtime", () => {
   // sini dulu, dengan sadar.
   assert.deepEqual(Object.keys(parsed).sort(), ["configVersion", "createdAt", "id", "mappings", "version"]);
   for (const m of parsed.mappings) {
-    assert.deepEqual(Object.keys(m).sort(), ["product", "reply", "scene", "triggers"]);
+    assert.deepEqual(Object.keys(m).sort(), ["actions", "product", "reply", "scene", "triggers"]);
     if (m.product !== null) assert.deepEqual(Object.keys(m.product), ["title"]);
+    // Aksi adalah tiga boolean dan tidak lebih. Ia lewat daftar tertutup ini
+    // dengan sadar, bukan karena kebetulan ikut terbawa.
+    assert.deepEqual(Object.keys(m.actions).sort(), ["autoPin", "autoReply", "switchScene"]);
+    for (const v of Object.values(m.actions)) assert.equal(typeof v, "boolean");
   }
 
   // Dan nilai rahasia yang sungguhan ada di config customer tidak boleh ikut.

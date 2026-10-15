@@ -28,6 +28,10 @@ const { normalizeForMatching } = require("../tiktok/normalize");
 // mencegah: Controller mengatakan "produk ketemu" sementara resolveProductForPin
 // tidak akan menemukannya saat LIVE. Satu implementasi, tidak ada drift.
 const { normalizeTitleKey } = require("../autopin/core");
+// Aksi per-aturan. Validator ini memeriksa HANYA aksi yang menyala; aksi yang
+// mati tidak punya prasyarat, karena ia tidak akan dijalankan. Lihat
+// runtime/rule-actions.js, termasuk kenapa `declaresActions` ada.
+const { resolveActions, declaresActions, anyEnabled } = require("../runtime/rule-actions");
 
 // Mengembalikan { ok, reason?, count?, product? } untuk satu kunci judul.
 function resolveProduct(catalogue, titleKey) {
@@ -60,30 +64,62 @@ function validateMappings({
 
   for (const m of mappings) {
     const scene = String((m && m.scene) || "").trim();
-    const row = { scene, ok: true, reason: null };
+    const actions = resolveActions(m);
+    // Aturan yang MEMILIH aksinya sendiri dituntut lengkap; aturan lama tidak.
+    // Alasannya panjang dan penting — lihat declaresActions di
+    // runtime/rule-actions.js. Ringkasnya: setiap scene FAQ yang sudah ada
+    // hari ini ditulis sebagai product:null tanpa field actions, dan menuntut
+    // produk darinya akan memblokir START untuk setiap customer yang punya
+    // satu pun scene FAQ.
+    const explicit = declaresActions(m);
+    const row = { scene, ok: true, actions, reason: null };
     const problems = [];
 
-    // --- scene ada di OBS? ---
-    if (Array.isArray(obsScenes)) {
-      if (!obsScenes.includes(scene)) problems.push("obs-scene-missing");
-    }
+    // --- aksi: setidaknya satu harus menyala ---
+    if (!anyEnabled(actions)) problems.push("no-actions-enabled");
 
-    // --- scene bisa diputar? ---
-    if (Array.isArray(playableScenes) && !playableScenes.includes(scene)) {
-      // Tidak ada mediaInputs/duration untuk scene ini. Menebaknya berarti
-      // mengubah perilaku pemutaran scene itu, jadi ia ditolak di sini.
-      problems.push("scene-playback-unknown");
+    // --- scene: hanya diperiksa kalau aturan ini memang mengganti scene ---
+    if (actions.switchScene) {
+      if (!scene) {
+        problems.push("scene-required");
+      } else {
+        // --- scene ada di OBS? ---
+        if (Array.isArray(obsScenes) && !obsScenes.includes(scene)) problems.push("obs-scene-missing");
+
+        // --- scene bisa diputar? ---
+        if (Array.isArray(playableScenes) && !playableScenes.includes(scene)) {
+          // Tidak ada mediaInputs/duration untuk scene ini. Menebaknya berarti
+          // mengubah perilaku pemutaran scene itu, jadi ia ditolak di sini.
+          problems.push("scene-playback-unknown");
+        }
+      }
     }
 
     // --- scene ganda? ---
-    if (seenScenes.has(scene)) problems.push("duplicate-scene");
-    else seenScenes.set(scene, true);
+    // Hanya di antara aturan yang BENAR-BENAR memakai scene. Dua aturan tanpa
+    // scene tidak bentrok: tidak ada satu pun yang mengirim apa pun ke OBS,
+    // jadi tidak ada yang bisa saling menimpa.
+    if (scene && actions.switchScene) {
+      if (seenScenes.has(scene)) problems.push("duplicate-scene");
+      else seenScenes.set(scene, true);
+    }
 
     // --- produk ---
+    //
+    // SELURUH pemeriksaan produk dilewati kalau aturan ini tidak memin. Bukan
+    // dilonggarkan — dilewati. Aturan FAQ tidak ikut dalam fail-closed produk:
+    // judul yang tersimpan padanya tidak perlu ada di katalog LIVE, tidak perlu
+    // unik, dan ketiadaannya tidak boleh memblokir START.
     const title = m && m.product && typeof m.product.title === "string" ? m.product.title.trim() : "";
     const wantsProduct = !!(m && m.product !== null && m.product !== undefined);
 
-    if (wantsProduct && !title) {
+    if (!actions.autoPin) {
+      /* aturan ini tidak memin: produk bukan prasyaratnya */
+    } else if (explicit && !title) {
+      // Kotak centang "Pin produk" menyala tanpa produk terpilih. Ini pilihan
+      // yang tidak lengkap, bukan pernyataan.
+      problems.push(wantsProduct ? "empty-product-title" : "product-missing");
+    } else if (wantsProduct && !title) {
       problems.push("empty-product-title");
     } else if (title && Array.isArray(products)) {
       const resolved = resolveProduct(products, title);
@@ -124,7 +160,19 @@ function validateMappings({
 
     // --- balasan ---
     const reply = m && typeof m.reply === "string" ? m.reply.trim() : "";
-    if (autoCommentEnabled && title && !reply) {
+
+    if (actions.autoReply && explicit && !reply) {
+      // Kotak centang "Balas komentar" menyala tanpa teks balasan. Aturan ini
+      // akan terpicu dan tidak mengatakan apa pun — sesuatu yang customer tidak
+      // bisa lihat dari dashboard, jadi dikatakan di sini.
+      //
+      // Berbeda dari pemeriksaan di bawah: yang ini tidak peduli saklar global.
+      // Balasan yang dijanjikan aturan tapi tidak pernah ditulis adalah
+      // kelalaian baik AutoComment menyala maupun tidak.
+      problems.push("reply-required");
+    }
+
+    if (autoCommentEnabled && actions.autoPin && title && !reply) {
       // Produk yang akan dipin tapi tidak punya kalimat pengumuman, padahal
       // AutoComment menyala. Diam adalah hasil yang sah, tapi di sini ia hampir
       // pasti kelalaian: customer menyalakan AutoComment lalu lupa mengisi.

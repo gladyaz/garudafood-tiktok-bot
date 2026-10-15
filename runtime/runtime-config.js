@@ -45,6 +45,10 @@
 
 const fsDefault = require("node:fs");
 const crypto = require("node:crypto");
+// Aksi per-aturan DISELESAIKAN di sini, sekali, lalu disimpan apa adanya di
+// artefak. Anak yang membacanya tidak perlu tahu aturan bawaan versi mana pun:
+// yang tertulis di berkas adalah yang berlaku. Lihat runtime/rule-actions.js.
+const { resolveActions, ACTION_NAMES } = require("./rule-actions");
 
 const RUNTIME_CONFIG_VERSION = 1;
 
@@ -63,6 +67,15 @@ function computeRuntimeConfigId(payload) {
       product: m.product && m.product.title ? { title: m.product.title } : null,
       triggers: Array.isArray(m.triggers) ? m.triggers.slice() : [],
       reply: typeof m.reply === "string" ? m.reply : null,
+      // Aksi ikut dalam hash, karena ia mengubah apa yang DIKERJAKAN artefak
+      // ini. Tanpa ini, mematikan Pin produk pada sebuah aturan menghasilkan id
+      // generasi yang sama dengan sebelumnya — dan id generasi adalah satu-
+      // satunya bukti bahwa bot dan service membaca pemetaan yang sama.
+      //
+      // Aturan lama yang ketiga aksinya menyala menghasilkan hash yang sama
+      // dengan aturan baru yang menyatakan ketiganya menyala. Itu benar: dua
+      // artefak yang mengerjakan hal yang sama adalah satu generasi yang sama.
+      actions: resolveActions(m),
     })),
   });
   return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 16);
@@ -76,12 +89,18 @@ function buildRuntimeConfig({ mappings = [], configVersion = null, createdAt = n
     configVersion,
     createdAt: createdAt || new Date().toISOString(),
     mappings: mappings.map((m) => ({
-      scene: String(m.scene).trim(),
+      // Aturan yang tidak mengganti scene tidak punya nama scene, dan String()
+      // atas undefined menghasilkan "undefined" — nama scene yang akan dikirim
+      // ke OBS dan tidak akan pernah ada. Kosong, bukan dikarang.
+      scene: typeof m.scene === "string" ? m.scene.trim() : "",
       product: m.product && typeof m.product.title === "string" && m.product.title.trim() !== ""
         ? { title: m.product.title.trim() }
         : null,
       triggers: Array.isArray(m.triggers) ? m.triggers.filter((t) => typeof t === "string" && t.trim() !== "") : [],
       reply: typeof m.reply === "string" && m.reply.trim() !== "" ? m.reply.trim() : null,
+      // DISELESAIKAN, bukan disalin: artefak menyatakan ketiga aksinya apa
+      // adanya, jadi anak tidak pernah perlu menerka bawaan.
+      actions: resolveActions(m),
     })),
   };
   payload.id = computeRuntimeConfigId(payload);
@@ -96,7 +115,20 @@ function validateRuntimeConfig(raw) {
 
   for (const m of raw.mappings) {
     if (!m || typeof m !== "object") return { ok: false, reason: "mapping-not-an-object" };
-    if (typeof m.scene !== "string" || m.scene.trim() === "") return { ok: false, reason: "scene-missing" };
+    // Aksi harus LENGKAP dan boolean. Artefak adalah yang dibaca anak saat LIVE;
+    // aksi yang hilang di sini bukan "aturan lama" (aturan lama sudah
+    // diselesaikan oleh buildRuntimeConfig) tapi artefak yang rusak.
+    if (!m.actions || typeof m.actions !== "object" || Array.isArray(m.actions)) {
+      return { ok: false, reason: "actions-invalid" };
+    }
+    for (const name of ACTION_NAMES) {
+      if (typeof m.actions[name] !== "boolean") return { ok: false, reason: "actions-invalid" };
+    }
+    // Scene wajib HANYA untuk aturan yang mengganti scene. Untuk sisanya ia
+    // boleh kosong, dan yang menjaga agar kosong itu tidak pernah dikirim ke
+    // OBS adalah actions.switchScene.
+    if (typeof m.scene !== "string") return { ok: false, reason: "scene-missing" };
+    if (m.actions.switchScene && m.scene.trim() === "") return { ok: false, reason: "scene-missing" };
     if (!Array.isArray(m.triggers)) return { ok: false, reason: "triggers-not-an-array" };
     if (m.product !== null && (typeof m.product !== "object" || typeof m.product.title !== "string" || m.product.title.trim() === "")) {
       return { ok: false, reason: "product-invalid" };
