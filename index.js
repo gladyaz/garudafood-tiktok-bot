@@ -322,7 +322,7 @@ let scenePin = createScenePin({
 // Bot TIDAK memuat Puppeteer. Browser hidup di proses service terpisah; di sini
 // hanya ada klien HTTP tipis. Dipicu oleh scene start yang sama dengan AutoPIN,
 // tapi kegagalannya tidak pernah menyentuh playback.
-const { createAutoComment, PIN_POLICY } = require("./autocomment/core");
+const { createAutoComment, PIN_POLICY, PRIORITY } = require("./autocomment/core");
 const { loadConfig: loadAutoCommentConfig, TRANSPORTS } = require("./autocomment/config");
 const { createCommentSender } = require("./autocomment/client");
 const { inspectPinResult } = require("./autopin/pin-result");
@@ -364,6 +364,10 @@ let autoComment = createAutoComment({
   send: createCommentSender({ mode: AUTOCOMMENT_TRANSPORT, timeoutMs: autocommentConfig.timeoutMs, sessionId: BOT_SESSION_ID }),
   maxPerMinute: autocommentConfig.maxPerMinute,
   minIntervalMs: autocommentConfig.minIntervalMs,
+  // highMinIntervalMs TIDAK dioper: produksi memakai bawaan internal
+  // DEFAULT_HIGH_MIN_INTERVAL_MS di autocomment/core.js. Alasannya ada di sana —
+  // ringkasnya, environment Controller tidak diwarisi anak, jadi sebuah knob
+  // environment untuk nilai ini tidak akan pernah sampai ke bot terpaket.
   timeoutMs: autocommentConfig.timeoutMs,
 });
 // Instance asli, disimpan sebelum tes menggantinya lewat setAutoComment: untuk
@@ -420,6 +424,15 @@ async function runAuxiliaries(rule, key, sceneName, playId, requesters) {
       // dituntut darinya. Aturan yang memin tetap dituntut seperti sebelumnya.
       // Lihat autocomment/core.js.
       requirePin: actions.autoPin,
+      // Prioritas penjadwalan. DINYATAKAN, bukan disimpulkan dari requirePin di
+      // dalam dispatcher: keduanya kebetulan punya nilai yang sama hari ini,
+      // tapi artinya berbeda — yang satu "butuh bukti pin", yang satu "tidak
+      // boleh kalah oleh balasan FAQ". Menyatakannya di sini membuat keduanya
+      // bisa berbeda nanti tanpa ada yang perlu membongkar dispatcher.
+      //
+      // HANYA metadata runtime: tidak ada di config customer, tidak ada di
+      // skema aksi aturan, dan tidak pernah tersimpan ke disk.
+      priority: actions.autoPin ? PRIORITY.HIGH : PRIORITY.NORMAL,
     });
   } catch (err) {
     console.warn(`[AUTOCOMMENT_FAILED] scene=${key} playId=${playId} reason=dispatch-threw`);

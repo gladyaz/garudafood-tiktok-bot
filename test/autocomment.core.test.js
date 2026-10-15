@@ -286,8 +286,14 @@ test("kiriman yang gagal tetap dihitung ke rate limit (tidak ada celah retry)", 
 });
 
 test("__state melaporkan konfigurasi untuk audit", () => {
-  const ac = make({ maxPerMinute: 4, minIntervalMs: 2_500 });
-  assert.deepEqual(ac.__state(), { enabled: true, pinPolicy: "ignore", latestPlayId: 0, handled: 0, sentInWindow: 0, lastSentAt: -Infinity, maxPerMinute: 4, minIntervalMs: 2_500 });
+  const ac = make({ maxPerMinute: 4, minIntervalMs: 2_500, highMinIntervalMs: 1_200 });
+  // Dua jam dilaporkan TERPISAH: inilah yang membuat perilaku prioritas bisa
+  // dibaca saat dukungan, bukan ditebak dari kiriman yang hilang.
+  assert.deepEqual(ac.__state(), {
+    enabled: true, pinPolicy: "ignore", latestPlayId: 0, handled: 0, sentInWindow: 0,
+    lastAnySentAt: -Infinity, lastHighSentAt: -Infinity,
+    maxPerMinute: 4, minIntervalMs: 2_500, highMinIntervalMs: 1_200,
+  });
 });
 
 

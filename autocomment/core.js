@@ -18,6 +18,36 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 // tidak diketahui. Keduanya bisa diatur lewat env, lihat .env.example.
 const DEFAULT_MAX_PER_MINUTE = 6;
 const DEFAULT_MIN_INTERVAL_MS = 5_000;
+// Jeda minimum untuk balasan PRIORITAS TINGGI, yaitu balasan yang mengumumkan
+// produk yang TERBUKTI ter-pin. Lebih pendek daripada jeda normal, dan diukur
+// terhadap jamnya SENDIRI - lihat dua jam di bawah.
+//
+// ---------------------------------------------------------------------------
+// KENAPA ANGKA INI TIDAK PUNYA KNOB ENVIRONMENT
+//
+// Berbeda dari AUTOCOMMENT_MAX_PER_MINUTE dan AUTOCOMMENT_MIN_INTERVAL_MS,
+// nilai ini SENGAJA tidak bisa diatur lewat environment maupun config customer.
+// Bukan karena kurang penting, tapi karena knob seperti itu TIDAK AKAN BEKERJA
+// di aplikasi terpaket, dan knob yang tidak bekerja lebih buruk daripada tidak
+// ada knob: operator mengubahnya, tidak ada yang berubah, dan tidak ada pesan
+// apa pun yang menjelaskan kenapa.
+//
+// Sudah diperiksa, bukan diduga:
+//   1. controller/process-manager.js membentuk environment anak PENUH dan tidak
+//      mewarisi environment Controller. Daftar base-nya di controller.js hanya
+//      PATH, SystemRoot, dan (kalau diset) AILIVE_BROWSER_HEADLESS.
+//   2. Hanya lima variabel AUTOCOMMENT_* yang benar-benar diteruskan toEnv():
+//      ENABLED, TRANSPORT, MAX_PER_MINUTE, MIN_INTERVAL_MS, TIMEOUT_MS.
+//      Daftarnya dipaku di test/controller.config.test.js.
+//   3. .env tidak ikut dipaket (package.json build.files: "!**/.env*"), jadi
+//      dotenv di bot terpaket tidak menemukan apa pun.
+//
+// Jadi: satu bawaan deterministik di sini. Parameternya tetap bisa disuntikkan
+// ke createAutoComment() untuk tes dan pemanggil internal. Kalau nanti ada
+// bukti dari LIVE bahwa 1,5 detik perlu digeser, yang benar adalah menambahkan
+// jalur propagasi yang SUNGGUHAN (toEnv + config) bersamaan - bukan knob yang
+// menggantung.
+const DEFAULT_HIGH_MIN_INTERVAL_MS = 1_500;
 const RATE_WINDOW_MS = 60_000;
 // Berapa playId terakhir yang diingat untuk dedupe. Cukup kecil untuk memori,
 // cukup besar untuk satu sesi LIVE (ratusan scene).
@@ -48,6 +78,16 @@ function brief(err) {
 // tidak pernah terucap tanpa bukti.
 const PIN_POLICY = Object.freeze({ IGNORE: "ignore", OK: "ok", CONFIRMED: "confirmed" });
 
+// Prioritas penjadwalan satu permintaan. HANYA metadata runtime: ia tidak ada di
+// config customer, tidak ada di skema aksi aturan, dan tidak pernah tersimpan.
+//
+//   high    balasan yang mengumumkan produk yang sudah TERBUKTI ter-pin
+//   normal  balasan FAQ/umum yang tidak menjanjikan pin apa pun
+//
+// Dua tingkat, dan tidak akan ditambah. Tingkat ketiga berarti kebijakan yang
+// harus diputuskan di tempat lain, dan tempat itu belum ada.
+const PRIORITY = Object.freeze({ HIGH: "high", NORMAL: "normal" });
+
 function createAutoComment({
   enabled = false,
   pinPolicy = PIN_POLICY.IGNORE,
@@ -57,14 +97,49 @@ function createAutoComment({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxPerMinute = DEFAULT_MAX_PER_MINUTE,
   minIntervalMs = DEFAULT_MIN_INTERVAL_MS,
+  highMinIntervalMs = DEFAULT_HIGH_MIN_INTERVAL_MS,
   logger = console,
   now = () => performance.now(), // monotonik: jam dinding yang mundur tidak boleh memblokir kiriman
 } = {}) {
   let latestPlayId = 0;
   const handledPlayIds = new Set(); // playId yang sudah diputuskan: dedupe scene-start
   const sentAt = [];                // waktu kirim dalam jendela 60 detik: rate limit
-  let lastSentAt = -Infinity;       // kirim terakhir, TERPISAH dari jendela: min-interval
-                                    // boleh lebih panjang dari 60 detik tanpa terpotong
+                                    // SATU jendela untuk kedua prioritas: plafon
+                                    // per menit tidak boleh bisa dilampaui oleh
+                                    // prioritas apa pun.
+
+  // ---------------------------------------------------------------------------
+  // DUA JAM, DAN ASIMETRINYA DISENGAJA
+  //
+  // lastAnySentAt   diperbarui oleh SETIAP kiriman. Jam ini yang dipakai
+  //                 balasan normal, dengan minIntervalMs (5 detik).
+  // lastHighSentAt  diperbarui HANYA oleh kiriman prioritas tinggi. Jam ini
+  //                 yang dipakai balasan prioritas tinggi, dengan
+  //                 highMinIntervalMs (1,5 detik).
+  //
+  // Akibat asimetrinya, dan inilah yang diminta:
+  //
+  //   normal t=0, high t=0.5   -> high BOLEH kirim. Balasan FAQ tidak boleh
+  //                               membungkam pengumuman produk yang sudah
+  //                               terbukti ter-pin hanya karena ia lebih dulu
+  //                               memakai slot lima detik.
+  //   high t=0.5, high t=1.0   -> yang kedua DITOLAK: jamnya sendiri baru
+  //                               berjalan 0,5 detik.
+  //   high t=0.5, normal t=1.0 -> normal DITOLAK: lastAnySentAt sudah
+  //                               diperbarui oleh kiriman high itu.
+  //
+  // Satu jam bersama dengan dua ambang TIDAK cukup: dengan jam bersama, sebuah
+  // balasan FAQ pada t=0 masih membungkam balasan produk pada t=1.2 - dan
+  // latensi AutoPIN yang teramati memang berada di sekitar angka itu, jadi
+  // kasus itu bukan teoretis.
+  //
+  // Tidak ada antrean dan tidak ada penjadwal: kebijakan saat limit tercapai
+  // tetap DROP, sama seperti sebelumnya.
+  let lastAnySentAt = -Infinity;    // kirim terakhir apa pun prioritasnya
+  let lastHighSentAt = -Infinity;   // kirim terakhir yang berprioritas tinggi
+                                    // keduanya TERPISAH dari jendela 60 detik,
+                                    // jadi jeda boleh lebih panjang dari itu
+                                    // tanpa terpotong
 
   const log = (line) => {
     try {
@@ -86,9 +161,19 @@ function createAutoComment({
 
   // Kebijakan saat limit tercapai: DROP, bukan antre. Pesan admin yang telat
   // beberapa menit tidak ada gunanya dan hanya menumpuk spam.
-  function rateLimitReason(t) {
-    if (minIntervalMs > 0 && t - lastSentAt < minIntervalMs) return "min-interval";
+  //
+  // Jeda dihitung terhadap jam MILIK PRIORITAS ITU; plafon per menit dihitung
+  // terhadap jendela BERSAMA. Jadi prioritas memengaruhi kerapatan, tidak
+  // pernah plafonnya.
+  function rateLimitReason(t, high) {
+    if (high) {
+      if (highMinIntervalMs > 0 && t - lastHighSentAt < highMinIntervalMs) return "min-interval-high";
+    } else if (minIntervalMs > 0 && t - lastAnySentAt < minIntervalMs) {
+      return "min-interval";
+    }
     while (sentAt.length && t - sentAt[0] >= RATE_WINDOW_MS) sentAt.shift();
+    // Plafon per menit BERSAMA, dan diperiksa untuk kedua prioritas. Prioritas
+    // tinggi tidak punya jalan apa pun untuk melewatinya.
     if (sentAt.length >= maxPerMinute) return "rate-limit";
     return null;
   }
@@ -164,6 +249,24 @@ function createAutoComment({
         }
       }
 
+      // 3.6 Prioritas penjadwalan. DITENTUKAN DI SINI, sesudah gerbang pin.
+      //
+      // Letaknya bukan kebetulan: prioritas tidak boleh pernah menjadi jalan
+      // memutari bukti pin. Karena baris ini hanya terjangkau setelah gerbang
+      // di atas lolos, sebuah permintaan prioritas tinggi SELALU sudah
+      // membuktikan pin-nya sebelum ia mendapat keringanan jeda apa pun.
+      //
+      // Dan prioritas tinggi hanya diberikan kepada permintaan yang MENYERAHKAN
+      // DIRI pada gerbang itu: `priority:"high"` dengan `requirePin:false`
+      // diturunkan menjadi normal, bukan dihormati. Tanpa aturan ini, pemanggil
+      // bisa meminta keringanan jeda sekaligus meminta gerbang pin dilewati —
+      // persis bentuk pembobolan yang tidak boleh ada jalannya.
+      const wantsHigh = req.priority === PRIORITY.HIGH;
+      const high = wantsHigh && requirePin;
+      if (wantsHigh && !requirePin) {
+        log(`[AUTOCOMMENT_PRIORITY_DOWNGRADED] scene=${scene} playId=${playId} note="high tanpa requirePin: diperlakukan normal"`);
+      }
+
       // 4. Pesan deterministik; scene tanpa nomor etalase -> diam.
       const formatted = format(scene);
       if (!formatted || !formatted.ok) {
@@ -175,7 +278,7 @@ function createAutoComment({
 
       // 5. Rate limit global.
       const t0 = now();
-      const limited = rateLimitReason(t0);
+      const limited = rateLimitReason(t0, high);
       if (limited) {
         log(`[AUTOCOMMENT_SKIPPED] scene=${scene} playId=${playId} reason=${limited}`);
         return Promise.resolve(done(false, limited));
@@ -188,9 +291,15 @@ function createAutoComment({
 
       // Dihitung saat DIKIRIM, bukan saat sukses: lebih konservatif, dan
       // kegagalan transport tidak boleh membuka celah spam lewat retry.
+      //
+      // Titik ini TIDAK berubah oleh prioritas. Yang berubah hanya jam mana
+      // yang ikut diperbarui: kiriman prioritas tinggi memperbarui KEDUANYA,
+      // sehingga ia menahan balasan normal berikutnya selama lima detik penuh —
+      // itulah yang mencegah prioritas berubah menjadi celah spam.
       sentAt.push(t0);
-      lastSentAt = t0;
-      log(`[AUTOCOMMENT_REQUEST] scene=${scene} playId=${playId} requesters=${requesters} text="${text}"`);
+      lastAnySentAt = t0;
+      if (high) lastHighSentAt = t0;
+      log(`[AUTOCOMMENT_REQUEST] scene=${scene} playId=${playId} requesters=${requesters} priority=${high ? PRIORITY.HIGH : PRIORITY.NORMAL} text="${text}"`);
 
       let sent;
       try {
@@ -255,9 +364,11 @@ function createAutoComment({
       latestPlayId,
       handled: handledPlayIds.size,
       sentInWindow: sentAt.length,
-      lastSentAt,
+      lastAnySentAt,
+      lastHighSentAt,
       maxPerMinute,
       minIntervalMs,
+      highMinIntervalMs,
     }),
   };
 }
@@ -265,9 +376,11 @@ function createAutoComment({
 module.exports = {
   createAutoComment,
   PIN_POLICY,
+  PRIORITY,
   createDryRunTransport,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_PER_MINUTE,
   DEFAULT_MIN_INTERVAL_MS,
+  DEFAULT_HIGH_MIN_INTERVAL_MS,
   RATE_WINDOW_MS,
 };

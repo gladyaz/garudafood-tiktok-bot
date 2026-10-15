@@ -524,6 +524,84 @@ test("6b. SESUDAH BALAS-SAJA: nomor generasi PAX tetap BERURUTAN, tidak melompat
   assert.ok(commentSends.find((c) => c.scene === PAX2), "balasan PAX-2 terkirim");
 });
 
+// --- 7. prioritas: alur produksi yang dilaporkan -----------------------------
+
+test("7. ALUR PRODUKSI: FAQ lalu PAX dalam <5 detik -> balasan produk TETAP terkirim", async () => {
+  // Reproduksi persis kejadian yang dilaporkan, lewat jalur index.js yang
+  // sungguhan dan kedua dispatcher produksi:
+  //
+  //   balasan FAQ (normal)
+  //   -> penonton minta produk beberapa saat kemudian
+  //   -> scene berganti
+  //   -> AutoPIN terkonfirmasi (dengan latensi seperti di LIVE)
+  //   -> balasan produk (high) HARUS terkirim, walau belum lima detik
+  //
+  // Sebelum limiter dua jam, balasan terakhir itu hilang dengan
+  // reason=min-interval dan tidak ada apa pun di dashboard yang menjelaskannya.
+  bot.enqueueTrigger(ruleFor(FAQ_A), "penonton-faq");
+  await advance(QUEUE_KICK_MS);
+  assert.equal(commentSends.length, 1, "FAQ terkirim lebih dulu");
+  assert.equal(commentSends[0].scene, FAQ_A);
+
+  // Pin dengan latensi sekitar angka yang teramati di LIVE (~1,2 detik).
+  let releasePin;
+  pinBehaviour = () => new Promise((res) => { releasePin = () => res(PIN_CONFIRMED); });
+
+  bot.enqueueTrigger(ruleFor(PAX1), "penonton-pax");
+  await advance(QUEUE_KICK_MS);
+  assert.deepEqual(obsSwitches, [PAX1], "scene berganti");
+
+  await advance(1_200);
+  releasePin();
+  await advance(0);
+
+  // Total yang berlalu sejak balasan FAQ masih jauh di bawah lima detik.
+  const paxComment = commentSends.find((c) => c.scene === PAX1);
+  assert.ok(paxComment, "balasan produk HARUS terkirim: " + JSON.stringify(commentSends));
+  assert.equal(paxComment.text, "Etalase 1 sudah aku pin ya kak");
+  assert.ok(
+    !logged("AUTOCOMMENT_SKIPPED").some((l) => l.includes("reason=min-interval")),
+    logged("AUTOCOMMENT_SKIPPED").join(" | ")
+  );
+  const s = autoComment.__state();
+  assert.equal(s.lastHighSentAt, s.lastAnySentAt, "kiriman high memperbarui kedua jam");
+});
+
+test("7b. ALUR PRODUKSI: sesudah balasan produk, FAQ berikutnya TETAP ditahan lima detik", async () => {
+  // Sisi lain asimetrinya: prioritas tidak boleh menjadi celah spam.
+  bot.enqueueTrigger(ruleFor(PAX1), "penonton-pax");
+  await advance(QUEUE_KICK_MS);
+  assert.ok(commentSends.find((c) => c.scene === PAX1), "balasan produk terkirim");
+
+  await advance(2_000);
+  bot.enqueueTrigger(ruleFor(FAQ_A), "penonton-faq");
+  await advance(0);
+  assert.equal(commentSends.length, 1, "FAQ ditahan: belum lima detik sejak kiriman terakhir");
+  assert.ok(logged("AUTOCOMMENT_SKIPPED").some((l) => l.includes("reason=min-interval")));
+
+  // Dan sesudah lima detik penuh ia boleh bicara. Aturan FAQ_B dipakai karena
+  // FAQ_A sudah masuk cooldown per-aturan oleh percobaan di atas.
+  await advance(DEFAULT_MIN_INTERVAL_MS);
+  bot.enqueueTrigger(ruleFor(FAQ_B), "penonton-lain");
+  await advance(0);
+  assert.equal(commentSends.length, 2);
+});
+
+test("7c. ALUR PRODUKSI: pin GAGAL tetap membungkam balasan produk, prioritas tidak menolong", async () => {
+  pinBehaviour = async () => ({ ok: false, reason: "product-not-found" });
+  bot.enqueueTrigger(ruleFor(PAX1), "penonton-pax");
+  await advance(QUEUE_KICK_MS);
+
+  assert.deepEqual(obsSwitches, [PAX1], "scene tetap berganti");
+  assert.deepEqual(commentSends, [], "nol balasan");
+  // Dan kuotanya tidak terbakar, jadi FAQ sesudahnya tetap bisa bicara.
+  assert.equal(autoComment.__state().sentInWindow, 0);
+  await advance(DEFAULT_MIN_INTERVAL_MS);
+  bot.enqueueTrigger(ruleFor(FAQ_A), "penonton-faq");
+  await advance(0);
+  assert.equal(commentSends.length, 1);
+});
+
 // --- pembantu: browser palsu untuk service AutoPIN --------------------------
 
 const CONSOLE_URL = "https://shop.tiktok.com/streamer/live/product/dashboard";
