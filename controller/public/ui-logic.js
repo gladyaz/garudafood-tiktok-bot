@@ -1065,6 +1065,17 @@
       afterDisabled: !editable || !form.enabled,
       afterError: form.enabled && !afterOk ? tr(lang, "ui.idle.afterRange", { min: IDLE_AFTER_MIN, max: IDLE_AFTER_MAX }) : "",
       itemsDisabled: !editable || !form.enabled,
+      // Saat fiturnya mati, seluruh pengaturannya DISEMBUNYIKAN - bukan sekadar
+      // dimatikan. Deretan field mati yang tetap terlihat membuat customer
+      // bertanya apakah fiturnya masih jalan, dan itu pertanyaan yang tidak
+      // boleh ada di layar yang dipakai saat LIVE.
+      //
+      // MURNI TAMPILAN. Nilainya tetap di form (afterSeconds, items, balasan,
+      // dan urutan rotasinya), jadi mati -> nyala memunculkan kembali yang sama
+      // persis. `disabled` di bawah juga TETAP ditulis ulang setiap render:
+      // menyembunyikan bukan pengganti mematikan, karena yang disembunyikan
+      // masih ada di DOM.
+      detailsHidden: !form.enabled,
       items: form.items,
       count: n,
       emptyText: n === 0 ? tr(lang, "ui.idle.empty") : "",
@@ -1142,7 +1153,55 @@
   // Dua sebab sebuah field mati, dan keduanya digabung di sini:
   //   editing mati   seluruh penyuntingan sedang tidak boleh (mis. saat LIVE)
   //   aksi mati      field itu tidak dipakai aturan ini
-  function ruleEditorView(row, controls, resolvedTitle, lang) {
+  // Catatan di bawah field balasan. SATU tempat, dipakai dua pemanggil:
+  // ruleEditorView saat kartunya dirender, dan handler ketik di app.js yang
+  // memperbarui hitungan huruf setiap huruf masuk.
+  //
+  // Kenapa ia harus satu fungsi: sebelum ini app.js menulis sendiri kunci
+  // "replyHelp" di dalam handler-nya. Begitu kalimatnya bercabang mengikuti
+  // aksi, salinan di handler itu akan menyimpang pada huruf PERTAMA yang
+  // diketik customer - kartunya mengatakan satu hal, lalu mengetik satu huruf
+  // mengubahnya menjadi hal lain. Lihat catatan "jangan duplikasi logika
+  // lintas lapis".
+  //
+  // Kalimatnya mengikuti AKSI, bukan setelan global:
+  //   balas mati        field mati, dan dikatakan kenapa
+  //   balas + pin       balasan menunggu bukti pin (requirePin:true di
+  //                     autocomment/core.js), jadi itu yang dijanjikan
+  //   balas tanpa pin   tidak ada pin yang ditunggu; ia dikirim saat terpicu.
+  //                     Kalimat v0.1.1 "dikirim setelah pin terkonfirmasi"
+  //                     adalah janji yang tidak pernah bisa terjadi di aturan
+  //                     FAQ, dan di layar itu terbaca seperti fitur yang rusak.
+  //
+  // Hitungan huruf TETAP ada di kedua cabang: ia bukan hiasan, ia satu-satunya
+  // tanda bahwa ketikan akan terpotong di batas yang sama dengan validator.
+  function replyNoteFor(actions, length, lang) {
+    var act = RA.resolveActions({ actions: actions });
+    if (!act.autoReply) return tr(lang, "ui.rule.f.replyOffNote");
+    var n = typeof length === "number" && length >= 0 ? Math.floor(length) : 0;
+    // Hitungan dan kalimatnya DISAMBUNG oleh kamus, bukan oleh kode: bahasa
+    // Tionghoa tidak memberi spasi sesudah tanda titik penuh, dan keputusan
+    // seperti itu memang milik kamus - sama seperti kalimatnya sendiri.
+    return tr(lang, "ui.rule.f.replyNote", {
+      count: tr(lang, "ui.rule.f.replyCount", { n: n, max: MAX_REPLY_LENGTH }),
+      sentence: tr(lang, act.autoPin ? "ui.rule.f.replyAfterPin" : "ui.rule.f.replyOnTrigger"),
+    });
+  }
+
+  // Kalimat pada opsi kosong di dropdown produk.
+  //
+  // Untuk aturan yang tidak mem-pin, "Belum ada produk. Tekan Segarkan koneksi."
+  // adalah kalimat yang SALAH dua kali: ia menyuruh customer memperbaiki sesuatu
+  // yang tidak rusak, dan ia membuat aturan FAQ yang sehat terlihat gagal.
+  // Katalog produk memang tidak relevan untuk aturan ini.
+  function productPlaceholderFor(actions, productCount, lang) {
+    var act = RA.resolveActions({ actions: actions });
+    if (!act.autoPin) return tr(lang, "ui.rule.f.productNotUsed");
+    var n = typeof productCount === "number" ? productCount : 0;
+    return tr(lang, n > 0 ? "ui.rule.f.productNone" : "ui.rule.f.noProducts");
+  }
+
+  function ruleEditorView(row, controls, resolvedTitle, lang, productCount) {
     var act = rowActions(row);
     var editable = !!(controls && controls.editingEnabled);
     var resolved = resolvedTitle ? String(resolvedTitle) : "";
@@ -1165,6 +1224,10 @@
       sceneDisabled: !editable || !act.switchScene,
       sceneNote: act.switchScene ? "" : tr(lang, "ui.rule.f.sceneOffNote"),
       productDisabled: !editable || !act.autoPin,
+      // Nilai produk TIDAK pernah dihapus saat aksi pin dimatikan - yang berubah
+      // hanya apa yang terlihat. Jadi menyalakannya kembali memunculkan pilihan
+      // yang sama, bukan formulir kosong.
+      productPlaceholder: productPlaceholderFor(act, productCount, lang),
       // Catatan di bawah dropdown produk menjawab pertanyaan yang BERBEDA
       // tergantung aksinya: kalau mem-pin, "produk mana yang sesungguhnya
       // terpilih"; kalau tidak, "kenapa ini mati". Judul yang terlihat di LIVE
@@ -1176,9 +1239,7 @@
           : "",
       triggersDisabled: !editable,
       replyDisabled: !editable || !act.autoReply,
-      replyNote: act.autoReply
-        ? tr(lang, "ui.rule.f.replyHelp", { n: (row && row.reply ? String(row.reply) : "").length, max: MAX_REPLY_LENGTH })
-        : tr(lang, "ui.rule.f.replyOffNote"),
+      replyNote: replyNoteFor(act, (row && row.reply ? String(row.reply) : "").length, lang),
     };
   }
 
@@ -1950,6 +2011,10 @@
     IDLE_AFTER_DEFAULT: IDLE_AFTER_DEFAULT,
     toggleAction: toggleAction,
     ruleEditorView: ruleEditorView,
+    // Diekspor karena handler ketik di app.js memperbarui catatan balasan setiap
+    // huruf, dan ia tidak boleh memutuskan kalimatnya sendiri.
+    replyNoteFor: replyNoteFor,
+    productPlaceholderFor: productPlaceholderFor,
     ACTION_NAMES: RA.ACTION_NAMES,
     anyActionEnabled: RA.anyEnabled,
     MAX_REPLY_LENGTH: MAX_REPLY_LENGTH,

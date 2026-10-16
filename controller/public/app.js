@@ -107,7 +107,7 @@
       "automation-pill", "refresh-btn", "banner", "readiness", "readiness-hint",
       "setup", "mappings", "mappings-empty", "mapping-hint", "add-mapping-btn",
       "idle-enabled", "idle-after", "idle-after-error", "idle-items", "idle-empty",
-      "idle-items-error", "idle-cooldown-note", "add-idle-btn",
+      "idle-items-error", "idle-cooldown-note", "add-idle-btn", "idle-details",
       "save-btn", "save-state", "run-state", "run-note", "start-btn", "stop-btn",
       "preflight", "activity", "activity-empty", "activity-hint",
       "login-btn", "login-check-btn", "login-cancel-btn", "login-hint",
@@ -465,7 +465,7 @@
     // yang mati, catatan apa yang tampil, dan pesan validasi mana yang muncul.
     // app.js hanya memasangnya ke DOM — itulah yang membuat perilakunya bisa
     // diuji tanpa jsdom.
-    var ed = U.ruleEditorView(row, controls, resolved[index], L());
+    var ed = U.ruleEditorView(row, controls, resolved[index], L(), state.products.length);
 
     // --- Aksi saat terpicu ---
     //
@@ -535,7 +535,7 @@
     // --- Product ---
     var prodSel = document.createElement("select");
     prodSel.disabled = ed.productDisabled;
-    prodSel.appendChild(option("", state.products.length ? T("ui.rule.f.productNone") : T("ui.rule.f.noProducts")));
+    prodSel.appendChild(option("", ed.productPlaceholder));
     productOpts.forEach(function (o) {
       prodSel.appendChild(option(o.value, o.sub ? o.label + " — " + o.sub : o.label));
     });
@@ -578,7 +578,7 @@
       // Hitungan hurufnya ikut mengetik. Tanpa ini customer baru tahu batasnya
       // saat ketikannya terpotong.
       var note = replyField.querySelector(".note");
-      if (note) note.textContent = T("ui.rule.f.replyHelp", { n: reply.value.length, max: REPLY_MAX });
+      if (note) note.textContent = U.replyNoteFor(ed.actions, reply.value.length, L());
       markDirty();
     });
     replyField.className = "field wide";
@@ -607,6 +607,8 @@
     setError(el["idle-after-error"], v.afterError);
 
     el["add-idle-btn"].disabled = v.addDisabled;
+    // Melipat, bukan mengosongkan: nilainya tetap di state.idleForm.
+    el["idle-details"].hidden = v.detailsHidden;
     el["idle-empty"].hidden = v.emptyText === "";
     setText(el["idle-empty"], v.emptyText);
     setError(el["idle-items-error"], v.itemsError);

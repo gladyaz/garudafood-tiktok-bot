@@ -165,24 +165,30 @@
                 <input id="idle-enabled" type="checkbox" class="tgl" />
               </label>
 
-              <div class="field">
-                <label data-t="ui.idle.after"></label>
-                <div class="idle-after">
-                  <input id="idle-after" type="number" min="5" max="3600" step="1" />
-                  <span class="muted small" data-t="ui.idle.afterUnit"></span>
+              <!-- Seluruh pengaturannya ada di dalam SATU pembungkus, supaya
+                   melipatnya saat saklarnya mati cukup satu baris di app.js dan
+                   tidak ada field yang bisa tertinggal terlihat. Nilainya tetap
+                   hidup di state.idleForm; ini murni tampilan. -->
+              <div id="idle-details">
+                <div class="field">
+                  <label data-t="ui.idle.after"></label>
+                  <div class="idle-after">
+                    <input id="idle-after" type="number" min="5" max="3600" step="1" />
+                    <span class="muted small" data-t="ui.idle.afterUnit"></span>
+                  </div>
+                  <div class="field-error" id="idle-after-error" hidden></div>
                 </div>
-                <div class="field-error" id="idle-after-error" hidden></div>
-              </div>
 
-              <div class="field wide">
-                <label data-t="ui.idle.scenes"></label>
-                <div id="idle-items" class="idle-items"></div>
-                <p id="idle-empty" class="empty" hidden></p>
-                <div class="field-error" id="idle-items-error" hidden></div>
-              </div>
+                <div class="field wide">
+                  <label data-t="ui.idle.scenes"></label>
+                  <div id="idle-items" class="idle-items"></div>
+                  <p id="idle-empty" class="empty" hidden></p>
+                  <div class="field-error" id="idle-items-error" hidden></div>
+                </div>
 
-              <div class="panel-foot idle-foot">
-                <button id="add-idle-btn" type="button" class="btn btn-sm" data-t="ui.idle.add"></button>
+                <div class="panel-foot idle-foot">
+                  <button id="add-idle-btn" type="button" class="btn btn-sm" data-t="ui.idle.add"></button>
+                </div>
               </div>
             </div>
 

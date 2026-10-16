@@ -441,6 +441,102 @@ test("UI: field mati kalau fiturnya dimatikan, dan nilainya TIDAK hilang", () =>
   assert.equal(v.itemsError, "", "yang mati tidak dikeluhkan");
 });
 
+// --- UI: pengaturan DILIPAT saat fiturnya mati -------------------------------
+//
+// Deretan field mati yang tetap terlihat membuat customer bertanya apakah
+// fiturnya masih jalan - pertanyaan yang tidak boleh ada di layar yang dipakai
+// saat LIVE. Yang dilipat hanya TAMPILANnya: nilainya tetap di form, jadi
+// mati -> nyala memunculkan kembali yang sama persis.
+
+const STATUS_SIAP = { automation: "STOPPED", config: { present: true }, login: { active: false } };
+const ISI = { enabled: true, afterSeconds: 45, items: [{ scene: "ENGAGE-A", reply: "hai" }, { scene: "ENGAGE-B", reply: "" }] };
+
+test("UI LIPAT: mati -> seluruh pengaturannya disembunyikan", () => {
+  const v = U.idleView({ idleForm: Object.assign({}, ISI, { enabled: false }), status: STATUS_SIAP }, "id");
+  assert.equal(v.detailsHidden, true, "detik, kartu scene, balasan, dan tombol Tambah ikut tersembunyi");
+  // Mati TETAP juga berarti mati, bukan hanya tersembunyi: yang disembunyikan
+  // masih ada di DOM, jadi disabled tidak boleh ikut dilepas.
+  assert.equal(v.afterDisabled, true);
+  assert.equal(v.itemsDisabled, true);
+  assert.equal(v.addDisabled, true);
+});
+
+test("UI LIPAT: menyala -> pengaturannya muncul kembali", () => {
+  const v = U.idleView({ idleForm: ISI, status: STATUS_SIAP }, "id");
+  assert.equal(v.detailsHidden, false);
+  assert.equal(v.afterDisabled, false);
+  assert.equal(v.itemsDisabled, false);
+  assert.equal(v.addDisabled, false);
+});
+
+test("UI LIPAT: mati TIDAK menghapus afterSeconds, scene, maupun balasannya", () => {
+  const form = Object.assign({}, ISI, { enabled: false });
+  const v = U.idleView({ idleForm: form, status: STATUS_SIAP }, "id");
+  assert.equal(v.afterSeconds, 45, "detik tidak boleh direset");
+  assert.equal(v.count, 2);
+  assert.deepEqual(v.items, [{ scene: "ENGAGE-A", reply: "hai" }, { scene: "ENGAGE-B", reply: "" }]);
+  // Dan formulirnya sendiri tidak disentuh oleh fungsi tampilan.
+  assert.deepEqual(form.items, ISI.items);
+  assert.equal(form.afterSeconds, 45);
+});
+
+test("UI LIPAT: mati -> nyala memulihkan nilai yang SAMA PERSIS", () => {
+  const form = Object.assign({}, ISI, { enabled: false });
+  const mati = U.idleView({ idleForm: form, status: STATUS_SIAP }, "id");
+  assert.equal(mati.detailsHidden, true);
+
+  form.enabled = true;
+  const nyala = U.idleView({ idleForm: form, status: STATUS_SIAP }, "id");
+  assert.equal(nyala.detailsHidden, false);
+  assert.equal(nyala.afterSeconds, mati.afterSeconds);
+  assert.deepEqual(nyala.items, mati.items);
+});
+
+test("UI LIPAT: halaman punya pembungkusnya, dan app.js benar-benar memakainya", () => {
+  // Tanpa jsdom, kabel DOM diperiksa dari SUMBERNYA - pola yang sama dengan
+  // test/ui.realaction.test.js. Keputusan detailsHidden tidak berarti apa pun
+  // kalau app.js tidak pernah menuliskannya, atau kalau field-nya ternyata
+  // berada di LUAR pembungkus yang disembunyikan.
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const PUBLIC_DIR = path.resolve(__dirname, "..", "controller", "public");
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
+
+  assert.ok(html.includes('id="idle-details"'), "index.html harus punya pembungkus idle-details");
+  assert.ok(app.includes('"idle-details"'), "app.js harus mendaftarkan dan memakai idle-details");
+  assert.match(app, /el\["idle-details"\]\.hidden = v\.detailsHidden/, "app.js harus menulis hidden dari keputusan ui-logic");
+
+  // Keempat kendali itu harus berada DI DALAM pembungkusnya.
+  const start = html.indexOf('id="idle-details"');
+  const end = html.indexOf('id="add-mapping-btn"');
+  assert.ok(start > 0 && end > start, "urutan halaman tidak seperti yang diharapkan");
+  const inside = html.slice(start, end);
+  for (const id of ["idle-after", "idle-items", "idle-empty", "add-idle-btn"]) {
+    assert.ok(inside.includes('id="' + id + '"'), id + " harus berada di dalam idle-details");
+  }
+
+  // Saklar dan penjelasannya justru TIDAK boleh ikut tersembunyi: itu satu-satunya
+  // jalan untuk menyalakannya kembali.
+  const before = html.slice(0, start);
+  assert.ok(before.includes('id="idle-enabled"'), "saklarnya harus tetap di luar pembungkus");
+  assert.ok(before.includes('data-t="ui.idle.help"'), "penjelasan singkatnya harus tetap terlihat");
+});
+
+test("UI LIPAT: config -> form -> config saat mati tidak kehilangan apa pun", () => {
+  // Pembuktian bahwa melipat benar-benar hanya tampilan: perjalanan bolak-balik
+  // lewat jalur simpan yang sesungguhnya harus mengembalikan isi yang sama.
+  const config = { enabled: false, afterSeconds: 45, items: [{ scene: "ENGAGE-A", reply: "hai" }] };
+  const form = U.idleToForm(config);
+  const v = U.idleView({ idleForm: form, status: STATUS_SIAP }, "id");
+  assert.equal(v.detailsHidden, true);
+
+  const back = U.idleFormToConfig(form);
+  assert.equal(back.enabled, false);
+  assert.equal(back.afterSeconds, 45);
+  assert.deepEqual(back.items, [{ scene: "ENGAGE-A", reply: "hai" }]);
+});
+
 test("UI: menyala tanpa scene dikatakan di layar", () => {
   const v = U.idleView({ idleForm: { enabled: true, afterSeconds: 30, items: [] }, status: { automation: "STOPPED", config: { present: true }, login: { active: false } } }, "id");
   assert.equal(v.itemsError, T("ui.idle.needsScene"));

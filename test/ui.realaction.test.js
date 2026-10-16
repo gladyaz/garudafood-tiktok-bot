@@ -274,6 +274,49 @@ test("halaman TIDAK PERNAH menyebut istilah teknis aksi nyata", () => {
   assert.match(I18N.DICT.en["ui.set.autoreply"], /reply in chat/i);
 });
 
+test("v0.2.0: penjelasan saklar balasan global TIDAK menjanjikan pin", () => {
+  // Saklar global adalah IZIN, bukan janji tentang urutan kejadian.
+  //
+  // Kalimat v0.1.1 berbunyi "hanya setelah pin terkonfirmasi", dan itu benar
+  // selama setiap aturan memin. Sejak aksi per-aturan ada, aturan FAQ membalas
+  // TANPA pin sama sekali (requirePin:false di autocomment/core.js). Jadi
+  // kalimat itu menjanjikan syarat yang tidak berlaku - customer yang membaca
+  // "hanya setelah pin terkonfirmasi" lalu melihat balasan FAQ terkirim tanpa
+  // pin akan menyimpulkan salah satu dari dua hal keliru: entah fiturnya rusak,
+  // entah penjelasannya bohong.
+  //
+  // Yang dijaga di sini bukan bunyinya, tapi apa yang TIDAK boleh ada di sana:
+  // tidak ada ketergantungan pin di penjelasan saklar GLOBAL. Syarat pin memang
+  // ada, tapi tempatnya per-aturan - lihat ui.rule.f.replyAfterPin.
+  const I18N = require(path.join(PUBLIC_DIR, "i18n.js"));
+  const larangan = [
+    /pin terkonfirmasi/i,
+    /setelah pin/i,
+    /pin is confirmed/i,
+    /after the pin/i,
+    /after pinning/i,
+    /置顶确认/, // "pin terkonfirmasi"
+  ];
+  for (const L of I18N.LANGS) {
+    const v = I18N.DICT[L]["ui.set.autoreplyHelp"];
+    assert.ok(v && v.trim().length > 0, L + " helper balasan global kosong");
+    for (const pola of larangan) {
+      assert.ok(!pola.test(v), L + " masih menjanjikan pin: " + v);
+    }
+  }
+
+  // Dan syarat pin itu TETAP dikatakan di tempat yang benar, yaitu per-aturan.
+  // Kalau pagar di atas dipenuhi dengan cara menghapus kalimatnya dari
+  // seluruh halaman, tes ini yang menangkapnya.
+  for (const L of I18N.LANGS) {
+    assert.ok(
+      I18N.DICT[L]["ui.rule.f.replyAfterPin"].length > 0,
+      L + " kehilangan kalimat per-aturan tentang pin"
+    );
+  }
+  assert.match(I18N.DICT.en["ui.rule.f.replyAfterPin"], /pinned/i);
+});
+
 test("saklar dimatikan saat automation berjalan, sama seperti field lain", () => {
   // Mengubah mode di tengah run tidak akan berlaku (snapshot runtime sudah
   // dibuat), jadi membiarkannya bisa diklik hanya menjanjikan sesuatu yang tidak

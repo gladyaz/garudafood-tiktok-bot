@@ -109,7 +109,124 @@ test("BALAS KOMENTAR menyala: hitungan huruf memakai batas yang SAMA dengan serv
   // Halaman ini tidak boleh menjanjikan ruang yang nanti ditolak validator.
   assert.equal(U.MAX_REPLY_LENGTH, MAX_REPLY_LENGTH);
   const ed = U.ruleEditorView(row({ reply: "abc" }), EDITABLE, null, "id");
-  assert.equal(ed.replyNote, T("ui.rule.f.replyHelp", { n: 3, max: MAX_REPLY_LENGTH }));
+  assert.ok(
+    ed.replyNote.startsWith(T("ui.rule.f.replyCount", { n: 3, max: MAX_REPLY_LENGTH })),
+    ed.replyNote
+  );
+});
+
+test("TIGA BAHASA: penyambung catatan balasan adalah TATA LETAK, bukan kalimat", () => {
+  // ui.rule.f.replyNote hanya menyambung hitungan huruf dengan kalimatnya, jadi
+  // ia DIKECUALIKAN dari pagar "tidak boleh sama dengan bahasa Indonesia" di
+  // bawah: "{count} {sentence}" memang identik di ID dan EN, dan itu benar.
+  //
+  // Yang dijaga di sini justru alasan ia ada: bahasa Tionghoa tidak memberi
+  // spasi sesudah tanda titik penuh, dan keputusan tipografi seperti itu milik
+  // kamus - bukan kode yang menyambung dengan " " untuk semua bahasa.
+  for (const lang of I18N.LANGS) {
+    const val = I18N.DICT[lang]["ui.rule.f.replyNote"];
+    assert.ok(val.includes("{count}"), lang + " kehilangan {count}");
+    assert.ok(val.includes("{sentence}"), lang + " kehilangan {sentence}");
+  }
+  assert.equal(I18N.DICT["zh-CN"]["ui.rule.f.replyNote"], "{count}{sentence}", "tanpa spasi");
+  assert.ok(/\{count\} \{sentence\}/.test(I18N.DICT.id["ui.rule.f.replyNote"]), "ID memakai spasi");
+  assert.ok(/\{count\} \{sentence\}/.test(I18N.DICT.en["ui.rule.f.replyNote"]), "EN memakai spasi");
+
+  // Dan hasil akhirnya memang rapi di ketiga bahasa.
+  const faq = { switchScene: true, autoPin: false, autoReply: true };
+  assert.ok(!/\s\s/.test(U.replyNoteFor(faq, 36, "id")), "tidak boleh ada spasi ganda");
+  assert.ok(!/。\s/.test(U.replyNoteFor(faq, 36, "zh-CN")), "zh tidak boleh ada spasi sesudah titik penuh");
+});
+
+// --- kalimat balasan mengikuti AKSI ------------------------------------------
+//
+// Kalimat v0.1.1 hanya satu: "Dikirim setelah pin terkonfirmasi." Itu benar
+// selama setiap aturan memin. Untuk aturan FAQ ia menjanjikan sesuatu yang tidak
+// pernah bisa terjadi - tidak ada pin yang akan dikonfirmasi - dan di layar itu
+// terbaca seperti fitur yang rusak, bukan seperti aturan yang memang tidak
+// memin.
+
+test("BALAS + PIN: kalimatnya menjanjikan balasan SETELAH pin", () => {
+  const ed = U.ruleEditorView(row({ reply: "abc", actions: ALL_ON }), EDITABLE, null, "id");
+  assert.ok(ed.replyNote.includes(T("ui.rule.f.replyAfterPin")), ed.replyNote);
+  assert.ok(!ed.replyNote.includes(T("ui.rule.f.replyOnTrigger")), ed.replyNote);
+  // Hitungan hurufnya tidak hilang: ia satu-satunya tanda batas ketikan.
+  assert.ok(ed.replyNote.includes("3"), ed.replyNote);
+});
+
+test("BALAS tanpa PIN: kalimatnya menjanjikan balasan SAAT TERPICU", () => {
+  const faq = { switchScene: true, autoPin: false, autoReply: true };
+  const ed = U.ruleEditorView(row({ reply: "abc", actions: faq }), EDITABLE, null, "id");
+  assert.ok(ed.replyNote.includes(T("ui.rule.f.replyOnTrigger")), ed.replyNote);
+  assert.ok(!ed.replyNote.includes(T("ui.rule.f.replyAfterPin")), ed.replyNote);
+  assert.equal(ed.replyDisabled, false, "balasan tetap bisa diisi");
+});
+
+test("BALAS mati: field mati dan kalimatnya menjelaskan, bukan menghitung huruf", () => {
+  const ed = U.ruleEditorView(row({ actions: { switchScene: true, autoPin: true, autoReply: false } }), EDITABLE, null, "id");
+  assert.equal(ed.replyDisabled, true);
+  assert.equal(ed.replyNote, T("ui.rule.f.replyOffNote"));
+});
+
+test("replyNoteFor: SATU sumber kalimat untuk kartu dan untuk handler ketik", () => {
+  // app.js memperbarui catatan ini setiap huruf diketik. Sebelum perbaikan ini
+  // ia menulis sendiri kunci kalimatnya, jadi kartunya bisa mengatakan satu hal
+  // dan huruf pertama yang diketik mengubahnya menjadi hal lain.
+  const faq = { switchScene: true, autoPin: false, autoReply: true };
+  const ed = U.ruleEditorView(row({ reply: "abc", actions: faq }), EDITABLE, null, "id");
+  assert.equal(ed.replyNote, U.replyNoteFor(faq, 3, "id"), "kartu dan handler harus sama persis");
+
+  // Dan panjang yang berubah hanya mengubah angkanya, bukan janjinya.
+  const after = U.replyNoteFor(faq, 40, "id");
+  assert.ok(after.includes(T("ui.rule.f.replyOnTrigger")), after);
+  assert.ok(after.includes("40"), after);
+
+  // Aturan lama tanpa field actions diperlakukan memin, jadi kalimatnya yang
+  // lama pula - kompatibilitas ke belakang sampai ke tingkat kalimat.
+  assert.ok(U.replyNoteFor(undefined, 1, "id").includes(T("ui.rule.f.replyAfterPin")));
+});
+
+// --- opsi kosong dropdown produk ---------------------------------------------
+
+test("PIN mati: dropdown produk mengatakan TIDAK DIGUNAKAN, bukan menyuruh menyegarkan", () => {
+  // "Belum ada produk. Tekan Segarkan koneksi." salah dua kali untuk aturan FAQ:
+  // menyuruh memperbaiki yang tidak rusak, dan membuat aturan sehat tampak gagal.
+  const faq = { switchScene: true, autoPin: false, autoReply: true };
+  for (const count of [0, 10]) {
+    const ed = U.ruleEditorView(row({ actions: faq }), EDITABLE, null, "id", count);
+    assert.equal(ed.productPlaceholder, T("ui.rule.f.productNotUsed"), "jumlah produk=" + count);
+    assert.equal(ed.productDisabled, true);
+    assert.equal(ed.productNote, T("ui.rule.f.pinOffNote"));
+  }
+});
+
+test("PIN menyala: kalimat katalog yang SUDAH ADA kembali apa adanya", () => {
+  const kosong = U.ruleEditorView(row(), EDITABLE, null, "id", 0);
+  assert.equal(kosong.productPlaceholder, T("ui.rule.f.noProducts"));
+
+  const ada = U.ruleEditorView(row(), EDITABLE, null, "id", 10);
+  assert.equal(ada.productPlaceholder, T("ui.rule.f.productNone"));
+  assert.equal(ada.productDisabled, false);
+});
+
+test("mematikan PIN TIDAK menghapus produk tersimpan, dan menyalakannya kembali memulihkannya", () => {
+  // Inti item ini: yang berubah hanya tampilan. Nilai di baris formulir tetap.
+  const r = row();
+  const tersimpan = r.productTitle;
+
+  // Mematikan aksi hanya mengganti objek AKSI; nilai produknya tidak disentuh.
+  r.actions = U.toggleAction(r, "autoPin", false);
+  const off = U.ruleEditorView(r, EDITABLE, null, "id", 10);
+  assert.equal(off.productPlaceholder, T("ui.rule.f.productNotUsed"));
+  assert.equal(r.productTitle, tersimpan, "produk tersimpan tidak boleh ikut terhapus");
+
+  // Dan menyalakannya kembali memunculkan pilihan yang SAMA, bukan field kosong.
+  r.actions = U.toggleAction(r, "autoPin", true);
+  assert.equal(r.productTitle, tersimpan, "pilihan lama harus masih ada");
+  const on = U.ruleEditorView(r, EDITABLE, "Garuda Kacang Atom 80gr isi 10", "id", 10);
+  assert.equal(on.productDisabled, false);
+  assert.equal(on.productPlaceholder, T("ui.rule.f.productNone"));
+  assert.equal(on.productNote, T("ui.rule.f.resolved", { title: "Garuda Kacang Atom 80gr isi 10" }));
 });
 
 test("PEMICU tidak pernah dimatikan oleh aksi apa pun: ia selalu wajib", () => {
@@ -290,6 +407,10 @@ test("TIGA BAHASA: setiap kalimat baru ada di id, en, dan zh-CN", () => {
     "ui.rule.f.sceneOffNote",
     "ui.rule.f.pinOffNote",
     "ui.rule.f.replyOffNote",
+    "ui.rule.f.replyAfterPin",
+    "ui.rule.f.replyOnTrigger",
+    "ui.rule.f.replyCount",
+    "ui.rule.f.productNotUsed",
     "ui.rule.thenReply",
     "path.rule.actions",
     "err.no-actions-enabled",
