@@ -285,23 +285,51 @@ test("v0.2.0: saklar balasan global TIDAK menjanjikan pin, judul maupun penjelas
   // pin akan menyimpulkan salah satu dari dua hal keliru: entah fiturnya rusak,
   // entah layarnya bohong.
   //
-  // KEDUANYA dijaga, judul dan penjelasan. Menetralkan penjelasan saja akan
-  // meninggalkan judul di atasnya yang masih berkata "setelah pin", dan yang
-  // dibaca customan lebih dulu justru judulnya.
+  // KETIGA kunci yang berbicara tentang saklar global itu dijaga, bukan satu:
   //
-  // Aturannya sengaja keras: untuk dua kunci ini, kata "pin" tidak boleh muncul
-  // SAMA SEKALI. Syarat pin memang ada, tapi tempatnya per-aturan - lihat
+  //   ui.set.autoreply                  judul saklarnya
+  //   ui.set.autoreplyHelp              penjelasan di bawahnya
+  //   path.settings.autoCommentEnabled  label yang dipakai KALIMAT KESALAHAN
+  //                                     validasi, lewat fieldProblem()
+  //
+  // Ketiganya ditemukan satu per satu, dan itulah alasan daftarnya ada di sini:
+  // menetralkan penjelasan saja meninggalkan judulnya, menetralkan judul saja
+  // meninggalkan label kesalahannya - dan yang terakhir muncul tepat ketika
+  // customer sedang mencari tahu apa yang salah.
+  //
+  // Aturannya sengaja keras: untuk ketiga kunci ini kata "pin" tidak boleh
+  // muncul SAMA SEKALI, karena di sana tidak ada bentuk penyebutan pin yang
+  // benar. Syarat pin memang ada, tapi tempatnya per-aturan - lihat
   // ui.rule.f.replyAfterPin, yang dijaga di bawah supaya pagar ini tidak bisa
   // dipenuhi dengan cara menghapus syarat pin dari seluruh halaman.
   const I18N = require(path.join(PUBLIC_DIR, "i18n.js"));
+  const GLOBAL_REPLY_KEYS = ["ui.set.autoreply", "ui.set.autoreplyHelp", "path.settings.autoCommentEnabled"];
   const larangan = [/pin/i, /置顶/]; // "pin" (id/en) dan 置顶 (zh)
   for (const L of I18N.LANGS) {
-    for (const key of ["ui.set.autoreply", "ui.set.autoreplyHelp"]) {
+    for (const key of GLOBAL_REPLY_KEYS) {
       const v = I18N.DICT[L][key];
       assert.ok(v && v.trim().length > 0, L + " " + key + " kosong");
       for (const pola of larangan) {
         assert.ok(!pola.test(v), L + " " + key + " masih menjanjikan pin: " + v);
       }
+    }
+    // Judul saklar dan label kesalahannya menunjuk SETELAN YANG SAMA, jadi ia
+    // harus berbunyi sama. Dua kalimat berbeda untuk satu saklar membuat
+    // customer mengira ada dua setelan.
+    assert.equal(
+      I18N.DICT[L]["path.settings.autoCommentEnabled"],
+      I18N.DICT[L]["ui.set.autoreply"],
+      L + ": label kesalahan harus sama dengan judul saklarnya"
+    );
+  }
+
+  // Dan kalimat kesalahannya diperiksa lewat jalur yang DIPAKAI UI, bukan hanya
+  // nilai kamusnya: fieldProblem() yang menempelkan label itu ke keluhannya.
+  for (const L of I18N.LANGS) {
+    const kalimat = I18N.fieldProblem(L, "settings.autoCommentEnabled", "required", null);
+    assert.ok(kalimat && kalimat.length > 0, L + " kalimat kesalahan kosong");
+    for (const pola of larangan) {
+      assert.ok(!pola.test(kalimat), L + " kalimat kesalahan masih menjanjikan pin: " + kalimat);
     }
   }
 
