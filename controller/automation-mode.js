@@ -45,9 +45,23 @@ const BLOCKER = Object.freeze({
   PIN_OFF: "autopin-disabled",
   // Balasan admin dinyalakan, tapi jalur kirimnya belum yang sungguhan.
   REPLY_NOT_ENABLED: "admin-reply-not-enabled",
-  // Balasan admin dinyalakan tanpa pin. Balasan hanya sah SESUDAH pin
-  // terkonfirmasi (itu seluruh dasar AR3), jadi tanpa pin ia menjanjikan
-  // sesuatu yang tidak pernah bisa terjadi.
+  // Balasan admin dinyalakan tanpa pin, PADAHAL ada aturan yang memang memin.
+  //
+  // Sampai v0.1.1 ini berlaku untuk setiap balasan: satu-satunya kalimat yang
+  // ada mengklaim "sudah aku pin", dan tanpa pin ia menjanjikan sesuatu yang
+  // tidak pernah bisa terjadi.
+  //
+  // Sejak v0.2.0 syaratnya DIPERSEMPIT, dan itu bukan pelemahan. Aturan FAQ
+  // punya aksi "Pin produk" yang mati dan kalimatnya milik customer sendiri —
+  // ia tidak menyebut pin, tidak menunggu pin, dan requirePin:false membuat
+  // gerbang bukti pin tidak berlaku untuknya (lihat autocomment/core.js). Config
+  // yang isinya hanya aturan seperti itu SAH, dan memblokirnya berarti menolak
+  // seluruh gunanya fitur aksi per-aturan.
+  //
+  // Yang tetap diblokir: balasan menyala, pin global mati, DAN ada aturan yang
+  // benar-benar memin. Di sana balasan aturan itu akan dibungkam gerbang bukti
+  // pin, dan run-nya kembali menjadi "hijau tapi diam" — kejadian 2026-10-08
+  // yang melahirkan berkas ini.
   REPLY_WITHOUT_PIN: "admin-reply-without-pin",
 });
 
@@ -56,17 +70,32 @@ const BLOCKER = Object.freeze({
 // modul ini harus tetap murni dan bisa dimuat tanpa apa pun.
 const REAL_TRANSPORT = "browser";
 
+// Aksi per-aturan, DIIMPOR. Keputusan "aturan ini memin atau tidak" hanya ada di
+// satu tempat; lihat runtime/rule-actions.js.
+const { resolveActions } = require("../runtime/rule-actions");
+
 // Apakah ADA pemetaan yang benar-benar meminta sebuah produk di-pin.
 //
 // `product: null` itu SAH dan sengaja: scene yang punya trigger tapi bukan
 // etalase (mis. scene FAQ). Config yang isinya hanya scene seperti itu TIDAK
 // membutuhkan AutoPIN, dan memaksanya menyala akan menolak setup yang benar.
+//
+// Sejak v0.2.0 judul produk SAJA tidak lagi cukup untuk menjawab ini. Sebuah
+// aturan bisa menyimpan judul produk sementara aksi "Pin produk"-nya DIMATIKAN;
+// judul itu lalu hanya pilihan yang tersimpan, dan aturannya tidak pernah
+// meminta pin. Jadi yang menentukan adalah AKSInya, dan judul produk dibaca
+// sebagai syarat tambahan — bukan sebaliknya.
+//
+// Aturan lama tanpa field actions tetap menjawab "butuh pin", karena aksinya
+// diselesaikan menjadi ketiganya menyala. Jadi setiap config v0.1.1 dijaga
+// persis seperti sebelumnya.
 function mappingsNeedPin(config) {
   const list = (config && config.mappings) || [];
   if (!Array.isArray(list)) return false;
-  return list.some(
-    (m) => m && m.product && typeof m.product.title === "string" && m.product.title.trim() !== ""
-  );
+  return list.some((m) => {
+    if (!m || !resolveActions(m).autoPin) return false;
+    return !!(m.product && typeof m.product.title === "string" && m.product.title.trim() !== "");
+  });
 }
 
 // Mengembalikan:
@@ -94,7 +123,7 @@ function describeMode(config) {
   // Diperiksa walau UI sekarang selalu menulis keduanya bersamaan: UI bukan
   // batas keamanan, dan config bisa datang dari berkas yang disunting tangan.
   if (reply && !transportReal) blockers.push(BLOCKER.REPLY_NOT_ENABLED);
-  if (reply && !pin) blockers.push(BLOCKER.REPLY_WITHOUT_PIN);
+  if (reply && !pin && needsPin) blockers.push(BLOCKER.REPLY_WITHOUT_PIN);
 
   return {
     pin,

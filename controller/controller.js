@@ -40,7 +40,7 @@ const { createChildTracer, traceEnabled } = require("./child-trace");
 const { HEADLESS_ENV } = require("../autopin/browser-mode");
 // Konsistensi mode automation. MURNI, dan dipakai BERSAMA oleh jalur start dan
 // status() supaya tombol UI dan penolakan server tidak bisa menyimpang.
-const { describeMode } = require("./automation-mode");
+const { describeMode, mappingsNeedPin } = require("./automation-mode");
 const { createRunAuthority } = require("./run-authority");
 // Pembersihan kunci bot oleh INDUK. Dibutuhkan karena di Windows
 // child.kill("SIGTERM") memanggil TerminateProcess, jadi handler pelepasan kunci
@@ -317,6 +317,43 @@ function createController({
       // automation berjalan, service yang memegang profil itu — lihat catatan di
       // controller/discovery/tiktok.js. Preflight dijalankan sebelum anak
       // dinyalakan, jadi di jalur Start profil memang bebas.
+      //
+      // -----------------------------------------------------------------------
+      // KATALOG PRODUK HANYA PRASYARAT KALAU ADA YANG MEMIN
+      //
+      // products() gagal dengan `no-live-products` saat etalase LIVE kosong, dan
+      // sampai v0.1.1 itu selalu benar: setiap run adalah run yang memin.
+      //
+      // Sejak aksi per-aturan ada, config yang isinya aturan FAQ dan interaksi
+      // saat sepi TIDAK PERNAH memin apa pun. Untuk config seperti itu etalase
+      // kosong bukan ketidaksiapan — ia tidak relevan. Terbukti pada uji dev
+      // LIVE 2026-10-15/16: LIVE benar-benar on air, tapi START ditolak
+      // `no-live-products` karena etalasenya kosong.
+      //
+      // Catatan soal `live` di discovery: nilainya diturunkan dari JUMLAH tombol
+      // Pin di dashboard produk (livePinButtonsOnPage > 0), jadi pada LIVE tanpa
+      // produk ia memang false walau siarannya hidup. Ia informasi, bukan
+      // gerbang (lihat preflight.js), dan tidak dipakai untuk menolak start.
+      //
+      // Predikatnya SAMA dengan yang memutuskan apakah AutoPIN wajib menyala
+      // (controller/automation-mode.js), bukan salinannya: "butuh pin" tidak
+      // boleh punya dua arti di dua lapis.
+      if (!mappingsNeedPin(config)) {
+        const s = await tiktokDiscovery.status(config);
+        if (!s.ok) return { ok: false, reason: s.reason || "tiktok-check-failed" };
+        // Identitas TETAP diperiksa. Jalur AutoComment mengetik di akun ini,
+        // jadi akun yang salah adalah kegagalan kesiapan - bukan detail produk.
+        if (s.identityOk !== true) return { ok: false, reason: "wrong-tiktok-account" };
+        // `products` SENGAJA tidak disertakan: tanpa katalog, validasi pemetaan
+        // MELEWATI pemeriksaan produk alih-alih menganggapnya lolos. Untuk
+        // config yang tidak memin, tidak ada yang hilang.
+        return {
+          ok: true,
+          productCount: Number.isInteger(s.productCount) ? s.productCount : 0,
+          live: s.live === true,
+        };
+      }
+
       const r = await tiktokDiscovery.products(config);
       if (!r.ok) return { ok: false, reason: r.reason };
       return {

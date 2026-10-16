@@ -335,3 +335,103 @@ test("PREFLIGHT: tanpa satu pun pemetaan tetap no-mappings", () => {
     assert.equal(out.ok, false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// KATALOG PRODUK HANYA PRASYARAT KALAU ADA YANG MEMIN
+//
+// Ditemukan uji dev LIVE 2026-10-15/16: LIVE benar-benar on air, config hanya
+// berisi dua aturan FAQ + satu interaksi saat sepi (nol pin), tapi START
+// ditolak `no-live-products` karena etalase LIVE kosong.
+//
+// products() memang gagal saat etalase kosong, dan sampai v0.1.1 itu selalu
+// benar karena setiap run adalah run yang memin. Untuk config yang tidak memin,
+// etalase kosong bukan ketidaksiapan - ia tidak relevan.
+// ---------------------------------------------------------------------------
+
+const { createController } = require("../controller/controller");
+
+// Controller dengan discovery yang DISUNTIKKAN. Nol browser, nol proses.
+function controllerWith({ cfg, products, status }) {
+  const calls = [];
+  return {
+    calls,
+    controller: createController({
+      configFile: "C:/tidak-dipakai/config.json",
+      fs: {
+        readFileSync: () => JSON.stringify(cfg),
+        writeFileSync: () => {},
+        renameSync: () => {},
+        unlinkSync: () => {},
+        mkdirSync: () => {},
+      },
+      obsDiscovery: { listScenes: async () => ({ ok: true, connected: true, scenes: SCENES }) },
+      tiktokDiscovery: {
+        products: async () => {
+          calls.push("products");
+          return products;
+        },
+        status: async () => {
+          calls.push("status");
+          return status;
+        },
+      },
+      playableScenes: PLAYABLE,
+    }),
+  };
+}
+
+const ETALASE_KOSONG = { ok: false, reason: "no-live-products", count: 0, products: [] };
+const STATUS_SIAP = {
+  ok: true, identity: "akun_uji", identityOk: true, live: false,
+  dashboardReady: true, chatReady: null, productCount: 0,
+};
+
+test("PREFLIGHT: config nol-pin + etalase LIVE KOSONG -> tiktok LOLOS", async () => {
+  const cfg = configWith([
+    { scene: "PAX-1", product: null, triggers: ["cara order"], reply: "r",
+      actions: { switchScene: true, autoPin: false, autoReply: true } },
+  ]);
+  const h = controllerWith({ cfg, products: ETALASE_KOSONG, status: STATUS_SIAP });
+  const out = await h.controller.runPreflight();
+  assert.equal(out.checks.tiktok.ok, true, JSON.stringify(out.checks.tiktok));
+  assert.deepEqual(h.calls, ["status"], "katalog produk tidak perlu dibaca sama sekali");
+});
+
+test("PREFLIGHT: config nol-pin TETAP menuntut identitas akun yang benar", async () => {
+  // Jalur AutoComment mengetik di akun ini; akun yang salah adalah kegagalan
+  // kesiapan, bukan detail produk.
+  const cfg = configWith([
+    { scene: "PAX-1", product: null, triggers: ["a"], reply: "r",
+      actions: { switchScene: true, autoPin: false, autoReply: true } },
+  ]);
+  const h = controllerWith({
+    cfg, products: ETALASE_KOSONG,
+    status: Object.assign({}, STATUS_SIAP, { identityOk: false, identity: "akun_lain" }),
+  });
+  const out = await h.controller.runPreflight();
+  assert.equal(out.checks.tiktok.ok, false);
+  assert.equal(out.checks.tiktok.reason, "wrong-tiktok-account");
+});
+
+test("PREFLIGHT: ada aturan yang MEMIN -> etalase kosong tetap memblokir", async () => {
+  // Fail-closed produk TIDAK dilonggarkan untuk config yang memin.
+  const cfg = configWith([
+    { scene: "PAX-1", product: { title: "Garuda Kacang Atom" }, triggers: ["a"], reply: "r",
+      actions: { switchScene: true, autoPin: true, autoReply: true } },
+  ]);
+  const h = controllerWith({ cfg, products: ETALASE_KOSONG, status: STATUS_SIAP });
+  const out = await h.controller.runPreflight();
+  assert.equal(out.checks.tiktok.ok, false);
+  assert.equal(out.checks.tiktok.reason, "no-live-products");
+  assert.deepEqual(h.calls, ["products"], "jalur memin membaca katalog, bukan status");
+});
+
+test("PREFLIGHT: aturan LAMA tanpa field actions tetap dianggap memin", async () => {
+  const cfg = configWith([
+    { scene: "PAX-1", product: { title: "Garuda Kacang Atom" }, triggers: ["a"], reply: "r" },
+  ]);
+  const h = controllerWith({ cfg, products: ETALASE_KOSONG, status: STATUS_SIAP });
+  const out = await h.controller.runPreflight();
+  assert.equal(out.checks.tiktok.ok, false);
+  assert.equal(out.checks.tiktok.reason, "no-live-products");
+});

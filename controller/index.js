@@ -153,7 +153,26 @@ function runPowerShell(script, { timeoutMs = 20000 } = {}) {
 
 function createWindowsOrphanSweeper() {
   return async function sweep({ ownPids = new Set(), dryRun = false } = {}) {
+    // Proses Controller SENDIRI selalu dikecualikan, di sini — bukan di setiap
+    // pemanggil.
+    //
+    // Polanya mencocokkan command line `node.exe` dengan '*index.js*', dan di
+    // jalur pengembangan Controller dijalankan sebagai `node controller/index.js`
+    // — yang COCOK dengan pola itu. Akibatnya dua hal, dan keduanya terbukti
+    // pada uji dev 2026-10-15:
+    //
+    //   preflight  menghitung Controller sebagai bot yatim, lalu menolak START
+    //              dengan already-running. Tidak ada bot yatim mana pun.
+    //   sweep      cleanupOrphans() hanya mengecualikan PID anak-anaknya, jadi
+    //              penyapuan sungguhan akan MEMBUNUH Controller itu sendiri.
+    //
+    // Di aplikasi terpaket keduanya tidak pernah muncul: Controller di sana
+    // adalah "AI LIVE HOST.exe" (electron-as-node) dan filter Name='node.exe'
+    // tidak pernah melihatnya. Jadi ini cacat khusus jalur pengembangan, dan
+    // tempat yang benar untuk memperbaikinya adalah invarian penyapu: Controller
+    // adalah INDUK, ia tidak pernah bisa menjadi yatim.
     const exclude = Array.from(ownPids).filter((p) => Number.isInteger(p));
+    if (!exclude.includes(process.pid)) exclude.push(process.pid);
     const excludeList = exclude.length > 0 ? exclude.join(",") : "-1";
     // Satu skrip, satu angka keluar: jumlah yang cocok (dryRun) atau jumlah yang
     // dibunuh plus sisa yang terbukti. Pembuktian ulang ada di dalam skrip,

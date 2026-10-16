@@ -226,6 +226,91 @@ test("alasannya dicatat dengan saklar yang terbaca, bukan hanya kode", async () 
   assert.match(refused, /pin=false/);
 });
 
+// ---------------------------------------------------------------------------
+// v0.2.0: AKSI PER-ATURAN MENGUBAH ARTI "butuh pin"
+//
+// Sampai v0.1.1 setiap balasan mengklaim "sudah aku pin", jadi balasan tanpa pin
+// SELALU menjanjikan sesuatu yang tidak bisa terjadi. Sejak aksi per-aturan ada,
+// aturan FAQ mematikan "Pin produk" dan kalimatnya milik customer sendiri - ia
+// tidak menyebut pin dan tidak menunggu pin (requirePin:false di
+// autocomment/core.js). Config yang isinya hanya aturan seperti itu SAH.
+//
+// Ditemukan oleh uji dev LIVE 2026-10-15: START ditolak admin-reply-without-pin
+// untuk config yang tidak punya satu pun aturan yang memin. Penjaga ini lahir
+// dari kejadian 2026-10-08 dan tetap dipertahankan - yang berubah hanya
+// CAKUPANnya.
+// ---------------------------------------------------------------------------
+
+const FAQ_ACTIONS = { switchScene: true, autoPin: false, autoReply: true };
+
+test("v0.2.0: config FAQ-saja (nol aturan memin) BOLEH start dengan balasan nyata", () => {
+  const m = describeMode({
+    settings: { autopinEnabled: false, autoCommentEnabled: true, autoCommentTransport: "browser" },
+    mappings: [{ scene: "FAQ ORDER", product: null, triggers: ["cara order"], reply: "r", actions: FAQ_ACTIONS }],
+  });
+  assert.equal(m.needsPin, false, "tidak ada aturan yang memin");
+  assert.deepEqual(m.blockers, []);
+  assert.equal(m.ok, true);
+});
+
+test("v0.2.0: judul produk TERSIMPAN tapi aksi pin MATI = tidak butuh pin", () => {
+  // Nilai yang tertinggal pada aturan FAQ tidak boleh menuntut AutoPIN menyala.
+  const m = describeMode({
+    settings: { autopinEnabled: false, autoCommentEnabled: true, autoCommentTransport: "browser" },
+    mappings: [{ scene: "FAQ ORDER", product: { title: "Garuda Kacang Atom" }, triggers: ["a"], reply: "r", actions: FAQ_ACTIONS }],
+  });
+  assert.equal(m.needsPin, false);
+  assert.equal(m.ok, true);
+});
+
+test("v0.2.0: aturan yang MEMIN tetap menuntut AutoPIN menyala", () => {
+  const m = describeMode({
+    settings: { autopinEnabled: false, autoCommentEnabled: true, autoCommentTransport: "browser" },
+    mappings: [
+      { scene: "FAQ ORDER", product: null, triggers: ["a"], reply: "r", actions: FAQ_ACTIONS },
+      { scene: "PAX-1", product: { title: "Kacang" }, triggers: ["b"], reply: "r", actions: { switchScene: true, autoPin: true, autoReply: true } },
+    ],
+  });
+  assert.equal(m.needsPin, true, "satu aturan memin sudah cukup");
+  assert.ok(m.blockers.includes(BLOCKER.PIN_OFF));
+  assert.ok(m.blockers.includes(BLOCKER.REPLY_WITHOUT_PIN));
+  assert.equal(m.ok, false);
+});
+
+test("PAGAR v0.1.1: aturan LAMA tanpa field actions tetap dianggap memin", () => {
+  // Inti kompatibilitas. Kalau ini merah, config customer yang sudah ada bisa
+  // start dalam mode yang tidak bisa melakukan apa pun - kejadian 2026-10-08.
+  const legacy = { scene: "PAX-1", product: { title: "Kacang" }, triggers: ["a"], reply: "r" };
+  assert.equal(mappingsNeedPin({ mappings: [legacy] }), true);
+
+  const m = describeMode({
+    settings: { autopinEnabled: false, autoCommentEnabled: true, autoCommentTransport: "browser" },
+    mappings: [legacy],
+  });
+  assert.equal(m.ok, false);
+  assert.ok(m.blockers.includes(BLOCKER.PIN_OFF));
+  assert.ok(m.blockers.includes(BLOCKER.REPLY_WITHOUT_PIN));
+});
+
+test("PAGAR v0.1.1: bentuk PERSIS run 2026-10-08 tetap ditolak", () => {
+  // produk ter-petakan, pin mati, balasan mati, transport dry-run.
+  const m = describeMode({
+    settings: { autopinEnabled: false, autoCommentEnabled: false, autoCommentTransport: "dry-run" },
+    mappings: [{ scene: "PAX-1", product: { title: "Kacang" }, triggers: ["a"], reply: "r" }],
+  });
+  assert.equal(m.ok, false);
+  assert.equal(m.reason, BLOCKER.PIN_OFF);
+});
+
+test("v0.2.0: transport dry-run tetap memblokir balasan, lepas dari pin", () => {
+  const m = describeMode({
+    settings: { autopinEnabled: false, autoCommentEnabled: true, autoCommentTransport: "dry-run" },
+    mappings: [{ scene: "FAQ ORDER", product: null, triggers: ["a"], reply: "r", actions: FAQ_ACTIONS }],
+  });
+  assert.equal(m.ok, false);
+  assert.equal(m.reason, BLOCKER.REPLY_NOT_ENABLED);
+});
+
 test("balasan ON tanpa pin: DITOLAK server-side", async () => {
   const h = createHarness({
     config: withSettings({ autopinEnabled: false, autoCommentEnabled: true, autoCommentTransport: "browser" }),
