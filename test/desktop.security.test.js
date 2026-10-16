@@ -412,3 +412,128 @@ test("REGRESI: perlindungan yatim tetap mencari node.exe (jadi anaknya harus nod
   const idx = stripComments(fs.readFileSync(path.resolve(__dirname, "..", "controller", "index.js"), "utf8"));
   assert.match(idx, /Name='node\.exe'/);
 });
+
+// ---------------------------------------------------------------------------
+// scripts/stop-all.ps1 — CONTROLLER BUKAN BOT
+//
+// Skrip itu adalah alat yang dipercaya operator sebelum LIVE, dan polanya
+// sengaja lebar sejak 2026-10-05 (pola yang mengasumsikan bentuk pemanggilan
+// node tidak pernah cocok, lalu "sisa bot: 0" terbit tiga kali padahal tiga bot
+// masih hidup). Kelebaran itu harus TETAP ada.
+//
+// Tapi Controller pengembangan berjalan sebagai `node controller/index.js`, yang
+// ikut cocok — jadi alat itu membunuh Controller yang justru sedang dipakai.
+//
+// Diuji dari SUMBER skrip, bukan dengan menjalankannya: menjalankan stop-all.ps1
+// akan benar-benar mematikan proses di mesin ini, dan ia tidak punya mode
+// dry-run. Jadi pola DIAMBIL dari berkasnya, lalu dicocokkan di sini dengan
+// aturan -like yang sama. Karena polanya dibaca dari berkas yang sesungguhnya,
+// tes ini tidak bisa menyimpang dari skripnya.
+// ---------------------------------------------------------------------------
+
+const STOP_ALL_PATH = path.resolve(__dirname, "..", "scripts", "stop-all.ps1");
+const STOP_ALL_SRC = fs.readFileSync(STOP_ALL_PATH, "utf8");
+
+// Baris komentar PowerShell dibuang lebih dulu, dengan alasan yang sama seperti
+// stripComments di atas: komentar di skrip itu MENYEBUT pola pengecualiannya,
+// dan tes yang membaca prosa akan lulus tanpa kodenya benar.
+function psCode(src) {
+  return src
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+}
+
+// Isi sebuah penugasan `$nama = @('a', 'b')` di dalam skrip.
+function psList(name) {
+  const m = new RegExp("\\$" + name + "\\s*=\\s*@\\(([^)]*)\\)").exec(psCode(STOP_ALL_SRC));
+  assert.ok(m, "penugasan $" + name + " tidak ditemukan di stop-all.ps1");
+  return Array.from(m[1].matchAll(/'([^']*)'/g)).map((x) => x[1]);
+}
+
+// Pola -like PowerShell -> RegExp. Skrip ini hanya memakai '*'; sisanya literal.
+// -like TIDAK peka huruf besar/kecil, jadi flag "i" ikut.
+function likeToRe(pattern) {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*");
+  return new RegExp("^" + escaped + "$", "i");
+}
+
+// Cermin dari Get-BotProcesses: pengecualian menang lebih dulu.
+function wouldKill(commandLine) {
+  if (psList("notBot").some((p) => likeToRe(p).test(commandLine))) return false;
+  return psList("patterns").some((p) => likeToRe(p).test(commandLine));
+}
+
+const NODE = '"C:\\Program Files\\nodejs\\node.exe"';
+const REPO_DIR = "C:\\Users\\BSD WHELFORD\\garudafood-tiktok-bot";
+
+test("stop-all: pola bot tetap LEBAR (pelajaran 2026-10-05 tidak dibatalkan)", () => {
+  assert.deepEqual(psList("patterns"), ["*index.js*", "*autopin-service.js*"]);
+});
+
+test("stop-all: Controller pengembangan TIDAK ikut dibunuh, kedua bentuk pemisah", () => {
+  // `npm run controller` mencetak garis miring depan; yang diketik tangan bisa
+  // garis miring belakang. Keduanya harus dikecualikan.
+  assert.equal(wouldKill(NODE + " controller/index.js"), false, "bentuk garis miring depan");
+  assert.equal(wouldKill(NODE + " controller\\index.js"), false, "bentuk garis miring belakang");
+  assert.equal(wouldKill(NODE + " ./controller/index.js"), false, "dengan ./ di depan");
+  assert.equal(wouldKill(NODE + " " + REPO_DIR + "\\controller\\index.js --port=4782"), false, "path absolut");
+});
+
+test("stop-all: bot dan service SUNGGUHAN tetap tertangkap", () => {
+  // Bot yang dinyalakan Controller memakai path ABSOLUT ke <repo>\index.js
+  // (controller/process-manager.js), dan yang dijalankan tangan memakai path
+  // relatif. Keduanya harus tetap mati.
+  assert.equal(wouldKill(NODE + " index.js"), true, "bot relatif");
+  assert.equal(wouldKill(NODE + " " + REPO_DIR + "\\index.js"), true, "bot path absolut");
+  assert.equal(wouldKill(NODE + " " + REPO_DIR + "\\autopin-service.js --click-strategy=dom"), true, "service");
+  assert.equal(wouldKill("node index.js"), true, "dipanggil tanpa path lengkap");
+});
+
+test("stop-all: pengecualian ada DI DALAM Get-BotProcesses, jadi VERIFIKASI ikut memakainya", () => {
+  // Kalau pengecualiannya ditaruh di pass pembunuhan saja, hitungan di akhir
+  // tetap memasukkan Controller dan skripnya bisa melaporkan "BELUM BERSIH"
+  // tanpa ada satu pun bot yatim. Angka yang tidak bisa dipercaya adalah
+  // kegagalan yang melahirkan skrip ini.
+  const code = psCode(STOP_ALL_SRC);
+  const body = /function Get-BotProcesses \{([\s\S]*?)\n\}/.exec(code);
+  assert.ok(body, "fungsi Get-BotProcesses tidak ditemukan");
+  assert.match(body[1], /\$notBot/, "pengecualian harus berada di dalam fungsinya");
+  assert.match(body[1], /continue/, "proses yang dikecualikan dilewati, bukan hanya ditandai");
+
+  // Dan hanya ADA SATU tempat yang mendaftar proses node, supaya pass
+  // pembunuhan dan pembuktian ulang tidak mungkin memakai aturan berbeda.
+  const enumerations = code.match(/Win32_Process -Filter "Name='node\.exe'"/g) || [];
+  assert.equal(enumerations.length, 1, "pendaftaran proses node harus satu tempat saja");
+});
+
+test("stop-all: berkas .ps1 tetap ASCII murni", () => {
+  // PowerShell 5.1 membaca .ps1 sebagai ANSI, bukan UTF-8. Satu em dash di dalam
+  // string sudah cukup untuk mematahkan parse SELURUH berkas — dan yang terlihat
+  // operator hanyalah skrip pembersih yang tidak bisa dijalankan tepat saat ia
+  // paling dibutuhkan.
+  for (const file of fs.readdirSync(path.dirname(STOP_ALL_PATH)).filter((f) => f.endsWith(".ps1"))) {
+    const buf = fs.readFileSync(path.join(path.dirname(STOP_ALL_PATH), file));
+    const bad = Array.from(buf).findIndex((b) => b > 127);
+    assert.equal(bad, -1, file + ": byte non-ASCII di posisi " + bad);
+    assert.ok(!(buf[0] === 0xef && buf[1] === 0xbb), file + ": BOM tidak boleh ada");
+  }
+});
+
+test("stop-all: akhir baris .ps1 KONSISTEN, tidak campur", () => {
+  // Yang diperiksa konsistensi, bukan CRLF-nya.
+  //
+  // CRLF di working tree dihasilkan core.autocrlf=true saat checkout; di dalam
+  // objek Git berkas ini tersimpan dengan LF. Jadi memaku "harus CRLF" akan
+  // membuat tes ini merah di setiap clone yang autocrlf-nya mati — merah yang
+  // tidak menandakan apa pun tentang skripnya.
+  //
+  // Yang benar-benar berbahaya adalah akhir baris CAMPUR dalam satu berkas, dan
+  // itu bisa diperiksa di mana saja.
+  for (const file of fs.readdirSync(path.dirname(STOP_ALL_PATH)).filter((f) => f.endsWith(".ps1"))) {
+    const src = fs.readFileSync(path.join(path.dirname(STOP_ALL_PATH), file), "utf8");
+    const lf = (src.match(/\n/g) || []).length;
+    const crlf = (src.match(/\r\n/g) || []).length;
+    assert.ok(lf === crlf || crlf === 0, file + ": akhir baris campur (LF " + (lf - crlf) + ", CRLF " + crlf + ")");
+  }
+});
