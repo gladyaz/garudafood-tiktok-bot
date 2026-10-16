@@ -61,7 +61,38 @@ const TAG_RE = /^\[([A-Z0-9_]+)\]\s*(.*)$/;
 
 // key=value dan key="value with spaces" — bentuk yang dipakai semua log core
 // (lihat formatValue di autopin/core.js, yang meng-JSON-quote nilai berspasi).
-const FIELD_RE = /([a-zA-Z][a-zA-Z0-9_]*)=("(?:[^"\\]|\\.)*"|[^\s]*)/g;
+//
+// ---------------------------------------------------------------------------
+// NILAI TAK BERKUTIP BOLEH BERSPASI, DAN BERHENTI DI `key=` BERIKUTNYA
+//
+// Sampai v0.1.1 cabang tak berkutip adalah `[^\s]*`, yang berhenti di spasi
+// PERTAMA. Itu benar selama setiap nama scene satu kata (PAX-1 .. PAX-10), dan
+// karena itu celahnya tidak pernah bisa terlihat.
+//
+// Scene v0.2.0 punya nama berspasi, dan feed memotongnya di depan customer:
+//
+//   [PLAY] scene=FAQ ORDER count=1 requesters=1          -> scene "FAQ"
+//   [PLAYBACK_END] scene=IDLE ENGAGEMENT reason=media-ended -> scene "IDLE"
+//
+// Yang MENCETAK baris itu tidak mengutip nilainya: index.js, autopin/scene-pin.js
+// dan autocomment/core.js memakai template biasa (`scene=${scene}`). Hanya
+// autopin/core.js log() yang meng-JSON-quote, dan ia mencetak baris service,
+// bukan baris ber-scene ini. Jadi memperbaiki di sisi pencetak berarti menyentuh
+// enam tempat di core yang sudah dibekukan dan mengubah format log mentah yang
+// dipaku puluhan tes serta dibaca operator. Di sini satu baris cukup.
+//
+// Tata bahasanya: nilai tak berkutip berjalan sampai `key=` BERIKUTNYA atau
+// akhir baris. Untuk sembilan tag di TAG_TYPES itu tidak ambigu — tidak satu pun
+// dari mereka menambahkan prosa sesudah field terakhirnya. Tag yang memang
+// begitu (mis. [SKIP_PLAYED], [INVALID_SCENE], [PLAY_FAILED] di index.js) tidak
+// pernah menjadi activity, karena daftar tag di atas TERTUTUP. Kalau suatu saat
+// tag baru dengan prosa ekor masuk ke daftar itu, prosanya akan ikut tertelan
+// field terakhir — perilaku yang dipaku tes, bukan yang ditemukan nanti.
+//
+// Nilai berkutip tidak berubah: cabang berkutip tetap dicoba LEBIH DULU, jadi
+// `key="Garuda Ting Ting Pouch"` dan `shop="a | b"` tetap utuh, termasuk kalau
+// isinya memuat sesuatu yang berbentuk `kata=`.
+const FIELD_RE = /([a-zA-Z][a-zA-Z0-9_]*)=("(?:[^"\\]|\\.)*"|.*?)(?=\s+[a-zA-Z][a-zA-Z0-9_]*=|\s*$)/g;
 
 function parseFields(rest) {
   const out = {};

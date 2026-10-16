@@ -119,6 +119,113 @@ test("waktu bisa diberikan dari luar, supaya urutannya mengikuti waktu child", (
   assert.equal(ev.time, "2026-10-07T10:00:00.000Z");
 });
 
+// --- nama scene berspasi -----------------------------------------------------
+//
+// Sampai v0.1.1 setiap nama scene satu kata (PAX-1 .. PAX-10), jadi cabang tak
+// berkutip `[^\s]*` di FIELD_RE selalu benar dan celahnya tidak pernah bisa
+// terlihat. Scene v0.2.0 punya nama berspasi, dan feed memotongnya di depan
+// customer: "FAQ ORDER" tampil sebagai "FAQ", "IDLE ENGAGEMENT" sebagai "IDLE".
+//
+// Baris di bawah memakai bentuk PERSIS seperti yang dicetak produksi — template
+// biasa tanpa kutip (index.js, autopin/scene-pin.js, autocomment/core.js).
+
+test("PLAY: nama scene berspasi terbaca UTUH", () => {
+  const ev = parseLine("[PLAY] scene=FAQ ORDER count=1 requesters=1");
+  assert.equal(ev.type, "PLAY");
+  assert.equal(ev.scene, "FAQ ORDER");
+});
+
+test("PLAYBACK_END: nama scene berspasi terbaca utuh, reason tetap terpisah", () => {
+  // Field SESUDAH scene adalah buktinya: nilai tak berkutip harus berhenti di
+  // `key=` berikutnya, bukan menelan sisa baris.
+  const ev = parseLine("[PLAYBACK_END] scene=IDLE ENGAGEMENT reason=media-ended");
+  assert.equal(ev.scene, "IDLE ENGAGEMENT");
+  assert.equal(ev.reason, "media-ended");
+});
+
+test("AUTOCOMMENT_SUCCESS: scene berspasi, playId dan ms tetap angka", () => {
+  const ev = parseLine("[AUTOCOMMENT_SUCCESS] scene=FAQ JAWAB AI playId=5 ms=4493");
+  assert.equal(ev.scene, "FAQ JAWAB AI");
+  assert.equal(ev.playId, 5);
+  assert.equal(ev.ms, 4493);
+});
+
+test("AUTOPIN_SUCCESS: scene berspasi DAN judul produk berkutip, keduanya utuh", () => {
+  const ev = parseLine(
+    '[AUTOPIN_SUCCESS] scene=FAQ ORDER playId=7 key="Garuda Ting Ting Pouch" ms=1240 dryRun=false clicked=true state="Unpin"'
+  );
+  assert.equal(ev.scene, "FAQ ORDER");
+  assert.equal(ev.product, "Garuda Ting Ting Pouch");
+  assert.equal(ev.playId, 7);
+  assert.equal(ev.ms, 1240);
+});
+
+test("nilai berkutip yang memuat sesuatu berbentuk `kata=` tetap satu nilai", () => {
+  // Cabang berkutip harus tetap dicoba LEBIH DULU. Kalau tidak, lookahead
+  // `key=` di dalam kutip akan memotong nilai yang sah.
+  const ev = parseLine('[AUTOPIN_SUCCESS] scene=FAQ ORDER playId=1 key="Kacang ms=2 pcs" ms=900');
+  assert.equal(ev.scene, "FAQ ORDER");
+  assert.equal(ev.product, "Kacang ms=2 pcs", "isi kutip tidak boleh dipotong lookahead");
+  assert.equal(ev.ms, 900, "ms SUNGGUHAN tetap yang di luar kutip");
+});
+
+test("PAGAR: baris satu-kata v0.1.1 terbaca persis seperti sebelumnya", () => {
+  // Inti kompatibilitas: satu-satunya yang boleh berubah adalah nilai berspasi.
+  const cases = [
+    ["[PLAY] scene=PAX-1 count=3 requesters=2", { scene: "PAX-1" }],
+    ["[PLAYBACK_END] scene=PAX-2 reason=media-ended", { scene: "PAX-2", reason: "media-ended" }],
+    ["[AUTOPIN_FAILED] scene=PAX-3 playId=9 reason=budget-exhausted-before-click", { scene: "PAX-3", playId: 9, reason: "budget-exhausted-before-click" }],
+    ["[AUTOCOMMENT_FAILED] scene=PAX-1 playId=3 reason=timeout ms=8000", { scene: "PAX-1", playId: 3, reason: "timeout", ms: 8000 }],
+    ["[TIKTOK_CONNECTED] roomId=7300000000000000000", {}],
+  ];
+  for (const [line, expected] of cases) {
+    const ev = parseLine(line);
+    assert.ok(ev, line);
+    for (const [k, v] of Object.entries(expected)) {
+      assert.equal(ev[k], v, line + " -> " + k);
+    }
+  }
+
+  // reason KOSONG tetap tidak menjadi field, persis seperti sebelumnya: feed
+  // tidak menampilkan alasan kosong sebagai kalimat alasan.
+  const d = parseLine('[TIKTOK_DISCONNECTED] code=1000 reason=""');
+  assert.equal(d.type, "TIKTOK_DISCONNECTED");
+  assert.equal(d.reason, undefined);
+});
+
+test("PAGAR: spasi di akhir baris tidak ikut masuk ke nilai", () => {
+  // Baris dipangkas dulu, jadi nilai terakhir tidak boleh berakhir dengan spasi.
+  assert.equal(parseLine("   [PLAY] scene=PAX-1   ").scene, "PAX-1");
+  assert.equal(parseLine("[PLAY] scene=FAQ ORDER   ").scene, "FAQ ORDER");
+  assert.equal(parseLine("[PLAYBACK_END] scene=IDLE ENGAGEMENT reason=force  ").reason, "force");
+});
+
+test("PERILAKU DIPAKU: prosa sesudah field terakhir IKUT ke nilai terakhir", () => {
+  // Bukan yang diinginkan, tapi juga bukan masalah nyata: tidak satu pun dari
+  // sembilan tag di TAG_TYPES mencetak prosa ekor. Tag yang memang begitu
+  // ([SKIP_PLAYED], [INVALID_SCENE], [PLAY_FAILED]) tidak pernah menjadi
+  // activity karena daftar tag itu TERTUTUP.
+  //
+  // Dipaku di sini supaya kalau suatu saat tag berprosa masuk ke daftar, tes ini
+  // yang bicara lebih dulu — bukan feed yang diam-diam menampilkan satu kalimat
+  // log di tengah kejadian.
+  const ev = parseLine("[PLAYBACK_END] scene=PAX-1 reason=force -> lepas busy, lanjut antrean");
+  assert.equal(ev.scene, "PAX-1", "field yang BUKAN terakhir tetap bersih");
+  assert.equal(ev.reason, "force -> lepas busy, lanjut antrean");
+
+  // Dan buktinya daftar itu memang tertutup: tag berprosa yang sebenarnya tetap
+  // diabaikan sepenuhnya.
+  assert.equal(parseLine("[PLAY_FAILED] scene=PAX-1 reason=obs-timeout -> lepas busy"), null);
+  assert.equal(parseLine("[SKIP_PLAYED] scene=PAX-1 (already played in this batch)"), null);
+});
+
+test("feed utuh: baris berspasi masuk buffer dengan nama scene lengkap", () => {
+  const feed = createActivityFeed();
+  const item = feed.ingest({ line: "[PLAY] scene=IDLE ENGAGEMENT count=1 requesters=0" });
+  assert.equal(item.scene, "IDLE ENGAGEMENT");
+  assert.equal(feed.list()[0].scene, "IDLE ENGAGEMENT");
+});
+
 // --- buffer ------------------------------------------------------------------
 
 test("buffer DIBATASI, dan yang terbaru yang disimpan", () => {

@@ -684,6 +684,36 @@ test("activity: kalimat untuk tiap jenis kejadian", () => {
   assert.ok(texts.includes(T("ui.act.playbackEnd", { scene: "PAX-2" })));
 });
 
+test("activity: nama scene BERSPASI tampil lengkap, bukan terpotong", () => {
+  // Rantai lengkapnya diuji, bukan potongannya: baris PERSIS seperti yang
+  // dicetak produksi -> parser Controller yang sungguhan -> kalimat UI. Kalau
+  // kejadiannya dikarang di sini, bug yang sebenarnya (FIELD_RE memotong di
+  // spasi pertama) tidak akan pernah terlihat dari tes ini.
+  const { parseLine } = require("../controller/activity.js");
+  const play = parseLine("[PLAY] scene=FAQ ORDER count=1 requesters=1");
+  const end = parseLine("[PLAYBACK_END] scene=IDLE ENGAGEMENT reason=media-ended");
+
+  const texts = U.activityItems([
+    { id: 1, time: "2026-10-16T09:20:00.000Z", type: play.type, scene: play.scene },
+    { id: 2, time: "2026-10-16T09:21:00.000Z", type: end.type, scene: end.scene, reason: end.reason },
+  ]).map((i) => i.text);
+
+  assert.ok(texts.includes(T("ui.act.play", { scene: "FAQ ORDER" })), texts.join(" | "));
+  assert.ok(texts.includes(T("ui.act.playbackEnd", { scene: "IDLE ENGAGEMENT" })), texts.join(" | "));
+  // Dan tidak ada kalimat yang menyebut nama yang terpotong.
+  for (const t of texts) {
+    assert.ok(!/\bFAQ\b(?! ORDER)/.test(t), "nama terpotong: " + t);
+    assert.ok(!/\bIDLE\b(?! ENGAGEMENT)/.test(t), "nama terpotong: " + t);
+  }
+
+  // Ketiga bahasa menyisipkan nama scene sebagai NILAI, jadi tidak satu pun
+  // boleh memotongnya.
+  for (const lang of ["id", "en", "zh"]) {
+    const text = U.activityText({ type: "PLAY", scene: "FAQ JAWAB AI" }, lang);
+    assert.ok(text.includes("FAQ JAWAB AI"), lang + ": " + text);
+  }
+});
+
 test("activity: yang TERBARU di atas", () => {
   const items = U.activityItems(EVENTS);
   assert.equal(items[0].id, 4);
