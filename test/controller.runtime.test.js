@@ -126,12 +126,45 @@ test("hanya scene yang DIPETAKAN customer yang aktif", () => {
   // bisa matikan.
   const scenes = bot.activeRules().map((r) => r.scene);
   assert.deepEqual(scenes.sort(), ["PAX-1", "PAX-2"]);
-  // 17 sejak 2026-10-15: tiga scene uji v0.2.0 ("FAQ ORDER", "FAQ JAWAB AI",
-  // "iDLE ENGAGEMENT") masuk katalog pemutaran seperti scene otomatis lain.
+  // 17 sejak 2026-10-15: tiga scene v0.2.0 ("FAQ ORDER", "FAQ JAWAB AI",
+  // "IDLE ENGAGEMENT") masuk katalog pemutaran seperti scene otomatis lain.
   // Angkanya dipaku DENGAN SENGAJA: yang dijaga di sini adalah bahwa RULES
   // tidak diam-diam menyusut saat mode config menyala, karena ia tetap satu-
   // satunya sumber detail pemutaran.
   assert.equal(bot.RULES.length, 17, "RULES hardcoded tetap utuh sebagai sumber detail pemutaran");
+});
+
+test("nama scene v0.2.0 PERSIS seperti di OBS, dan ada di katalog pemutaran", () => {
+  // Nama scene dicocokkan PERSIS: runtime/mappings.js memakai Map berkunci nama
+  // dan validator Controller memakai daftar nama yang sama. Jadi satu huruf yang
+  // berbeda antara OBS dan katalog ini membuat scene-nya tidak pernah bisa
+  // diputar - dan gejalanya bukan error, melainkan "scene-playback-unknown" pada
+  // pemetaan yang menurut customer sudah benar.
+  //
+  // "IDLE ENGAGEMENT" sempat bernama "iDLE ENGAGEMENT" dengan huruf kecil, lalu
+  // dirapikan di OBS pada 2026-10-16. Pagar ini ada supaya kedua sisi nama itu
+  // tidak bisa menyimpang lagi tanpa ada yang bicara lebih dulu.
+  const expected = {
+    AILIVE_FAQ_ORDER_SCENE: "FAQ ORDER",
+    AILIVE_FAQ_JAWABAI: "FAQ JAWAB AI",
+    AILIVE_IDLE_ENGAGEMENT: "IDLE ENGAGEMENT",
+  };
+  for (const [key, name] of Object.entries(expected)) {
+    assert.equal(bot.SCENES[key], name, key + " harus sama dengan nama di OBS");
+    const rule = bot.RULES.find((r) => r.scene === name);
+    assert.ok(rule, name + " harus punya entri detail pemutaran di RULES");
+  }
+
+  // Ejaan lama tidak boleh tertinggal di mana pun sebagai nama scene.
+  assert.equal(Object.values(bot.SCENES).includes("iDLE ENGAGEMENT"), false);
+  assert.equal(bot.RULES.some((r) => r.scene === "iDLE ENGAGEMENT"), false);
+
+  // Detail pemutaran yang DIUKUR dari OBS tidak boleh ikut berubah saat namanya
+  // dirapikan: rename adalah rename, bukan penyetelan ulang.
+  const idle = bot.RULES.find((r) => r.scene === "IDLE ENGAGEMENT");
+  assert.deepEqual(idle.mediaInputs, ["Media 16"]);
+  assert.equal(idle.waitForMediaEnd, true);
+  assert.equal(idle.duration, 87000, "failsafe ULTAHBRAND 82s + margin 5s");
 });
 
 test("detail pemutaran tetap diwarisi dari RULES, bukan dikarang", () => {

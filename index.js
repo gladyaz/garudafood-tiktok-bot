@@ -26,12 +26,18 @@ const SCENES = {
   AILIVE_SKUPAXDELAPAN: "PAX-8",
   AILIVE_SKUPAXSEMBILAN: "PAX-9",
   AILIVE_SKUPAXSEPULUH: "PAX-10",
-  // Scene uji v0.2.0. Namanya DIBACA DARI OBS apa adanya, termasuk huruf kecil
-  // pada "iDLE ENGAGEMENT": nama scene dicocokkan persis, jadi memperbaiki
-  // ejaannya di sini akan membuatnya tidak pernah ditemukan.
+  // Scene v0.2.0. Namanya DIBACA DARI OBS apa adanya: pencocokan scene persis
+  // (runtime/mappings.js memakai Map berkunci nama, dan validator Controller
+  // memakai daftar nama yang sama), jadi mencantikkan ejaan di sini akan membuat
+  // scene-nya tidak pernah ditemukan.
+  //
+  // "IDLE ENGAGEMENT" sempat bernama "iDLE ENGAGEMENT" dengan huruf kecil, dan
+  // katalog ini memang mengikutinya apa adanya. Nama di OBS dirapikan pada
+  // 2026-10-16 dan nilai di bawah ikut, dalam satu langkah - dua sisi nama ini
+  // tidak boleh pernah berbeda walau sebentar.
   AILIVE_FAQ_ORDER_SCENE: "FAQ ORDER",
   AILIVE_FAQ_JAWABAI: "FAQ JAWAB AI",
-  AILIVE_IDLE_ENGAGEMENT: "iDLE ENGAGEMENT",
+  AILIVE_IDLE_ENGAGEMENT: "IDLE ENGAGEMENT",
   AILIVE_FAQ_STOKHABIS: "AI LIVE_FAQ_STOKHABIS",
   AILIVE_FAQ_CO: "AI LIVE_FAQ_CO",
   AILIVE_FAQ_ORDER: "AI LIVE_FAQ_ORDER",
@@ -106,7 +112,7 @@ const RULES = [
   },
   // CATATAN 2026-10-15: scene "PAX-8", "PAX-9", dan "PAX-10" saat ini TIDAK ADA
   // di OBS - ketiganya di-rename menjadi "FAQ ORDER", "FAQ JAWAB AI", dan
-  // "iDLE ENGAGEMENT" untuk uji v0.2.0 (entri ketiganya ada di bawah).
+  // "IDLE ENGAGEMENT" untuk uji v0.2.0 (entri ketiganya ada di bawah).
   //
   // Ketiga entri di bawah SENGAJA dibiarkan aktif, bukan dimatikan:
   //
@@ -133,7 +139,7 @@ const RULES = [
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
     // Nilai lama dari scene PAX-9 yang sudah tidak ada. Ditinggalkan apa adanya
     // karena entri ini mati; failsafe untuk video ULTAHBRAND sekarang hidup di
-    // entri "iDLE ENGAGEMENT" di bawah, yang memang memutarnya.
+    // entri "IDLE ENGAGEMENT" di bawah, yang memang memutarnya.
     duration: 57000,
 
   },
