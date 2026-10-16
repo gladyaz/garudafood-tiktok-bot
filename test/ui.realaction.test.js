@@ -274,35 +274,40 @@ test("halaman TIDAK PERNAH menyebut istilah teknis aksi nyata", () => {
   assert.match(I18N.DICT.en["ui.set.autoreply"], /reply in chat/i);
 });
 
-test("v0.2.0: penjelasan saklar balasan global TIDAK menjanjikan pin", () => {
+test("v0.2.0: saklar balasan global TIDAK menjanjikan pin, judul maupun penjelasan", () => {
   // Saklar global adalah IZIN, bukan janji tentang urutan kejadian.
   //
-  // Kalimat v0.1.1 berbunyi "hanya setelah pin terkonfirmasi", dan itu benar
-  // selama setiap aturan memin. Sejak aksi per-aturan ada, aturan FAQ membalas
-  // TANPA pin sama sekali (requirePin:false di autocomment/core.js). Jadi
-  // kalimat itu menjanjikan syarat yang tidak berlaku - customer yang membaca
-  // "hanya setelah pin terkonfirmasi" lalu melihat balasan FAQ terkirim tanpa
+  // Kalimat v0.1.1 berbunyi "Balas di chat setelah pin" / "hanya setelah pin
+  // terkonfirmasi", dan itu benar selama setiap aturan memin. Sejak aksi
+  // per-aturan ada, aturan FAQ membalas TANPA pin sama sekali (requirePin:false
+  // di autocomment/core.js). Jadi kalimat itu menjanjikan syarat yang tidak
+  // berlaku - customer yang membacanya lalu melihat balasan FAQ terkirim tanpa
   // pin akan menyimpulkan salah satu dari dua hal keliru: entah fiturnya rusak,
-  // entah penjelasannya bohong.
+  // entah layarnya bohong.
   //
-  // Yang dijaga di sini bukan bunyinya, tapi apa yang TIDAK boleh ada di sana:
-  // tidak ada ketergantungan pin di penjelasan saklar GLOBAL. Syarat pin memang
-  // ada, tapi tempatnya per-aturan - lihat ui.rule.f.replyAfterPin.
+  // KEDUANYA dijaga, judul dan penjelasan. Menetralkan penjelasan saja akan
+  // meninggalkan judul di atasnya yang masih berkata "setelah pin", dan yang
+  // dibaca customan lebih dulu justru judulnya.
+  //
+  // Aturannya sengaja keras: untuk dua kunci ini, kata "pin" tidak boleh muncul
+  // SAMA SEKALI. Syarat pin memang ada, tapi tempatnya per-aturan - lihat
+  // ui.rule.f.replyAfterPin, yang dijaga di bawah supaya pagar ini tidak bisa
+  // dipenuhi dengan cara menghapus syarat pin dari seluruh halaman.
   const I18N = require(path.join(PUBLIC_DIR, "i18n.js"));
-  const larangan = [
-    /pin terkonfirmasi/i,
-    /setelah pin/i,
-    /pin is confirmed/i,
-    /after the pin/i,
-    /after pinning/i,
-    /置顶确认/, // "pin terkonfirmasi"
-  ];
+  const larangan = [/pin/i, /置顶/]; // "pin" (id/en) dan 置顶 (zh)
   for (const L of I18N.LANGS) {
-    const v = I18N.DICT[L]["ui.set.autoreplyHelp"];
-    assert.ok(v && v.trim().length > 0, L + " helper balasan global kosong");
-    for (const pola of larangan) {
-      assert.ok(!pola.test(v), L + " masih menjanjikan pin: " + v);
+    for (const key of ["ui.set.autoreply", "ui.set.autoreplyHelp"]) {
+      const v = I18N.DICT[L][key];
+      assert.ok(v && v.trim().length > 0, L + " " + key + " kosong");
+      for (const pola of larangan) {
+        assert.ok(!pola.test(v), L + " " + key + " masih menjanjikan pin: " + v);
+      }
     }
+  }
+
+  // Saklar PIN global tetap menyebut pin, dan memang harus: itu fiturnya.
+  for (const L of I18N.LANGS) {
+    assert.ok(/pin|置顶/i.test(I18N.DICT[L]["ui.set.autopin"]), L + " saklar pin kehilangan subjeknya");
   }
 
   // Dan syarat pin itu TETAP dikatakan di tempat yang benar, yaitu per-aturan.
