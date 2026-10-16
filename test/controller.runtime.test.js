@@ -126,7 +126,12 @@ test("hanya scene yang DIPETAKAN customer yang aktif", () => {
   // bisa matikan.
   const scenes = bot.activeRules().map((r) => r.scene);
   assert.deepEqual(scenes.sort(), ["PAX-1", "PAX-2"]);
-  assert.equal(bot.RULES.length, 14, "RULES hardcoded tetap utuh sebagai sumber detail pemutaran");
+  // 17 sejak 2026-10-15: tiga scene uji v0.2.0 ("FAQ ORDER", "FAQ JAWAB AI",
+  // "iDLE ENGAGEMENT") masuk katalog pemutaran seperti scene otomatis lain.
+  // Angkanya dipaku DENGAN SENGAJA: yang dijaga di sini adalah bahwa RULES
+  // tidak diam-diam menyusut saat mode config menyala, karena ia tetap satu-
+  // satunya sumber detail pemutaran.
+  assert.equal(bot.RULES.length, 17, "RULES hardcoded tetap utuh sebagai sumber detail pemutaran");
 });
 
 test("detail pemutaran tetap diwarisi dari RULES, bukan dikarang", () => {

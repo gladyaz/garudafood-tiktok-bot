@@ -26,6 +26,12 @@ const SCENES = {
   AILIVE_SKUPAXDELAPAN: "PAX-8",
   AILIVE_SKUPAXSEMBILAN: "PAX-9",
   AILIVE_SKUPAXSEPULUH: "PAX-10",
+  // Scene uji v0.2.0. Namanya DIBACA DARI OBS apa adanya, termasuk huruf kecil
+  // pada "iDLE ENGAGEMENT": nama scene dicocokkan persis, jadi memperbaiki
+  // ejaannya di sini akan membuatnya tidak pernah ditemukan.
+  AILIVE_FAQ_ORDER_SCENE: "FAQ ORDER",
+  AILIVE_FAQ_JAWABAI: "FAQ JAWAB AI",
+  AILIVE_IDLE_ENGAGEMENT: "iDLE ENGAGEMENT",
   AILIVE_FAQ_STOKHABIS: "AI LIVE_FAQ_STOKHABIS",
   AILIVE_FAQ_CO: "AI LIVE_FAQ_CO",
   AILIVE_FAQ_ORDER: "AI LIVE_FAQ_ORDER",
@@ -98,6 +104,20 @@ const RULES = [
     duration: 62000,          // FAILSAFE saja - video asli 56.7s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
+  // CATATAN 2026-10-15: scene "PAX-8", "PAX-9", dan "PAX-10" saat ini TIDAK ADA
+  // di OBS - ketiganya di-rename menjadi "FAQ ORDER", "FAQ JAWAB AI", dan
+  // "iDLE ENGAGEMENT" untuk uji v0.2.0 (entri ketiganya ada di bawah).
+  //
+  // Ketiga entri di bawah SENGAJA dibiarkan aktif, bukan dimatikan:
+  //
+  //   - ia tidak bisa diputar tanpa dipetakan, dan tidak ada yang memetakannya
+  //   - kalau suatu saat dipetakan, preflight menolaknya fail-closed dengan
+  //     obs-scene-missing, jadi tidak ada jalan diam-diam ke scene yang hilang
+  //   - mematikannya memerahkan sepuluh tes yang menjaga routing produk, antara
+  //     lain pembedaan "1 vs 10" yang halus - yaitu melepas perlindungan nyata
+  //     demi penataan OBS yang sifatnya sementara
+  //
+  // Kalau scene produknya dibangun kembali, tidak ada yang perlu diubah di sini.
   {
     scene: SCENES.AILIVE_SKUPAXDELAPAN,
     keywords: ["et 8", "etalase 8", "etalase delapan", "no 8", "nomor 8", "nomor delapan", "paket 8", "paket delapan", "produk 8", "produk delapan", "spill et 8", "spill etalase 8", "spill etalase delapan", "spill no 8", "spill nomor 8", "spill nomor delapan", "spill paket 8", "spill paket delapan", "spill produk 8", "spill produk delapan", "spill dilan", "produk dilan", "dilan cookies", "dilan cookies chocolate", "cookies dilan", "dilan sandwich", "dilan sandwich chocolate", "dilan crunchy caramel", "dilan crunchy caramel chocolate", "dilan caramel", "dilan pouch", "dilan chocolate pouch", "dilan matcha", "dilan matcha crunchy caramel", "dilan matcha sandwich", "dilan sandwich matcha", "dilan waffle", "dilan waffle pandan", "waffle pandan dilan", "spill dilan cookies", "spill cookies dilan", "spill dilan sandwich", "spill sandwich dilan", "spill dilan caramel", "spill dilan pouch", "spill dilan matcha", "spill dilan waffle", "spill waffle pandan"],
@@ -111,8 +131,11 @@ const RULES = [
     keywords: ["et 9", "etalase 9", "etalase sembilan", "no 9", "nomor 9", "nomor sembilan", "paket 9", "paket sembilan", "produk 9", "produk sembilan", "spill et 9", "spill etalase 9", "spill etalase sembilan", "spill no 9", "spill nomor 9", "spill nomor sembilan", "spill paket 9", "spill paket sembilan", "spill produk 9", "spill produk sembilan", "everyday snack mix", "everyday snack", "snack mix", "paket everyday snack mix", "paket snack mix", "spill everyday snack mix", "spill everyday snack", "spill snack mix", "mau everyday snack mix", "ambil everyday snack mix", "yang everyday snack mix", "everyday mix"],
     mediaInputs: ["Media 11"],
     waitForMediaEnd: true,   // FALSE => durasi pakai manual
-    duration: 57000,          // FAILSAFE saja - video asli 52.0s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
-    
+    // Nilai lama dari scene PAX-9 yang sudah tidak ada. Ditinggalkan apa adanya
+    // karena entri ini mati; failsafe untuk video ULTAHBRAND sekarang hidup di
+    // entri "iDLE ENGAGEMENT" di bawah, yang memang memutarnya.
+    duration: 57000,
+
   },
   {
     scene: SCENES.AILIVE_SKUPAXSEPULUH,
@@ -122,6 +145,49 @@ const RULES = [
     duration: 71000,          // FAILSAFE saja - video asli 65.9s + margin 5s; normalnya scene diakhiri MediaInputPlaybackEnded
     
   },
+  // ===================== SCENE UJI v0.2.0 =====================
+  //
+  // Ketiganya SETARA dengan scene otomatis lain: detail pemutarannya tinggal di
+  // RULES, diputar oleh mesin pemutaran yang sama, dan tidak punya jalur khusus
+  // apa pun. Yang membedakan hanya perannya di config customer - dua dipicu
+  // penonton, satu dipakai interaksi saat sepi.
+  //
+  // SETIAP nilai di bawah DIUKUR, bukan ditebak:
+  //   nama scene   GetSceneList
+  //   mediaInputs  GetSceneItemList -> sumber yang sceneItemEnabled=true
+  //   berkas       GetInputSettings -> local_file
+  //   duration     panjang berkas sungguhan + margin 5s (pola RULES yang ada)
+  //
+  // Catatan penting soal mediaInputs: tiap scene ini punya LEBIH DARI SATU
+  // sumber media, dan yang lama DINONAKTIFKAN di OBS (sceneItemEnabled=false).
+  // Sumber yang mati tidak dirender dan tidak pernah mengirim
+  // MediaInputPlaybackEnded, jadi hanya sumber yang AKTIF yang ditunggu -
+  // perlakuan yang sama dengan "Media 7" kosong di PAX-5.
+  {
+    scene: SCENES.AILIVE_FAQ_ORDER_SCENE,
+    // Kata kunci tidak dipakai di mode config: trigger datang dari config
+    // customer dan MENGGANTI daftar ini. Dibiarkan kosong supaya tidak ada
+    // kata kunci bawaan yang tidak terlihat customer tapi tetap merespons.
+    keywords: [],
+    mediaInputs: ["Media 14"],   // AKTIF; "Media 10" berisi berkas sama tapi MATI
+    waitForMediaEnd: true,
+    duration: 47000,             // FAILSAFE - AI LIVE_FAQ_ORDER.mp4 42s + margin 5s
+  },
+  {
+    scene: SCENES.AILIVE_FAQ_JAWABAI,
+    keywords: [],
+    mediaInputs: ["Media 15"],   // AKTIF; "Media 11" (ULTAHBRAND) MATI
+    waitForMediaEnd: true,
+    duration: 56000,             // FAILSAFE - AI LIVE_FAQ_JAWABAI.mp4 51s + margin 5s
+  },
+  {
+    scene: SCENES.AILIVE_IDLE_ENGAGEMENT,
+    keywords: [],
+    mediaInputs: ["Media 16"],   // AKTIF; "Media 12" (kosong) dan "Media 13" MATI
+    waitForMediaEnd: true,
+    duration: 87000,             // FAILSAFE - AI LIVE_ULTAHBRAND.mp4 82s + margin 5s
+  },
+  // =================== akhir scene uji v0.2.0 ===================
   {
     scene: SCENES.AILIVE_FAQ_STOKHABIS,
     enabled: false, // scene FAQ belum ada di OBS -> set true untuk mengaktifkan kembali
