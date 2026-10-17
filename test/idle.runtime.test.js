@@ -242,6 +242,70 @@ test("GERBANG: tidak pernah memutar interaksi selagi ada scene yang tayang", asy
   assert.ok(!obsSwitches.includes(IDLE_B));
 });
 
+// --- JEDA PASCA-SCENE: hanya penonton yang boleh membatalkannya -------------
+//
+// Kebijakan 2026-10-17: permintaan penonton membatalkan jeda global pasca-scene
+// supaya bot terasa responsif. Interaksi saat sepi TIDAK boleh ikut, karena LIVE
+// yang sepi justru harus tetap tenang — dan karena interaksi yang membatalkan
+// jeda akan bisa mulai tepat saat sebuah scene selesai, kebalikan dari gunanya.
+
+test("GERBANG JEDA: interaksi TETAP tertahan selama jeda pasca-scene", async () => {
+  idle().arm("connected");
+  chat("penonton", "spill etalase 1");
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, PAX1);
+
+  // Scene penonton selesai -> jeda global mulai.
+  await advance(bot.RULES.find((r) => r.scene === PAX1).duration);
+  assert.equal(state().activeScene, null);
+  assert.equal(state().hasGlobalPauseTimer, true, "premis: jeda hidup");
+  assert.equal(state().busy, true);
+
+  // Periode sepi terlewat PENUH selagi jeda masih menahan.
+  await engage(IDLE_AFTER_MS);
+  assert.ok(!obsSwitches.includes(IDLE_A), "interaksi tidak boleh menembus jeda: " + obsSwitches.join(","));
+  assert.ok(!obsSwitches.includes(IDLE_B));
+  assert.equal(state().hasGlobalPauseTimer, true, "interaksi TIDAK membatalkan timer jeda");
+  assert.equal(logged("PAUSE_CANCELLED").length, 0, "hanya penonton yang boleh membatalkan");
+  assert.equal(state().busy, true, "jeda masih menahan busy");
+  // Ditahan, bukan menyerah: onIdleDue() menjadwalkan ulang saat verdict-nya
+  // "busy", jadi timernya harus tetap ada.
+  assert.equal(idle().state().hasTimer, true, "interaksi dijadwalkan ulang, bukan berhenti");
+});
+
+test("GERBANG JEDA: sesudah jeda habis sendiri, interaksi baru boleh jalan", async () => {
+  // Kebalikannya: interaksi tidak dilarang selamanya - ia hanya menunggu.
+  idle().arm("connected");
+  chat("penonton", "spill etalase 1");
+  await advance(QUEUE_KICK_MS);
+  await advance(bot.RULES.find((r) => r.scene === PAX1).duration);
+  assert.equal(state().hasGlobalPauseTimer, true);
+
+  await advance(60_000); // jeda global habis sendiri
+  assert.equal(state().hasGlobalPauseTimer, false);
+  assert.equal(state().busy, false);
+
+  await engage(IDLE_AFTER_MS);
+  assert.ok(obsSwitches.includes(IDLE_A), "sesudah jeda, interaksi jalan seperti biasa: " + obsSwitches.join(","));
+});
+
+test("GERBANG JEDA: permintaan PENONTON di jeda yang sama memang membatalkannya", async () => {
+  // Sisi lain dari kebijakan yang sama, diuji di harness ini juga supaya kedua
+  // perilaku itu tidak bisa menyimpang satu sama lain.
+  idle().arm("connected");
+  chat("a", "spill etalase 1");
+  await advance(QUEUE_KICK_MS);
+  await advance(bot.RULES.find((r) => r.scene === PAX1).duration);
+  assert.equal(state().hasGlobalPauseTimer, true);
+
+  chat("b", "spill etalase 2");
+  assert.equal(state().hasGlobalPauseTimer, false, "penonton membatalkan");
+  assert.equal(logged("PAUSE_CANCELLED").length, 1);
+
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, SCENES.AILIVE_SKUPAXDUA);
+});
+
 test("GERBANG: tidak memutar interaksi selagi antrean penonton belum kosong", async () => {
   idle().arm("connected");
   // Satu entri menunggu di antrean, tapi playback ditahan busy.

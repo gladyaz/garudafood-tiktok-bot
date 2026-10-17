@@ -237,28 +237,212 @@ test("I: force releases the active scene, starts its cooldown and keeps the bot 
   await playNow("p2", "etalase 2", PAX2);
 });
 
-test("I2: force during the global pause cancels it (no overlap with the next scene)", async () => {
-  // Pakai PAX8: failsafe-nya (77s) lebih panjang dari global pause 60s, sehingga scene masih
-  // berjalan saat timer pause lama seharusnya menyala. Jangan pakai scene yang failsafe-nya
-  // lebih pendek dari GLOBAL_PAUSE_MS - scene akan berakhir wajar dan test jadi tidak bermakna.
+// --- JEDA PASCA-SCENE: PENONTON TIDAK MENUNGGU, INTERAKSI TETAP MENUNGGU ----
+//
+// Sesudah sebuah scene selesai alami, endCurrentScene() menahan busy selama
+// GLOBAL_PAUSE_MS. Sejak 2026-10-17 permintaan PENONTON membatalkan jeda itu;
+// interaksi saat sepi tidak. Alasan dan batasannya ada di enqueueTrigger().
+
+test("I2: jeda pasca-scene yang dibatalkan penonton tidak melepas busy di tengah scene berikutnya", async () => {
+  // Dulu tes ini memakai `force` untuk membatalkan jeda. Premis itu TIDAK BISA
+  // terjadi lagi: permintaan penonton sudah membatalkan jeda saat ia masuk, jadi
+  // tidak ada lagi keadaan "ada entri di antrean sementara jeda masih hidup".
+  // Yang dijaga tetap sama, lewat jalur yang sekarang: timer jeda yang sudah
+  // dibatalkan TIDAK BOLEH menyala nanti dan melepas busy di tengah scene.
+  //
+  // Pakai PAX8: failsafe-nya (77s) lebih panjang dari jeda 60s, jadi scene masih
+  // berjalan saat timer lama seharusnya menyala. Scene yang lebih pendek akan
+  // berakhir wajar lebih dulu dan tes jadi tidak bermakna.
   assert.ok(
     ruleFor(PAX8).duration > GLOBAL_PAUSE_MS,
-    "test ini butuh scene dengan failsafe > GLOBAL_PAUSE_MS"
+    "tes ini butuh scene dengan failsafe > GLOBAL_PAUSE_MS"
   );
 
   await playNow("a0", "etalase 1", PAX1);
-  await advance(ruleFor(PAX1).duration); // global 60s pause starts
+  await advance(ruleFor(PAX1).duration); // jeda global 60s mulai
+  assert.equal(state().hasGlobalPauseTimer, true, "premis: jeda memang hidup");
+
   chat("p8", "etalase 8");
-  await advance(10_000);
+  assert.equal(state().hasGlobalPauseTimer, false, "permintaan penonton membatalkan jeda");
+  assert.ok(logs.some((l) => l.startsWith(`[PAUSE_CANCELLED] scene=${PAX8}`)), logs.join("\n"));
+
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, PAX8, "scene berikutnya mulai tanpa menunggu 60 detik");
+
+  // Inilah invarian aslinya: timer jeda yang lama akan menyala di titik ini.
+  await advance(GLOBAL_PAUSE_MS);
+  assert.equal(state().busy, true, "busy tidak boleh dilepas di tengah scene");
+  assert.equal(state().activeScene, PAX8);
+});
+
+test("I2b: `force` saat jeda hidup TANPA antrean tetap menghentikan timer-nya", async () => {
+  // Jalur operator tidak berubah oleh kebijakan baru: forceCurrent() memanggil
+  // clearAllSceneTimers(), dan itu tetap satu-satunya pembersih timer di sana.
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+  assert.equal(state().hasGlobalPauseTimer, true);
 
   await bot.handleCommand("force");
-  assert.equal(state().activeScene, PAX8);
   assert.equal(state().hasGlobalPauseTimer, false);
+  assert.equal(state().busy, false);
+  assert.equal(state().activeScene, null);
+});
 
-  // the old pause timer would have fired here and released busy mid-PAX8
-  await advance(GLOBAL_PAUSE_MS - 10_000);
+test("JEDA: permintaan penonton membatalkan jeda dan scene mulai PROMPT, bukan 60 detik", async () => {
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+  assert.equal(state().activeScene, null);
+  assert.equal(state().hasGlobalPauseTimer, true);
+  assert.equal(state().busy, true, "jeda memang menahan busy");
+
+  chat("p2", "etalase 2");
+  assert.equal(state().busy, false, "jeda dibatalkan, bukan ditunggu");
+  assert.deepEqual(state().queue, [{ scene: PAX2, count: 1 }]);
+
+  // 50ms kick antrean yang SUDAH ADA - bukan mekanisme baru.
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, PAX2);
+  assert.equal(switchesTo(PAX2), 1);
+});
+
+test("JEDA: permintaan penonton saat scene MASIH TAYANG tetap mengantre", async () => {
+  // Pagar terpenting dari kebijakan ini: yang dilewati hanya jeda pasca-scene,
+  // bukan scene yang sedang berjalan.
+  await playNow("a0", "etalase 1", PAX1);
+  assert.equal(state().activeScene, PAX1);
+  assert.equal(state().hasGlobalPauseTimer, false, "belum ada jeda: scene masih tayang");
+
+  chat("p2", "etalase 2");
+  assert.equal(state().busy, true, "busy TIDAK boleh dilepas selagi scene tayang");
+  assert.deepEqual(state().queue, [{ scene: PAX2, count: 1 }]);
+  assert.equal(countLogs("PAUSE_CANCELLED"), 0, "tidak ada jeda untuk dibatalkan");
+
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, PAX1, "PAX-1 tetap tayang sampai habis");
+  assert.equal(switchesTo(PAX2), 0);
+});
+
+test("JEDA: entri berprioritas INTERAKSI tidak membatalkan jeda (lapis kedua)", async () => {
+  // Lapis PERTAMA-nya shouldEngage(), yang sudah menolak saat busy — jadi jalur
+  // produksi tidak pernah sampai ke pagar ini. Diuji lewat hook yang memasukkan
+  // entri berprioritas interaksi langsung ke enqueueTrigger, karena pagar yang
+  // tidak diuji adalah pagar yang akan dilepas orang berikutnya.
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+  assert.equal(state().hasGlobalPauseTimer, true);
   assert.equal(state().busy, true);
-  assert.equal(state().activeScene, PAX8);
+
+  bot.__test.idle.enqueueAsIdle(ruleFor(PAX2));
+  assert.equal(state().hasGlobalPauseTimer, true, "interaksi TIDAK boleh membatalkan jeda");
+  assert.equal(state().busy, true, "busy tetap ditahan");
+  assert.equal(countLogs("PAUSE_CANCELLED"), 0);
+  assert.deepEqual(state().queue, [{ scene: PAX2, count: 1 }], "entrinya menunggu, bukan hilang");
+
+  // Kick antrean yang biasa pun tidak memulai apa pun: jeda masih menahan.
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, null, "tidak boleh mulai selagi jeda hidup");
+  assert.equal(switchesTo(PAX2), 0);
+
+  // Dan sesudah jeda habis sendiri, entri interaksi itu memang jalan.
+  await advance(GLOBAL_PAUSE_MS);
+  assert.equal(state().activeScene, PAX2, "menunggu, bukan dibuang");
+});
+
+test("JEDA: permintaan penonton membatalkan jeda meski ada entri interaksi menunggu", async () => {
+  // Campuran: entri interaksi sudah menunggu di antrean, lalu penonton bicara.
+  // Penonton tetap boleh membatalkan jeda; prioritas antrean yang menentukan
+  // siapa diputar lebih dulu, dan itu tidak diubah kebijakan ini.
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+  bot.__test.idle.enqueueAsIdle(ruleFor(PAX3));
+  assert.equal(state().hasGlobalPauseTimer, true);
+
+  chat("p2", "etalase 2");
+  assert.equal(state().hasGlobalPauseTimer, false, "penonton membatalkan");
+  assert.equal(countLogs("PAUSE_CANCELLED"), 1);
+
+  await advance(QUEUE_KICK_MS);
+  // Penonton (priority 0) menang atas interaksi (priority -1).
+  assert.equal(state().activeScene, PAX2);
+});
+
+test("JEDA: cooldown per-scene TETAP menolak pemutaran ulang scene yang sama", async () => {
+  // Pagar anti-spam yang sesungguhnya. Membatalkan jeda tidak boleh membuka
+  // jalan untuk mengulang scene yang baru saja diputar.
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+  assert.equal(state().hasGlobalPauseTimer, true);
+
+  chat("p1b", "etalase 1");
+  assert.equal(countLogs("SKIP_COOLDOWN"), 1);
+  assert.equal(countLogs("PAUSE_CANCELLED"), 0, "ditolak SEBELUM jeda disentuh");
+  assert.equal(state().hasGlobalPauseTimer, true, "jeda tetap hidup");
+  assert.deepEqual(state().queue, []);
+
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, null);
+  assert.equal(switchesTo(PAX1), 1, "tidak ada pemutaran kedua");
+});
+
+test("JEDA: dedupe antrean tetap satu entri per scene saat jeda dibatalkan", async () => {
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+
+  flood("d", 20, "etalase 2");
+  assert.deepEqual(state().queue, [{ scene: PAX2, count: 20 }], "20 permintaan -> SATU entri");
+  assert.equal(countLogs("PAUSE_CANCELLED"), 1, "jeda dibatalkan sekali saja");
+
+  await advance(QUEUE_KICK_MS);
+  assert.equal(state().activeScene, PAX2);
+  assert.equal(switchesTo(PAX2), 1);
+});
+
+test("JEDA: predikatnya menuntut DUA syarat, dan itu dijaga di tingkat sumber", () => {
+  // isPostScenePause() harus menuntut `globalPauseTimer` ADA *dan* tidak ada
+  // scene aktif. Syarat kedua tidak bisa diuji sebagai perilaku: dengan
+  // kebijakan ini, keadaan "scene tayang sementara timer jeda masih hidup" tidak
+  // terjangkau lewat jalur produksi mana pun —
+  //
+  //   jeda mulai hanya saat antrean KOSONG (endCurrentScene return lebih dulu
+  //   kalau ada entri), timer menyetel dirinya null saat menyala, permintaan
+  //   penonton membatalkan + menghapus timernya, dan `force`/`next` memanggil
+  //   clearAllSceneTimers().
+  //
+  // Mutasi membuktikannya: menghapus `!activeScene` TIDAK memerahkan satu pun
+  // tes perilaku. Jadi ia dijaga di sini — sebagai syarat yang harus tetap
+  // tertulis — supaya ia tidak dilepas sebagai "kondisi yang tidak pernah
+  // berpengaruh". Kalau suatu saat kedua keadaan itu bisa tumpang-tindih,
+  // melewati scene yang sedang tayang adalah kerusakan yang mahal.
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.resolve(__dirname, "..", "index.js"), "utf8");
+  const m = /function isPostScenePause\(\)\s*\{([\s\S]*?)\n\}/.exec(src);
+  assert.ok(m, "isPostScenePause() tidak ditemukan");
+  assert.match(m[1], /globalPauseTimer !== null/, "harus menuntut timer jeda ada");
+  assert.match(m[1], /!activeScene/, "harus menuntut TIDAK ada scene aktif");
+
+  // Dan pemanggilnya harus tetap mengecualikan prioritas interaksi.
+  const caller = /if \(busy && priority !== IDLE_PRIORITY && isPostScenePause\(\)\)/.test(src);
+  assert.ok(caller, "pembatalan jeda harus tetap mengecualikan IDLE_PRIORITY dan menuntut busy");
+});
+
+test("JEDA: perilaku penyelesaian scene tidak berubah saat tidak ada permintaan", async () => {
+  // Tanpa permintaan penonton, jeda 60 detik berlaku PERSIS seperti sebelumnya.
+  await playNow("a0", "etalase 1", PAX1);
+  await advance(ruleFor(PAX1).duration);
+
+  assert.equal(countLogs("PLAYBACK_END"), 1);
+  assert.ok(logs.includes(`[COOLDOWN_START] scene=${PAX1} duration=120000`));
+  assert.equal(state().busy, true);
+  assert.equal(state().hasGlobalPauseTimer, true);
+  assert.equal(state().lastScene, SCENES.MAIN, "kembali ke MAIN seperti biasa");
+
+  await advance(GLOBAL_PAUSE_MS - 1);
+  assert.equal(state().busy, true, "jeda masih menahan sampai detik terakhir");
+
+  await advance(1);
+  assert.equal(state().busy, false, "lalu dilepas sendiri oleh timer-nya");
+  assert.equal(state().hasGlobalPauseTimer, false);
 });
 
 test("J: force all resets queue, active scene, playedScenes and cooldowns", async () => {

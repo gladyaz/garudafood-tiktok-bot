@@ -74,6 +74,11 @@ const TRACE_TAGS = Object.freeze([
   "MEDIA_END",
   // kenapa sesuatu TIDAK terjadi — sama pentingnya saat mengaudit
   "COOLDOWN_START",
+  // Jeda pasca-scene dibatalkan oleh permintaan penonton. Masuk daftar ini
+  // karena ia menjelaskan KENAPA sebuah scene mulai lebih cepat dari jeda
+  // 60 detik — tanpa barisnya, satu-satunya cara menjawab pertanyaan itu
+  // adalah membaca kode, dan itu persis yang terjadi pada audit 2026-10-16.
+  "PAUSE_CANCELLED",
   "SKIP_ACTIVE",
   "SKIP_COOLDOWN",
   "SKIP_PLAYED",

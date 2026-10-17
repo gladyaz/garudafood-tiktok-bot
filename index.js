@@ -796,6 +796,21 @@ function findAggregateForScene(sceneName) {
   return null;
 }
 
+// Apakah `busy` sekarang disebabkan JEDA PASCA-SCENE, bukan oleh scene yang
+// sedang tayang.
+//
+// Dua sebab `busy` dulu tercampur, dan itulah yang membuat permintaan penonton
+// bisa menunggu hampir satu menit. Pembedanya sudah ada tanpa state baru:
+// endCurrentScene() memasang globalPauseTimer SESUDAH finishActiveScene()
+// mengosongkan activeScene, jadi "ada timer jeda tapi tidak ada scene aktif"
+// hanya mungkin berarti satu hal.
+//
+// Sengaja TIDAK memakai `busy` di dalam predikat ini: pemanggil yang memutuskan
+// apa artinya, dan satu-satunya pemanggil memang sudah memastikan busy.
+function isPostScenePause() {
+  return globalPauseTimer !== null && !activeScene;
+}
+
 // --- FIX: enqueueTrigger sekarang auto-process queue & merge dengan benar ---
 function enqueueTrigger(rule, requesterNickname = null, { priority = 0 } = {}) {
   if (!rule) return;
@@ -932,6 +947,42 @@ if (playedScenes.has(scene)) {
     const task = forceCurrent();
     if (task && typeof task.catch === "function") task.catch(() => {});
     return;
+  }
+
+  // --- JEDA PASCA-SCENE BUKAN ALASAN MEMBUAT PENONTON MENUNGGU -------------
+  //
+  // Sesudah sebuah scene selesai alami, endCurrentScene() menahan busy selama
+  // COOLDOWN_MS (60 detik). Permintaan penonton yang datang di jendela itu hanya
+  // masuk antrean, lalu menunggu timer-nya habis — sampai hampir satu menit
+  // diam. Terbukti pada uji LIVE terpaket 2026-10-16: komentar masuk 19 detik
+  // sesudah scene selesai dan belum tayang 16 detik kemudian.
+  //
+  // Padahal sistem ini SUDAH memutar scene beruntun tanpa jeda sama sekali:
+  // permintaan yang datang SELAGI scene sebelumnya tayang dikuras langsung di
+  // endCurrentScene() (cabang "queue masih ada", yang `return` sebelum blok jeda
+  // ini). Jadi jeda itu tidak melindungi dari scene beruntun — ia hanya memberi
+  // hasil yang BERBEDA tergantung kapan komentarnya kebetulan masuk. Dua
+  // penonton yang mengatakan hal sama dengan selisih satu detik bisa mendapat
+  // latensi 0 detik dan 60 detik.
+  //
+  // Yang dibatalkan HANYA jeda itu, dan hanya oleh permintaan penonton:
+  //
+  //   scene sedang tayang   TIDAK pernah dilewati (activeScene terisi -> bukan
+  //                         jeda pasca-scene; permintaan tetap mengantre)
+  //   interaksi saat sepi   TIDAK boleh membatalkan (priority IDLE_PRIORITY).
+  //                         LIVE yang sepi harus tetap tenang, dan shouldEngage()
+  //                         memang sudah menolak saat busy — ini lapis keduanya.
+  //
+  // Pagar anti-spam tidak disentuh sama sekali: cooldown per-scene 120 detik,
+  // SKIP_ACTIVE, dedupe antrean, playedScenes, dan budget AutoPIN/AutoComment
+  // semuanya tetap seperti sebelumnya. Scene yang sama tetap tidak bisa diulang.
+  if (busy && priority !== IDLE_PRIORITY && isPostScenePause()) {
+    // Primitif yang SAMA dengan perintah `next` (lihat case "next"): hentikan
+    // timer-nya lalu lepas busy. Bukan mekanisme penghentian kedua.
+    clearTimeout(globalPauseTimer);
+    globalPauseTimer = null;
+    busy = false;
+    console.log(`[PAUSE_CANCELLED] scene=${scene} reason=viewer-request`);
   }
 
   // --- AUTO PROCESS QUEUE ---
@@ -1846,6 +1897,15 @@ module.exports = {
       due: () => onIdleDue(),
       noteActivity: () => noteViewerActivity(),
       dropQueued: (reason) => dropQueuedIdle(reason || "test"),
+      // Memasukkan entri BERPRIORITAS INTERAKSI langsung ke enqueueTrigger,
+      // melewati shouldEngage().
+      //
+      // Dibutuhkan karena pagar "interaksi tidak boleh membatalkan jeda global"
+      // adalah LAPIS KEDUA: lapis pertamanya shouldEngage() yang sudah menolak
+      // saat busy, sehingga jalur produksi tidak pernah sampai ke pagar itu.
+      // Tanpa hook ini pagar tersebut tidak bisa diuji sebagai perilaku, dan
+      // pagar yang tidak diuji adalah pagar yang akan dilepas orang berikutnya.
+      enqueueAsIdle: (rule) => enqueueTrigger(rule, null, { priority: IDLE_PRIORITY }),
       // Prioritas entri antrean dibuka DI SINI, bukan dengan melebarkan bentuk
       // getState().queue — bentuk itu dipaku tes antrean yang sudah ada.
       queued: () => sceneAggregates.map((a) => ({ scene: a.scene, priority: a.priority })),
