@@ -63,12 +63,25 @@ function levOld(a, b) {
   }
   return dp[m][n];
 }
+// Referensi "lama" ini ada untuk membuktikan satu hal saja: PENYARING
+// ARITMETIKA di matchFuzzy tidak mengubah satu keputusan pun.
+//
+// Sejak hotfix v0.2.1 ia ikut memodelkan PAGAR ANGKA, karena pagar itu adalah
+// kebijakan yang disengaja - bukan efek samping penyaring. Tanpa pemodelan ini,
+// tes di bawah berubah arti menjadi "kebijakan baru tidak boleh ada", dan ia
+// akan merah untuk alasan yang salah. Aturannya disalin dari matcher.js:
+// trigger yang MENGKLAIM nomor hanya boleh cocok kalau nomor pesannya sama.
+const digitsOf = (s) => (String(s).match(/\d+/g) || []).join(" ");
+
 function fuzzyOld(rules, msgNorm, norm) {
   let best = { score: 0, rule: null };
+  const dMsg = digitsOf(msgNorm);
   for (const r of rules) {
     if (!Array.isArray(r.keywords)) continue;
     for (const kw of r.keywords) {
       const kn = norm(kw);
+      const dKw = digitsOf(kn);
+      if (dKw !== "" && dKw !== dMsg) continue;
       const d = levOld(msgNorm, kn);
       const ml = Math.max(msgNorm.length, kn.length);
       const sc = ml === 0 ? 1 : 1 - d / ml;

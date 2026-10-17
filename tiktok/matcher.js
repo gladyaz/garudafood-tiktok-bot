@@ -80,6 +80,31 @@ function levenshteinCapped(a, b, maxDist) {
   return prev[n];
 }
 
+// IDENTITAS ANGKA: deretan digit pada teks yang SUDAH dinormalkan, berurutan.
+//
+// ---------------------------------------------------------------------------
+// KENAPA ANGKA TIDAK BOLEH DIANGGAP SALAH KETIK
+//
+// Audit 2026-10-17 (docs/trigger-matcher-audit-v0.2.0.md) menemukan ini aktif
+// pada config pilot: penonton mengetik `spill etalase 2`, dan fuzzy memilih
+// trigger `spill etalase 1` dengan skor 0,933 - karena bedanya memang SATU
+// karakter pada frasa 15 karakter. Akibatnya bot mem-pin produk yang SALAH dan
+// menulis di chat "Etalase 1 sudah aku pin ya kak".
+//
+// Menaikkan ambang tidak menutup kelas ini: skor 0,933 tetap lolos pada ambang
+// 0,9 sekalipun. Yang salah bukan ambangnya, tapi anggapan bahwa angka adalah
+// ejaan. `etalase 2` bukan versi salah-tulis dari `etalase 1` - ia barang lain,
+// dan di LIVE commerce salah barang tidak bisa ditarik kembali.
+//
+// Dibaca dari teks yang sudah dinormalkan, jadi peta angka-kata produksi
+// (`satu` -> `1`) sudah berlaku dan TIDAK diduplikasi di sini: "spill etalase
+// satu" dan "spill etalase 1" sampai ke fungsi ini dalam bentuk yang sama.
+// Digit yang menempel ke huruf tetap terbaca ("etalase1" -> "1").
+function numericIdentity(normText) {
+  const found = String(normText == null ? "" : normText).match(/\d+/g);
+  return found ? found.join(" ") : "";
+}
+
 // Histogram karakter sebagai Map kode->jumlah. Dihitung sekali per keyword saat
 // indeks dibangun, dan sekali per pesan.
 function histogram(s) {
@@ -131,7 +156,7 @@ function buildMatcherIndex(rules, { normalize } = {}) {
       for (const kw of rule.keywords) {
         const n = norm(kw);
         if (!n) continue;
-        const entry = { rule, keyword: kw, norm: n, len: n.length, hist: histogram(n) };
+        const entry = { rule, keyword: kw, norm: n, len: n.length, hist: histogram(n), digits: numericIdentity(n) };
         entries.push(entry);
         keywords.push(entry);
       }
@@ -162,16 +187,51 @@ function matchPhrase(index, msgRaw, msgNorm, { containsPhrase } = {}) {
 // Padanan persis dari fallback fuzzy lama, tapi hanya menghitung kandidat yang
 // secara aritmetika MASIH MUNGKIN mencapai ambang.
 function matchFuzzy(index, msgNorm, { threshold = DEFAULT_THRESHOLD, budgetCells = DEFAULT_BUDGET_CELLS } = {}) {
-  const stats = { candidates: 0, calls: 0, cells: 0, skippedLength: 0, skippedHist: 0, budgetExceeded: false };
+  const stats = { candidates: 0, calls: 0, cells: 0, skippedLength: 0, skippedHist: 0, skippedNumeric: 0, budgetExceeded: false };
   if (!index || !msgNorm) return { rule: null, score: 0, keyword: null, stats };
 
   const la = msgNorm.length;
   const ha = histogram(msgNorm);
+  const dMsg = numericIdentity(msgNorm);
   const slack = 1 - threshold;
 
   let best = { score: 0, rule: null, keyword: null };
 
   for (const e of index.entries) {
+    // PAGAR ANGKA, diperiksa paling dulu karena ia perbandingan string pendek
+    // dan satu-satunya yang bisa menolak kandidat berskor sangat tinggi.
+    //
+    // Aturannya SENGAJA tidak simetris, dan arahnya dipilih dari pengukuran
+    // perilaku nyata, bukan ditebak:
+    //
+    //   trigger berangka, pesan BEDA angka   -> DISKUALIFIKASI
+    //                                           `spill etalase 2` vs trigger
+    //                                           `...1`: barang lain.
+    //   trigger berangka, pesan TANPA angka  -> DISKUALIFIKASI
+    //                                           `spill etalase` tidak menyebut
+    //                                           barang mana pun; memilih yang
+    //                                           pertama di config adalah
+    //                                           tebakan, bukan permintaan.
+    //                                           Ini juga yang membuat
+    //                                           `spill etalase sepuluh` berhenti
+    //                                           mendarat di etalase 1.
+    //   trigger TANPA angka                  -> dibiarkan, apa pun angka di
+    //                                           pesan. Trigger itu tidak
+    //                                           mengklaim nomor apa pun, jadi
+    //                                           `boikott ai 2` tetap boleh cocok
+    //                                           ke `boikot ai`. Recall typo
+    //                                           tidak dikorbankan.
+    //
+    // Angka yang SAMA tidak pernah terpengaruh: `etalase 1` -> `spill etalase 1`
+    // dan `nomor 2` -> `no 2` tetap lolos seperti sebelumnya.
+    //
+    // Lintasan frasa (containment) TIDAK disentuh sama sekali - pagar ini hanya
+    // berlaku pada fallback fuzzy.
+    if (e.digits !== "" && e.digits !== dMsg) {
+      stats.skippedNumeric += 1;
+      continue;
+    }
+
     const maxLen = la > e.len ? la : e.len;
     // Jarak maksimum yang masih bisa mencapai ambang.
     const allowed = Math.floor(slack * maxLen);
@@ -216,6 +276,7 @@ module.exports = {
   levenshteinCapped,
   histogram,
   histLowerBound,
+  numericIdentity,
   DEFAULT_THRESHOLD,
   DEFAULT_BUDGET_CELLS,
 };
