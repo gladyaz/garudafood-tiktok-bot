@@ -284,3 +284,92 @@ test("tes packaging ikut dijalankan npm test", () => {
     assert.ok(pkg.scripts.test.includes(name), name + " harus terdaftar di npm test");
   }
 });
+
+// --- allowlist HARUS menutupi seluruh graf require ---------------------------
+//
+// Kelas bug yang dijaga, dan ia SUNGGUHAN terjadi: v0.3.0 menambahkan direktori
+// `qa/`, installer-nya terbangun, VERIFY_PACKAGE lolos (ia memeriksa biner
+// runtime dan rahasia, bukan kelengkapan modul), dan `qa/` TIDAK ikut
+// terpaket - sehingga bot terpasang akan mati di require("./qa/price-qa")
+// sebelum satu baris pun berjalan.
+//
+// Pagarnya tidak boleh berupa daftar direktori yang ditulis tangan: daftar itu
+// akan ketinggalan dengan cara yang sama. Jadi kebutuhannya DITURUNKAN dari
+// graf require yang nyata, dimulai dari titik masuk yang Controller jalankan.
+
+const fsReal = require("node:fs");
+const pathReal = require("node:path");
+
+const ROOT = pathReal.join(__dirname, "..");
+
+// Scan statis: tidak mengeksekusi apa pun (index.js menyambung ke TikTok kalau
+// dijalankan langsung). Hanya mencari require relatif, lalu menelusurinya.
+function relativeRequires(src) {
+  return [...src.matchAll(/require\(\s*["'](\.[^"']*)["']\s*\)/g)].map((m) => m[1]);
+}
+
+function resolveLocal(fromFile, spec) {
+  const base = pathReal.resolve(pathReal.dirname(fromFile), spec);
+  for (const cand of [base, base + ".js", pathReal.join(base, "index.js")]) {
+    if (fsReal.existsSync(cand) && fsReal.statSync(cand).isFile()) return cand;
+  }
+  return null;
+}
+
+function requireGraph(entries) {
+  const seen = new Set();
+  const stack = entries.map((e) => pathReal.join(ROOT, e));
+  while (stack.length) {
+    const file = stack.pop();
+    if (!file || seen.has(file) || !fsReal.existsSync(file)) continue;
+    seen.add(file);
+    const src = fsReal.readFileSync(file, "utf8");
+    for (const spec of relativeRequires(src)) {
+      const target = resolveLocal(file, spec);
+      if (target && !seen.has(target)) stack.push(target);
+    }
+  }
+  return [...seen];
+}
+
+// Apakah path repo-relatif ini tertutupi salah satu pola allowlist?
+function covered(rel, allow) {
+  const posix = rel.split(pathReal.sep).join("/");
+  return allow.some((pat) => {
+    const p = String(pat);
+    if (p === posix) return true;
+    if (p.endsWith("/**/*") || p.endsWith("/**")) {
+      const dir = p.replace(/\/\*\*(\/\*)?$/, "");
+      return posix === dir || posix.startsWith(dir + "/");
+    }
+    return false;
+  });
+}
+
+test("allowlist menutupi SELURUH modul yang di-require titik masuk", () => {
+  // Titik masuk yang Controller boleh jalankan (controller/process-manager.js
+  // SCRIPTS) plus main Electron-nya.
+  const entries = ["index.js", "autopin-service.js", "desktop/main.js"];
+  for (const e of entries) {
+    assert.ok(fsReal.existsSync(pathReal.join(ROOT, e)), "titik masuk harus ada: " + e);
+  }
+  const allow = build.files.filter((f) => !String(f).startsWith("!"));
+  const graph = requireGraph(entries);
+  assert.ok(graph.length > 40, "graf require terlalu kecil, scan-nya mungkin rusak: " + graph.length);
+
+  const hilang = graph
+    .map((abs) => pathReal.relative(ROOT, abs))
+    .filter((rel) => !rel.startsWith("node_modules"))
+    .filter((rel) => !covered(rel, allow));
+
+  assert.deepEqual(hilang, [], "modul ini di-require tapi TIDAK dipaketkan:\n  " + hilang.join("\n  "));
+});
+
+test("allowlist memuat qa/ secara eksplisit", () => {
+  // Disebut sendiri supaya kegagalan yang pernah terjadi punya nama, bukan
+  // hanya muncul sebagai satu baris di daftar graf.
+  const allow = build.files.filter((f) => !String(f).startsWith("!"));
+  assert.ok(allow.includes("qa/**/*"), "qa/ harus dipaketkan: " + JSON.stringify(allow));
+  const graph = requireGraph(["index.js"]).map((a) => pathReal.relative(ROOT, a).split(pathReal.sep).join("/"));
+  assert.ok(graph.some((f) => f.startsWith("qa/")), "index.js memang me-require qa/");
+});

@@ -53,6 +53,7 @@
       "controller/**/*",
       "autopin/**/*",
       "autocomment/**/*",
+      "qa/**/*",
       "tiktok/**/*",
       "runtime/**/*",
       "index.js",
