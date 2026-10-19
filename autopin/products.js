@@ -17,10 +17,22 @@
 // .pc_top_product TIDAK PERNAH diklik oleh modul ini. Ia hanya dibaca sebagai diagnostik
 // urutan daftar (field `topControls`), karena mengkliknya menggeser nomor semua produk.
 
+const { withPriceFields } = require("./price");
+
 const NUMBER_INPUT = 'input[data-tid="m4b_input_number"]';
 const ROW_MARKER = '[class*="stock-and-pin-button"]';
 const TOP_CONTROL = ".pc_top_product"; // diagnostik saja — jangan diklik
 const PIN_BUTTON = 'button[data-pin-performance-source="product_card"]';
+// HARGA. Dua selector, keduanya dari DOM nyata (LIVE 2026-10-19, lihat
+// docs/dynamic-product-price-audit-v0.2.1.md):
+//   PRICE_PRIMARY : harga sekarang — 16px/500, inilah yang sudah dibaca
+//                   sebagai `price` sejak awal. JANGAN diubah: mengubahnya
+//                   mengubah harga yang sudah tampil di dropdown customer.
+//   PRICE_DIM     : harga pembanding — 12px/400, rgba(0,0,0,.35). Tidak
+//                   dicoret CSS, jadi ia tidak bisa dikenali dari
+//                   text-decoration; kelas tipografinya yang membedakan.
+const PRICE_PRIMARY = '[class*="text-body-l-medium"]';
+const PRICE_DIM = '[class*="text-neutral-text4"][class*="text-body-s"]';
 
 // --- dieksekusi DI DALAM halaman: harus self-contained ---
 function readProductsInPage(sel) {
@@ -54,9 +66,30 @@ function readProductsInPage(sel) {
     const titleEl =
       row.querySelector('[class*="overflow-ellipsis"] span') ||
       row.querySelector('[class*="overflow-ellipsis"]');
-    const priceEl = row.querySelector('[class*="text-body-l-medium"]');
+    const priceEl = row.querySelector(sel.PRICE_PRIMARY);
     const stockEl = row.querySelector('[class*="stock-and-ask-to-show"]');
     const img = row.querySelector("img[src]");
+
+    // Seluruh simpul ber-"Rp" di baris ini, APA ADANYA. Di sini TIDAK ada
+    // keputusan: yang dilaporkan hanya teksnya dan apakah simpulnya cocok
+    // selector harga utama / harga pembanding. Artinya diputuskan di
+    // autopin/price.js, yang bisa diuji sebagai fungsi murni — kode di dalam
+    // page.evaluate tidak bisa mengimpor apa pun, jadi aturan yang tinggal di
+    // sini hanya bisa diuji lewat tiruan DOM yang bentuknya dikarang.
+    //
+    // Kelas DOM-nya TIDAK ikut keluar: yang keluar sudah berupa dua boolean,
+    // jadi struktur internal TikTok tidak pernah merembes ke luar halaman.
+    const priceNodes = [];
+    for (const el of row.querySelectorAll("*")) {
+      let own = "";
+      for (const n of el.childNodes) if (n.nodeType === 3) own += ` ${n.textContent}`;
+      if (!/rp\s*\d/i.test(own)) continue;
+      priceNodes.push({
+        text: clip(own, 40),
+        primary: el.matches(sel.PRICE_PRIMARY),
+        dim: el.matches(sel.PRICE_DIM),
+      });
+    }
 
     // Pin per produk — HANYA yang bersumber product_card, dicari di dalam baris ini saja.
     const pinButtons = [...row.querySelectorAll(sel.PIN_BUTTON)];
@@ -81,6 +114,7 @@ function readProductsInPage(sel) {
       rowInputs: inputs.length,
       title: clip(titleEl ? titleEl.textContent : "", 120),
       price: clip(priceEl ? priceEl.textContent : "", 40),
+      priceNodes,
       stock: clip(stockEl ? stockEl.textContent : "", 60),
       imageKey: img
         ? (() => { try { return new URL(img.src).pathname.split("/").pop() || ""; } catch { return ""; } })()
@@ -253,7 +287,7 @@ function readPinStateInPage(sel, opts) {
   return { found: false };
 }
 
-const SELECTORS = { NUMBER_INPUT, ROW_MARKER, TOP_CONTROL, PIN_BUTTON };
+const SELECTORS = { NUMBER_INPUT, ROW_MARKER, TOP_CONTROL, PIN_BUTTON, PRICE_PRIMARY, PRICE_DIM };
 
 // Daftar ter-virtualisasi: hanya sebagian baris ter-render. Gulir bertahap lalu gabungkan.
 //
@@ -297,7 +331,11 @@ async function collectProducts(page, {
         continue;
       }
       const prev = byNumber.get(p.number);
-      if (!prev || (!prev.title && p.title)) byNumber.set(p.number, p);
+      // Field harga ditambahkan DI SINI, satu kali, supaya setiap pemakai
+      // collectProducts (jalur pin, discovery Controller, konfirmasi pin)
+      // melihat bentuk produk yang sama. `price` dan `stock` lama tidak
+      // disentuh.
+      if (!prev || (!prev.title && p.title)) byNumber.set(p.number, withPriceFields(p));
     }
   };
 
@@ -357,6 +395,39 @@ async function collectProducts(page, {
     ranOutOfTime,
     numberInputsOnPage: first.numberInputsOnPage,
     livePinButtonsOnPage,
+  };
+}
+
+// Pembacaan SATU LINTASAN, tanpa menggulir sama sekali.
+//
+// Bedanya dengan collectProducts bukan cuma kecepatan: collectProducts memanggil
+// resetScrollInPage lalu menggulir sampai 14 gelombang, jadi ia MENGGESER posisi
+// gulir halaman — di tengah run itu halaman yang sama dengan jalur pin. Fungsi
+// ini tidak menyentuh posisi gulir, dan karena itu hanya melihat baris yang
+// kebetulan ter-render.
+//
+// Konsekuensinya harus dibawa oleh pemanggil: daftar dari sini TIDAK LENGKAP,
+// dan ketidakhadiran sebuah produk di dalamnya BUKAN bukti produk itu tidak ada.
+// Itulah sebabnya hasilnya ditandai coverage="viewport", bukan "full".
+async function readProductsOnce(page) {
+  const batch = await page.evaluate(readProductsInPage, SELECTORS);
+  const products = [];
+  let invalidRows = 0;
+  for (const p of batch.products) {
+    if (p.rowInputs !== 1 || p.number === null) {
+      invalidRows += 1;
+      continue;
+    }
+    products.push(withPriceFields(p));
+  }
+  products.sort((a, b) => a.number - b.number);
+  return {
+    products,
+    invalidRows,
+    passes: 1,
+    coverage: "viewport",
+    numberInputsOnPage: batch.numberInputsOnPage,
+    livePinButtonsOnPage: batch.livePinButtonsOnPage || 0,
   };
 }
 
@@ -435,7 +506,10 @@ module.exports = {
   SELECTORS,
   PIN_BUTTON,
   TOP_CONTROL,
+  PRICE_PRIMARY,
+  PRICE_DIM,
   collectProducts,
+  readProductsOnce,
   readIdentity,
   pinProductByTitle,
   readPinState,

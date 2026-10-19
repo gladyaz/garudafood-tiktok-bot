@@ -24,6 +24,7 @@ const { createPinConfirmer } = require("./pin-confirm");
 const { createPlayGeneration } = require("./session");
 const { planPinTimeouts, describePinTimeouts } = require("./pin-budget");
 const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
+const { createCatalogueStore, COVERAGE } = require("./catalogue");
 
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
@@ -60,6 +61,15 @@ const CONFIRM_SLACK_MS = 300;
 // atau proses bot kembar. Batasnya sama dengan dedupe AutoComment
 // (autocomment/core.js DEDUPE_MEMORY) supaya keduanya setara.
 const PIN_DEDUPE_MEMORY = 1_000;
+
+// Anggaran penyegaran katalog baca-saja. SENGAJA jauh di bawah anggaran pin
+// (8 detik): pembacaan katalog nanti berada di jalur menjawab chat, dan tidak
+// boleh menahan apa pun. Kalau menunggu giliran di antrean sudah memakan
+// anggaran ini, penyegarannya TIDAK dimulai - bukan dimulai lalu ditinggalkan.
+// Operasi yang ditinggalkan tetap berjalan di latar dan bisa tumpang tindih
+// dengan pin berikutnya; itu alasan yang sama kenapa guardedPin memeriksa sisa
+// waktu sebelum setiap tahap, bukan memakai withDeadline.
+const CATALOGUE_REFRESH_DEADLINE_MS = 1_500;
 
 function isExpectedConsole(actualUrl, consoleUrl) {
   try {
@@ -113,6 +123,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // Disuntikkan supaya penungguan komposer bisa diuji tanpa browser.
     waitForComposerReady,
     collectProducts: productsMod.collectProducts,
+    // Pembacaan SATU LINTASAN tanpa menggulir. Dipakai HANYA oleh penyegaran
+    // katalog baca-saja, tidak pernah oleh jalur pin.
+    readProductsOnce: productsMod.readProductsOnce,
     readIdentity: productsMod.readIdentity,
     pinProductByTitle: productsMod.pinProductByTitle,
     readPinState: productsMod.readPinState,
@@ -124,6 +137,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   };
 
   const runExclusive = createSerialRunner();
+  // Snapshot katalog produk. Diisi dari pembacaan yang service MEMANG sudah
+  // lakukan; lihat autopin/catalogue.js untuk kebijakan kesegarannya.
+  const catalogue = createCatalogueStore({ now: () => d.now() });
   let browser = null;
   let page = null;
     let chatPage = null;
@@ -347,6 +363,26 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       });
       return { ok: false, reason: "collect-incomplete-budget", clicked: false };
     }
+    // Katalog LENGKAP yang baru saja dibaca disimpan. Ini satu-satunya tempat
+    // snapshot "full" lahir, dan ia GRATIS: pembacaannya sudah terjadi di baris
+    // atas untuk keperluan pin.
+    //
+    // Hanya daftar yang UTUH yang boleh disimpan. Daftar yang dipotong - oleh
+    // anggaran (ranOutOfTime) atau oleh penghentian dini (stoppedEarly) - tidak
+    // boleh pernah ditandai "full": ketidakhadiran produk di dalamnya bukan
+    // bukti produk itu tidak ada. Kolektor konfirmasi pasca-klik memang dipotong
+    // begitu, dan karena itu TIDAK disimpan di sini.
+    //
+    // Dibungkus try/catch: menyimpan snapshot tidak boleh pernah bisa
+    // menggagalkan pin.
+    if (snapshot.ranOutOfTime !== true && snapshot.stoppedEarly !== true) {
+      try {
+        catalogue.put({ products: snapshot.products, coverage: COVERAGE.FULL, source: "pin-collect" });
+      } catch (e) {
+        log("SERVICE_CATALOGUE_STORE_FAILED", { detail: String(e && e.message).slice(0, 120) });
+      }
+    }
+
     if (snapshot.products.length === 0) return { ok: false, reason: "no-products-found" };
     if (!snapshot.livePinButtonsOnPage) return { ok: false, reason: "live-pin-control-not-available" };
 
@@ -529,6 +565,71 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       });
     }
 
+  // Halaman yang SUDAH dimiliki service, atau null. SENGAJA bukan ensurePage:
+  // jalur baca-saja tidak boleh pernah membuka browser. Profil Chrome terkunci
+  // satu proses, jadi "membuka kalau belum ada" di sini bisa berarti merebut
+  // profil dari pemiliknya di tengah LIVE.
+  function pageIfOpen() {
+    return page && !page.isClosed() ? page : null;
+  }
+
+  // Katalog produk BACA-SAJA. Tidak mengklik, tidak menavigasi, tidak menyentuh
+  // .pc_top_product, tidak pin/unpin, tidak menggulir, dan tidak pernah membuka
+  // browser kedua.
+  async function handleProducts({ maxAgeMs, refresh } = {}) {
+    const cached = catalogue.read({ maxAgeMs });
+    if (cached.ok) return cached;
+
+    // refresh="never": jawab apa adanya. Yang basi tetap basi.
+    if (refresh === "never") return cached;
+
+    const p = pageIfOpen();
+    if (!p) {
+      log("SERVICE_PRODUCTS_UNAVAILABLE", { reason: "page-not-open" });
+      return cached;
+    }
+
+    const acceptedAt = d.now();
+    await runExclusive(async () => {
+      // Anggarannya sudah habis dimakan antrean? Jangan mulai sama sekali.
+      const sisa = acceptedAt + CATALOGUE_REFRESH_DEADLINE_MS - d.now();
+      if (sisa <= 0) {
+        log("SERVICE_PRODUCTS_REFRESH_SKIPPED", { waited: d.now() - acceptedAt, reason: "queue-wait" });
+        return;
+      }
+      const alive = pageIfOpen();
+      if (!alive) {
+        log("SERVICE_PRODUCTS_REFRESH_SKIPPED", { reason: "page-closed" });
+        return;
+      }
+      if (!isExpectedConsole(alive.url(), config.consoleUrl)) {
+        log("SERVICE_PRODUCTS_REFRESH_SKIPPED", { reason: "unexpected-page" });
+        return;
+      }
+      const t0 = d.now();
+      try {
+        const batch = await d.readProductsOnce(alive);
+        // Pembacaan viewport yang KOSONG tidak disimpan. Nol baris tidak bisa
+        // dibedakan dari "daftar belum ter-render", dan menyimpannya berarti
+        // melayani ok:true dengan nol produk - tepat bentuk jawaban yang
+        // membuat "tidak terlihat" terbaca sebagai "tidak ada".
+        if (batch.products.length === 0) {
+          log("SERVICE_PRODUCTS_REFRESH_EMPTY", { ms: d.now() - t0 });
+          return;
+        }
+        catalogue.put({ products: batch.products, coverage: COVERAGE.VIEWPORT, source: "refresh" });
+        log("SERVICE_PRODUCTS_REFRESHED", { count: batch.products.length, ms: d.now() - t0, coverage: COVERAGE.VIEWPORT });
+      } catch (err) {
+        log("SERVICE_PRODUCTS_REFRESH_FAILED", { detail: String(err && err.message).slice(0, 120) });
+      }
+    });
+
+    // Dibaca ulang lewat kebijakan yang SAMA. Kalau penyegarannya tidak terjadi
+    // atau gagal, yang keluar tetap vonis basi/tidak-tersedia yang jujur -
+    // bukan data lama berlabel segar.
+    return catalogue.read({ maxAgeMs });
+  }
+
   const app = express();
   app.use(express.json({ limit: "16kb" }));
 
@@ -563,6 +664,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       // pemetaan baru sementara service masih sisa run sebelumnya akan terlihat
       // normal sepenuhnya.
       runtimeConfigId: runtimeConfigId || null,
+      // Diagnostik snapshot katalog. TIDAK pernah membawa produknya.
+      productSnapshot: catalogue.state(),
     };
   }
 
@@ -582,12 +685,50 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     }
   });
 
+  // BACA-SAJA, dan GET dengan sengaja: satu-satunya GET lain di service ini
+  // (/health) juga baca-saja, sementara semua rute yang MENGUBAH sesuatu
+  // adalah POST. Mengikuti konvensi itu membuat sifat rute terbaca dari
+  // metodenya.
+  //
+  // Tidak butuh flag otoritas baru: flag yang ada (--enable-autocomment-send,
+  // --allow-comment-send-once) menggerbang AKSI NYATA ke akun customer, dan
+  // rute ini tidak beraksi. Menambah flag untuk pembacaan hanya akan
+  // mengaburkan arti flag yang maknanya sekarang tajam.
+  app.get("/products", async (req, res) => {
+    const q = req.query || {};
+    try {
+      res.json(await handleProducts({
+        // Nilai yang tidak bisa dibaca sebagai angka dianggap tidak diisi,
+        // bukan nol: Number("") === 0 akan menolak semua snapshot.
+        maxAgeMs: Number.isFinite(Number(q.maxAgeMs)) && String(q.maxAgeMs).trim() !== "" ? Number(q.maxAgeMs) : undefined,
+        refresh: typeof q.refresh === "string" ? q.refresh : undefined,
+      }));
+    } catch (err) {
+      log("SERVICE_PRODUCTS_ERROR", { detail: String(err && err.message).slice(0, 120) });
+      res.json({ ok: false, error: "product-snapshot-unavailable" });
+    }
+  });
+
   // Dipanggil sekali saat service start: membuka browser lebih awal supaya
   // permintaan pin PERTAMA tidak menanggung ~20 detik startup, yang pasti
   // melewati batas waktu dispatcher di sisi bot.
   async function warmUp() {
     try {
       await ensurePage();
+      // Snapshot awal: SATU lintasan, tanpa menggulir. Sengaja bukan koleksi
+      // penuh - koleksi penuh memakan ~4 detik gulir di saat start dan snapshot
+      // "full" toh datang gratis pada pin pertama. Yang dibeli di sini hanya
+      // supaya pembaca pertama tidak menemukan katalog kosong.
+      // Gagal di sini tidak menggagalkan apa pun.
+      try {
+        const batch = await d.readProductsOnce(page);
+        if (batch.products.length > 0) {
+          catalogue.put({ products: batch.products, coverage: COVERAGE.VIEWPORT, source: "warmup" });
+          log("SERVICE_CATALOGUE_WARMED", { count: batch.products.length, coverage: COVERAGE.VIEWPORT });
+        }
+      } catch (e) {
+        log("SERVICE_CATALOGUE_WARMUP_FAILED", { detail: String(e && e.message).slice(0, 120) });
+      }
       return { ok: true };
     } catch (err) {
       log("SERVICE_WARMUP_FAILED", { detail: String(err && err.message).slice(0, 120) });
@@ -662,6 +803,8 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   return {
     app,
     handlePin,
+    handleProducts,
+    catalogue,
     handleCommentDryRun,
     handleCommentSend,
     noteScenePlayId,

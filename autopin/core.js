@@ -119,6 +119,55 @@ function resolveProductForPin(products, titleKey) {
   return { ok: true, product };
 }
 
+// Resolusi target untuk PERTANYAAN tentang produk (baca-saja). Bukan untuk pin.
+//
+// KENAPA TIDAK MEMAKAI resolveProductForPin
+//
+// Logika 0/1/banyak di sana memang persis yang dibutuhkan, dan dipakai ulang di
+// sini lewat normalizeTitleKey yang SAMA. Tapi empat pemeriksaan terakhirnya
+// menuntut kontrol pin yang sehat (live-pin-control-not-available,
+// ambiguous-control, control-not-visible, control-disabled) — dan produk HABIS
+// STOK mungkin tidak punya tombol pin sementara harganya tetap terpampang.
+// Menolak menyebut harganya karena ia tidak bisa di-pin adalah penolakan yang
+// salah sebabnya. Jadi di sini TIDAK ADA satu pun pemeriksaan kontrol pin.
+//
+// URUTAN IDENTITAS
+//   1. stableId — begitu DOM mengeksposnya. Hari ini selalu null, dan tidak
+//      pernah dikarang.
+//   2. judul ternormalkan, PERSIS dulu; kalau tidak ada yang persis, baru
+//      containment — dengan aturan 0/1/banyak yang sama.
+//   3. nomor terlihat TIDAK PERNAH dipakai mencocokkan. Ia dibaca dari
+//      aria-valuenow, yaitu posisi, dan posisi bergeser kalau daftar
+//      diurutkan ulang.
+//
+// Ambiguitas SELALU ditolak. Menyebut harga produk yang salah lebih merusak
+// daripada diam — persis seperti mem-pin etalase 1 saat penonton meminta
+// etalase 2 (lihat hotfix v0.2.1).
+function resolveProductForQuery(products, query) {
+  const list = Array.isArray(products) ? products : [];
+  const q = typeof query === "string" ? { titleKey: query } : (query || {});
+
+  const stableId = q.stableId == null ? "" : String(q.stableId).trim();
+  if (stableId) {
+    const byId = list.filter((p) => p && p.stableId != null && String(p.stableId) === stableId);
+    if (byId.length === 1) return { ok: true, product: byId[0], via: "stableId" };
+    if (byId.length > 1) return { ok: false, reason: "ambiguous-product", count: byId.length };
+    return { ok: false, reason: "product-not-found" };
+  }
+
+  const want = normalizeTitleKey(q.titleKey);
+  if (!want) return { ok: false, reason: "empty-query" };
+
+  const persis = list.filter((p) => normalizeTitleKey(p && p.title) === want);
+  if (persis.length === 1) return { ok: true, product: persis[0], via: "title-exact" };
+  if (persis.length > 1) return { ok: false, reason: "ambiguous-product", count: persis.length };
+
+  const sebagian = list.filter((p) => normalizeTitleKey(p && p.title).includes(want));
+  if (sebagian.length === 0) return { ok: false, reason: "product-not-found" };
+  if (sebagian.length > 1) return { ok: false, reason: "ambiguous-product", count: sebagian.length };
+  return { ok: true, product: sebagian[0], via: "title-contains" };
+}
+
 // Produk dianggap "sama" lewat productId kalau ada; kalau tidak, nomor + judul.
 function sameProduct(a, b) {
   if (a.productId && b.productId) return a.productId === b.productId;
@@ -153,6 +202,7 @@ module.exports = {
   decidePinMode,
   normalizeTitleKey,
   resolveProductForPin,
+  resolveProductForQuery,
   resolveProduct,
   verifyPinned,
   createSerialRunner,
