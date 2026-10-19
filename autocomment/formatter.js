@@ -20,6 +20,26 @@ function etalaseNumber(scene) {
   return n >= 1 && n <= 10 ? n : null;
 }
 
+// Gerbang teks yang HARUS dilewati setiap kalimat yang sampai ke penonton,
+// dari jalur mana pun ia datang.
+//
+// Dipisah dari formatSceneMessage sejak v0.3.0 karena ada jalur kedua yang
+// teksnya TIDAK berasal dari scene (jawaban harga Product Q&A). Gerbangnya
+// SATU dan dipakai bersama: jalur kedua tidak boleh punya aturan panjang,
+// aturan HTML, atau aturan karakter kontrol versinya sendiri — salinan selalu
+// menyimpang.
+//
+// Perilakunya identik dengan yang dulu inline di formatSceneMessage: rapikan
+// spasi, lalu empat pemeriksaan dalam urutan yang sama.
+function validateText(raw) {
+  const text = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+  if (!text) return { ok: false, reason: "empty-text" };
+  if (/[<>]/.test(text)) return { ok: false, reason: "html-not-allowed" };
+  if (/[\x00-\x1f\x7f]/.test(text)) return { ok: false, reason: "control-chars" };
+  if (text.length > MAX_LENGTH) return { ok: false, reason: "too-long" };
+  return { ok: true, text };
+}
+
 // Mengembalikan { ok:true, text, etalase } atau { ok:false, reason }.
 // Template hanya boleh memuat placeholder {n}; tidak ada interpolasi lain.
 function formatSceneMessage(scene, { template = DEFAULT_TEMPLATE } = {}) {
@@ -29,14 +49,10 @@ function formatSceneMessage(scene, { template = DEFAULT_TEMPLATE } = {}) {
   if (typeof template !== "string" || !template.includes("{n}")) {
     return { ok: false, reason: "invalid-template" };
   }
-  const text = template.split("{n}").join(String(n)).replace(/\s+/g, " ").trim();
 
-  if (!text) return { ok: false, reason: "empty-text" };
-  if (/[<>]/.test(text)) return { ok: false, reason: "html-not-allowed" };
-  if (/[\x00-\x1f\x7f]/.test(text)) return { ok: false, reason: "control-chars" };
-  if (text.length > MAX_LENGTH) return { ok: false, reason: "too-long" };
-
-  return { ok: true, text, etalase: n };
+  const v = validateText(template.split("{n}").join(String(n)));
+  if (!v.ok) return v;
+  return { ok: true, text: v.text, etalase: n };
 }
 
-module.exports = { formatSceneMessage, etalaseNumber, MAX_LENGTH, DEFAULT_TEMPLATE };
+module.exports = { formatSceneMessage, validateText, etalaseNumber, MAX_LENGTH, DEFAULT_TEMPLATE };

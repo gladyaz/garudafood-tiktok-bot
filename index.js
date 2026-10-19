@@ -593,6 +593,30 @@ let autoComment = createAutoComment({
 // membuktikan flag dari env benar-benar sampai ke dispatcher yang dipakai produksi.
 const realAutoCommentState = autoComment.__state;
 
+// ====== PRODUCT Q&A (v0.3.0) - CADANGAN, bukan pengganti ======
+//
+// Dipanggil HANYA di jalur jatuh-bawah handleChat, sesudah kedua lapis aturan
+// terkonfigurasi gagal. Letak pemanggilannya itulah jaminannya: aturan yang
+// cocok sudah `return` sebelum baris Q&A pernah tereksekusi.
+//
+// Katalognya datang dari snapshot milik service AutoPIN (fondasi v0.2.2) lewat
+// pembaca HTTP tipis yang sama idiomnya dengan jalur pin. Bot tetap TIDAK
+// memuat Puppeteer dan tidak pernah jatuh ke discovery Controller.
+const { createCatalogueReader } = require("./autopin/client");
+const { createPriceQa } = require("./qa/price-qa");
+const { createQaDedupe, createQaQuota } = require("./qa/dedupe");
+
+let priceQa = createPriceQa({
+  // Mati kalau AutoComment mati: Q&A tidak punya jalan lain untuk bicara, dan
+  // menyalakannya tanpa transport hanya menghasilkan log tanpa balasan.
+  enabled: AUTOCOMMENT_ENABLED,
+  readProducts: createCatalogueReader({ env: process.env }),
+  requestComment: (req) => autoComment.requestComment(req),
+  dedupe: createQaDedupe(),
+  quota: createQaQuota(),
+  log: (line) => console.log(line),
+});
+
 // Jumlah penonton yang meminta scene yang sedang diputar: hanya untuk log.
 // Diisi processQueue() tepat sebelum processTrigger(); 0 untuk switch operator.
 let currentPlayRequesters = 0;
@@ -1443,6 +1467,24 @@ function handleChat(data) {
     matchAndEnqueue(fz.rule, nickname, "fuzzy");
     return;
   }
+
+  // === LAPIS 3: CADANGAN Product Q&A ======================================
+  //
+  // Hanya terjangkau kalau KEDUA lapis aturan di atas gagal. Tidak ada satu pun
+  // komentar milik aturan terkonfigurasi yang bisa sampai ke sini, dan itu
+  // dijamin oleh urutan kode - bukan oleh daftar pengecualian yang harus
+  // dirawat.
+  //
+  // Gerbang MURAH dan SINKRON lebih dulu: mayoritas besar komentar LIVE bukan
+  // pertanyaan harga, dan mereka tidak boleh membayar satu pun alokasi promise
+  // hanya untuk ditolak.
+  const qaIntent = priceQa.precheck(msgNorm);
+  if (!qaIntent.price) return;
+
+  // fire-and-forget: jalur chat tidak menunggu HTTP. priceQa.handle() tidak
+  // pernah melempar, dan .catch() di sini adalah lapis keduanya.
+  const qa = priceQa.handle({ msgNorm, nickname, intent: qaIntent });
+  if (qa && typeof qa.catch === "function") qa.catch(() => {});
 }
 
 // =================== CMD / stdin controls ===================
@@ -1864,6 +1906,9 @@ module.exports = {
     setScenePin: fake => { scenePin = fake; },
     // ganti dispatcher AutoComment dengan palsu (tes integrasi tanpa transport)
     setAutoComment: fake => { autoComment = fake; },
+    // ganti jalur Product Q&A dengan palsu (tes prioritas tanpa HTTP)
+    setPriceQa: fake => { priceQa = fake; },
+    priceQaScene: () => priceQa.QA_SCENE,
     autocommentEnabled: () => AUTOCOMMENT_ENABLED,
     autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
     autocommentConfigLine,

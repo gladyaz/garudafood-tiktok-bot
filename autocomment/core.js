@@ -11,7 +11,7 @@
 // AR1: transport-nya HANYA dry-run. Modul ini tidak tahu browser, HTTP, maupun
 // TikTok, dan tidak boleh diberi transport sungguhan sebelum AR2 dibuktikan.
 
-const { formatSceneMessage } = require("./formatter");
+const { formatSceneMessage, validateText } = require("./formatter");
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 // Batas internal yang konservatif. BUKAN limit resmi TikTok - angka resminya
@@ -267,14 +267,39 @@ function createAutoComment({
         log(`[AUTOCOMMENT_PRIORITY_DOWNGRADED] scene=${scene} playId=${playId} note="high tanpa requirePin: diperlakukan normal"`);
       }
 
-      // 4. Pesan deterministik; scene tanpa nomor etalase -> diam.
-      const formatted = format(scene);
-      if (!formatted || !formatted.ok) {
-        const reason = (formatted && formatted.reason) || "unsupported-scene";
-        log(`[AUTOCOMMENT_SKIPPED] scene=${scene} playId=${playId} reason=${reason}`);
-        return Promise.resolve(done(false, reason));
+      // 4. Pesan deterministik.
+      //
+      // DUA sumber teks, dan hanya dua:
+      //
+      //   a. berbasis SCENE  -> format(scene). Satu-satunya jalur sampai v0.2.2.
+      //   b. TEKS EKSPLISIT  -> req.text. Dipakai Product Q&A, yang tidak
+      //      memutar scene apa pun dan karena itu tidak punya balasan
+      //      berbasis scene untuk diambil (format() berkunci scene; lihat
+      //      runtime/mappings.js formatSceneMessage).
+      //
+      // Yang dilewati jalur (b) HANYA PEMILIHAN TEKS. Gerbang teksnya tetap
+      // sama dan DIIMPOR dari formatter yang sama — panjang, HTML, karakter
+      // kontrol, kosong — dan setiap gerbang keselamatan lain di fungsi ini
+      // (dedupe playId, bukti pin, prioritas, rate limit, transport, timeout)
+      // berlaku penuh tanpa pengecualian.
+      const explicit = typeof req.text === "string" ? req.text : null;
+      let text;
+      if (explicit !== null) {
+        const v = validateText(explicit);
+        if (!v.ok) {
+          log(`[AUTOCOMMENT_SKIPPED] scene=${scene} playId=${playId} reason=${v.reason} source=explicit-text`);
+          return Promise.resolve(done(false, v.reason));
+        }
+        text = v.text;
+      } else {
+        const formatted = format(scene);
+        if (!formatted || !formatted.ok) {
+          const reason = (formatted && formatted.reason) || "unsupported-scene";
+          log(`[AUTOCOMMENT_SKIPPED] scene=${scene} playId=${playId} reason=${reason}`);
+          return Promise.resolve(done(false, reason));
+        }
+        text = formatted.text;
       }
-      const text = formatted.text;
 
       // 5. Rate limit global.
       const t0 = now();
