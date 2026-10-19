@@ -1,6 +1,6 @@
 {
   "name": "ai-live-host",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "AI LIVE HOST — asisten LIVE TikTok: AutoPIN produk, AutoComment, dan switching scene OBS.",
   "main": "index.js",
   "scripts": {
