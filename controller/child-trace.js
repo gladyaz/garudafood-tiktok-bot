@@ -100,6 +100,23 @@ const TRACE_TAGS = Object.freeze([
   "TIKTOK_DISCONNECTED",
   "TIKTOK_ERROR",
   "TIKTOK_CHAT_GATE_ERROR",
+  // Keputusan Product Q&A (v0.3.0). Didaftarkan SATU-SATU, bukan sebagai
+  // keluarga "QA_": keluarga akan otomatis meloloskan tag Q&A apa pun yang
+  // ditambahkan nanti, termasuk yang belum pernah diperiksa isinya. Modul ini
+  // memang memilih allowlist justru untuk menghindari itu.
+  //
+  // Keempatnya tidak membawa identitas penonton maupun komentar mentah. Yang
+  // tertulis hanya field teknis: nomor etalase, cara resolusi (via=), alasan,
+  // pemakaian kuota, dan harga yang DIKUTIP - angka yang memang sudah terlihat
+  // semua penonton di etalase dan sudah terkirim ke chat.
+  //
+  // Tanpa keempat baris ini, pertanyaan "kenapa pertanyaan harga penonton tidak
+  // dijawab" hanya bisa dijawab dengan membaca kode - persis keadaan yang
+  // membuat PAUSE_CANCELLED dulu ditambahkan.
+  "QA_PRICE_REPLY",
+  "QA_PRICE_DECLINED",
+  "QA_PRICE_COOLDOWN",
+  "QA_PRICE_QUOTA",
   // kunci satu-instance
   "SINGLE_INSTANCE_HELD",
   "SINGLE_INSTANCE_REFUSED",

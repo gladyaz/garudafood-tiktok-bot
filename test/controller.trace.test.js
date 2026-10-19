@@ -26,6 +26,7 @@ const {
   TRACE_ENV,
   TRACE_TAGS,
   TRACE_DENY,
+  TRACE_FAMILIES,
 } = require("../controller/child-trace");
 const { redactLine } = require("../desktop/support-log");
 
@@ -269,4 +270,104 @@ test("jejak yang MENYALA diumumkan saat boot, jejak yang mati TIDAK", () => {
 
   assert.equal(build({ AILIVE_TRACE_CHILD: "1" }), true, "menyala harus diumumkan");
   assert.equal(build({}), false, "mati tidak boleh mengumumkan apa pun");
+});
+
+// ---------------------------------------------------------------------------
+// KEPUTUSAN PRODUCT Q&A (v0.3.0)
+//
+// Tanpa keempat baris ini, "kenapa pertanyaan harga penonton tidak dijawab"
+// hanya bisa dijawab dengan membaca kode. Tapi Q&A adalah jalur yang MEMBACA
+// komentar penonton, jadi apa yang ikut tercatat harus diperiksa baris demi
+// baris - bukan diasumsikan aman karena tagnya baru.
+
+// Baris APA ADANYA seperti yang dipancarkan qa/price-qa.js.
+const QA_LINES = [
+  '[QA_PRICE_REPLY] product=1 via=title-tokens price="Rp14.299" reason=sent',
+  "[QA_PRICE_DECLINED] reason=ambiguous-product count=2",
+  "[QA_PRICE_DECLINED] reason=product-snapshot-stale",
+  "[QA_PRICE_DECLINED] reason=coverage-insufficient coverage=viewport",
+  "[QA_PRICE_DECLINED] reason=qa-threw detail=aborted",
+  "[QA_PRICE_COOLDOWN] product=1 remainingMs=27400",
+  "[QA_PRICE_QUOTA] product=4 used=2/2 retryAfterMs=51000",
+];
+
+test("Q&A: keempat tag keputusan DILOLOSKAN", () => {
+  for (const tag of ["QA_PRICE_REPLY", "QA_PRICE_DECLINED", "QA_PRICE_COOLDOWN", "QA_PRICE_QUOTA"]) {
+    assert.ok(TRACE_TAGS.includes(tag), `${tag} harus ada di allowlist`);
+  }
+  for (const line of QA_LINES) {
+    assert.equal(shouldTrace(line), true, line);
+  }
+});
+
+test("Q&A: tag didaftarkan SATU-SATU, bukan sebagai keluarga QA_", () => {
+  // Keluarga akan otomatis meloloskan tag Q&A apa pun yang ditambahkan nanti,
+  // termasuk yang belum pernah diperiksa isinya.
+  assert.ok(!TRACE_FAMILIES.some((f) => f.startsWith("QA")), TRACE_FAMILIES.join(","));
+  assert.equal(shouldTrace("[QA_PRICE_BELUM_ADA] product=1"), false,
+    "tag Q&A yang belum didaftarkan harus DITOLAK");
+  assert.equal(shouldTrace("[QA_SOMETHING_ELSE] x=1"), false);
+});
+
+test("Q&A: baris keputusan TIDAK membawa identitas penonton", () => {
+  for (const line of QA_LINES) {
+    const fields = [...line.matchAll(/([a-zA-Z][a-zA-Z0-9_]*)=/g)].map((m) => m[1]);
+    for (const f of fields) {
+      assert.ok(
+        ["product", "via", "price", "reason", "count", "coverage", "detail", "remainingMs", "used", "retryAfterMs"].includes(f),
+        `field tak terduga di baris Q&A: ${f} (${line})`
+      );
+    }
+    for (const dilarang of ["user=", "nickname=", "comment=", "msgNorm=", "msgRaw="]) {
+      assert.ok(!line.includes(dilarang), `${dilarang} tidak boleh ada: ${line}`);
+    }
+  }
+});
+
+test("Q&A: SUMBER tidak memancarkan identitas penonton ke log", () => {
+  // Diperiksa pada kode yang MEMANCARKAN, bukan hanya pada contoh baris:
+  // contoh bisa ketinggalan kalau sumbernya berubah.
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "qa", "price-qa.js"), "utf8");
+  // setiap pemanggilan say(...) diperiksa isinya
+  const panggilan = [...src.matchAll(/say\(`([^`]*)`\)/g)].map((m) => m[1]);
+  assert.ok(panggilan.length >= 3, `harus ada beberapa baris log, ada ${panggilan.length}`);
+  for (const p of panggilan) {
+    for (const dilarang of ["nickname", "msgNorm", "msgRaw", "${intent.words", "title"]) {
+      assert.ok(!p.includes(dilarang), `log Q&A tidak boleh memuat ${dilarang}: ${p}`);
+    }
+  }
+  // dan nickname memang diterima handle() tapi TIDAK pernah dicatat
+  assert.ok(src.includes("nickname"), "nickname memang masuk sebagai parameter");
+  const barisLog = src.split("\n").filter((l) => l.includes("say(") || l.includes("[QA_"));
+  for (const l of barisLog) {
+    assert.ok(!l.includes("nickname"), `nickname tidak boleh masuk baris log: ${l}`);
+  }
+});
+
+test("Q&A: judul produk TIDAK pernah ikut ke log", () => {
+  // Judul adalah teks customer, dan yang terpanjang hari ini 121 karakter.
+  // Yang dicatat hanya nomor etalase.
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "qa", "price-qa.js"), "utf8");
+  const panggilan = [...src.matchAll(/say\(`([^`]*)`\)/g)].map((m) => m[1]);
+  for (const p of panggilan) {
+    assert.ok(!/\$\{[^}]*\.title/.test(p), `judul produk tidak boleh dicatat: ${p}`);
+  }
+});
+
+test("Q&A: chat MENTAH tetap DITOLAK sesudah tag Q&A ditambahkan", () => {
+  // Pagar inti modul ini. Tag Q&A yang baru tidak boleh melonggarkannya.
+  assert.equal(shouldTrace('[TIKTOK_CHAT] user=penonton comment="harga garuda atom berapa"'), false);
+  assert.equal(shouldTrace("💬 penonton: harga garuda atom berapa"), false);
+  assert.ok(TRACE_DENY.includes("TIKTOK_CHAT"));
+  // termasuk komentar yang KEBETULAN berbentuk pertanyaan harga
+  assert.equal(shouldTrace('[TIKTOK_CHAT] user=x comment="garuda kacangnya berapa kak"'), false);
+});
+
+test("Q&A: baris tanpa tag tetap ditolak", () => {
+  assert.equal(shouldTrace("harga garuda atom berapa"), false);
+  assert.equal(shouldTrace("QA_PRICE_REPLY product=1"), false, "tanpa kurung siku bukan tag");
 });
