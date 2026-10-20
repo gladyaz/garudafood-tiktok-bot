@@ -703,3 +703,75 @@ test("PAGAR: decideCoverage adalah satu-satunya penentu coverage di products.js"
   assert.equal((blok.match(/COVERAGE\.(FULL|VIEWPORT|UNKNOWN)/g) || []).length, 5, "tiga keadaan diputuskan di sini");
   assert.ok(/coverage: verdict\.coverage/.test(kode), "collectProducts memakai verdict");
 });
+
+// ===========================================================================
+// TEKS PENCARIAN: dibaca, TIDAK PERNAH dibawa keluar
+// ===========================================================================
+//
+// Pembaca in-page MEMANG menyentuh input pencarian - ia harus, karena daftar
+// yang tersaring pencarian tidak boleh pernah disebut "full". Yang dibawa
+// keluar hanya KEADAANNYA (empty / non-empty / unknown).
+//
+// Bedanya penting dan tidak bisa dilihat dari nama field: `search.state` aman,
+// `search.value` akan menuliskan apa yang diketik operator ke log dukungan -
+// dan di toko nyata yang diketik adalah nama produk, kadang nama customer.
+
+const KANARI_CARI = "kacang atom rasa pedas KANARI_CARI_7b2e";
+
+test("PENCARIAN: teks yang diketik TIDAK ikut keluar dari pembaca in-page", async () => {
+  const p = page({ total: 5, search: KANARI_CARI });
+  const hasil = await p.evaluate(readProductsInPage, SELECTORS);
+
+  // Keadaannya terbaca - jadi pembacanya memang melihat kotak pencarian.
+  assert.equal(hasil.catalogueEvidence.search.found, true);
+  assert.equal(hasil.catalogueEvidence.search.state, "non-empty",
+    "keadaan pencarian harus terbaca, kalau tidak tesnya tidak membuktikan apa pun");
+
+  // Dan teksnya TIDAK ADA, di mana pun di seluruh hasil - bukan hanya di
+  // search.*, tapi juga tidak menyelip ke baris produk atau alasan coverage.
+  const utuh = JSON.stringify(hasil);
+  assert.ok(!utuh.includes("KANARI_CARI_7b2e"), "teks pencarian keluar dari pembaca: " + utuh);
+  assert.ok(!utuh.includes("kacang atom rasa pedas"), "teks pencarian keluar dari pembaca");
+  assert.ok(!/"value"\s*:/.test(JSON.stringify(hasil.catalogueEvidence.search)),
+    "bukti pencarian tidak boleh punya field value: " + JSON.stringify(hasil.catalogueEvidence.search));
+
+  // Keadaan yang dibawa keluar hanya tiga, dan ketiganya token.
+  assert.ok(["empty", "non-empty", "unknown"].includes(hasil.catalogueEvidence.search.state));
+});
+
+test("PENCARIAN: teks yang diketik tidak sampai ke snapshot maupun alasan coverage", async () => {
+  // Jalur lengkap: collectProducts -> coverage + coverageReasons. `coverageReasons`
+  // DICATAT service.js (SERVICE_CATALOGUE_NOT_STORED `why=`), jadi kalau teks
+  // pencarian bisa menyelip ke sana, ia sampai ke log dukungan.
+  const p = page({ total: 5, search: KANARI_CARI });
+  const snap = await collectProducts(p, { remaining: () => 12_000 });
+
+  const utuh = JSON.stringify(snap);
+  assert.ok(!utuh.includes("KANARI_CARI_7b2e"), "teks pencarian masuk snapshot: " + utuh);
+  assert.ok(!utuh.includes("kacang atom rasa pedas"), "teks pencarian masuk snapshot");
+
+  // Pencarian aktif tetap TERDETEKSI - fail-closed-nya tidak dikorbankan demi privasi.
+  assert.notEqual(snap.coverage, COVERAGE.FULL, "daftar tersaring pencarian tidak boleh full");
+  assert.ok((snap.coverageReasons || []).some((r) => /^scope-/.test(r)),
+    "alasannya harus menyebut scope: " + JSON.stringify(snap.coverageReasons));
+  // Dan alasannya token, bukan kalimat berisi apa yang diketik.
+  for (const r of snap.coverageReasons || []) {
+    assert.match(r, /^[a-z0-9-]+$/, "alasan coverage harus token: " + r);
+  }
+});
+
+test("PENCARIAN: sumber pembacaan memang nilai input, dan hanya kekosongannya yang disimpan", () => {
+  // Penjaga bentuk kode: `raw` dibaca, lalu hanya dibandingkan dengan "".
+  // Kalau suatu saat ada yang menyimpannya (`value: raw`), ini merah.
+  const src = readProductsInPage.toString();
+  const potong = src.slice(src.indexOf("--- pencarian"), src.indexOf("--- filter"));
+  assert.ok(potong.length > 50, "potongan pencarian harus ditemukan");
+  assert.ok(/raw\.trim\(\) === ""/.test(potong), "kekosongan harus diperiksa: " + potong);
+  assert.ok(!/value:\s*raw/.test(potong), "nilai mentah tidak boleh disimpan");
+  assert.ok(!/text:\s*raw/.test(potong), "nilai mentah tidak boleh disimpan");
+  // `raw` boleh DISEBUT di dalam objek search - `raw.trim() === ""` justru
+  // pemeriksaan kekosongan yang kita inginkan. Yang dilarang adalah
+  // MENYIMPANNYA sebagai nilai sebuah field.
+  assert.ok(!/:\s*raw\s*[,}]/.test(potong), "raw tidak boleh disimpan sebagai nilai field: " + potong);
+  assert.ok(!/:\s*raw\.(?!trim)/.test(potong), "hanya kekosongan raw yang boleh dipakai: " + potong);
+});
