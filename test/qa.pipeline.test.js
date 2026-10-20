@@ -84,12 +84,49 @@ test("pipeline: label scene Q&A bukan scene OBS dan bukan PAX", () => {
   assert.notEqual(QA_SCENE, "MAIN");
 });
 
-test("pipeline: minta snapshot dengan ambang kutip dan refresh if-stale", async () => {
-  const r = rig();
-  await r.tanya("harga garuda atom berapa");
-  assert.equal(r.baca.length, 1);
-  assert.equal(r.baca[0].maxAgeMs, 30_000);
-  assert.equal(r.baca[0].refresh, "if-stale");
+test("pipeline: mode baca dipilih menurut cara resolusi", async () => {
+  // Pertanyaan NAMA membaca refresh="never": penyegaran ringan menghasilkan
+  // coverage="viewport", yang MENURUNKAN snapshot full yang baru dihasilkan
+  // sapuan latar - dan resolusi judul lalu selalu gagal. Terukur: 0% pertanyaan
+  // nama terjawab pada LIVE 10 menit sebelum pemisahan ini.
+  const nama = rig();
+  await nama.tanya("harga garuda atom berapa");
+  assert.equal(nama.baca.length, 1);
+  assert.equal(nama.baca[0].maxAgeMs, 30_000);
+  assert.equal(nama.baca[0].refresh, "never", "pertanyaan nama tidak boleh menurunkan cakupan");
+
+  // Pertanyaan NOMOR tetap memakai penyegaran ringan: bagi nomor, viewport
+  // memang cukup.
+  const nomor = rig();
+  await nomor.tanya("berapa yang nomor 1");
+  assert.equal(nomor.baca[0].refresh, "if-stale");
+});
+
+test("pipeline: pertanyaan NAMA yang gagal cakupan meminta sapuan penuh di latar", async () => {
+  const r = rig({ snapshot: { ...FULL, coverage: "viewport", source: "refresh" } });
+  const h = await r.tanya("harga garuda atom berapa");
+  assert.equal(h.reason, "coverage-insufficient");
+  // dua pembacaan: yang pertama "never", yang kedua permintaan sapuan "full"
+  assert.equal(r.baca.length, 2, JSON.stringify(r.baca));
+  assert.equal(r.baca[1].refresh, "full");
+  assert.equal(r.kirim.length, 0, "tidak ada balasan tertunda");
+});
+
+test("pipeline: pertanyaan NAMA yang gagal kesegaran juga meminta sapuan penuh", async () => {
+  const r = rig({ snapshot: { ok: false, error: "product-snapshot-stale", ageMs: 45_000 } });
+  const h = await r.tanya("harga garuda atom berapa");
+  assert.equal(h.reason, "product-snapshot-stale");
+  assert.equal(r.baca.length, 2);
+  assert.equal(r.baca[1].refresh, "full");
+});
+
+test("pipeline: pertanyaan NOMOR TIDAK meminta sapuan penuh", async () => {
+  // Nomor tidak butuh daftar lengkap, jadi tidak ada alasan menggulir halaman
+  // yang dipakai bersama jalur pin.
+  const r = rig({ snapshot: { ok: false, error: "product-snapshot-stale", ageMs: 45_000 } });
+  await r.tanya("berapa yang nomor 1");
+  assert.equal(r.baca.length, 1, "nol permintaan sapuan");
+  assert.ok(!r.baca.some((b) => b.refresh === "full"));
 });
 
 // --- yang TIDAK boleh memicu Q&A -----------------------------------------
@@ -511,14 +548,43 @@ test("kuota: jendela MELUNCUR, bukan ember menit kalender", () => {
   assert.equal(q.allow().ok, false, "ember menit akan membiarkan ini lolos");
 });
 
-test("kuota: urutan gerbang - kuota diperiksa SESUDAH jeda, SEBELUM kirim", () => {
+test("admisi: urutan - reservasi SEBELUM await, commit SESUDAH hasil", () => {
   const kode = kodeSaja(fs.readFileSync(path.join(__dirname, "..", "qa", "price-qa.js"), "utf8"));
-  const iDedupe = kode.indexOf("dedupe.allow");
-  const iQuota = kode.indexOf("quota.allow");
-  const iSend = kode.indexOf("requestComment({");
-  const iNoteD = kode.indexOf("dedupe.note");
-  const iNoteQ = kode.indexOf("quota.note");
-  assert.ok(iDedupe > 0 && iQuota > iDedupe, "kuota sesudah jeda per-produk");
-  assert.ok(iSend > iQuota, "kirim sesudah kuota");
-  assert.ok(iNoteD > iSend && iNoteQ > iSend, "KEDUA pencatat sesudah kirim");
+  const iDedupe = kode.indexOf("dedupe.reserve");
+  const iQuota = kode.indexOf("quota.reserve");
+  const iAwait = kode.indexOf("await requestComment");
+  const iKunci = kode.indexOf("kunciSemua()");
+  assert.ok(iDedupe > 0, "jeda per-produk harus DIPESAN");
+  assert.ok(iQuota > iDedupe, "kuota dipesan sesudah jeda per-produk");
+  assert.ok(iAwait > iQuota, "KEDUA reservasi harus terjadi SEBELUM await");
+  assert.ok(iKunci > iAwait, "commit sesudah hasil kiriman diketahui");
+});
+
+test("admisi: jalur allow() lama TIDAK lagi dipakai produksi", () => {
+  // allow() adalah periksa-lalu-bertindak: ia dipertahankan untuk diagnostik
+  // dan tes, tapi jalur produksi harus memakai reserve() - hanya reserve()
+  // yang menutup celah balapan.
+  const kode = kodeSaja(fs.readFileSync(path.join(__dirname, "..", "qa", "price-qa.js"), "utf8"));
+  assert.ok(!kode.includes("dedupe.allow"), "produksi tidak boleh memakai dedupe.allow");
+  assert.ok(!kode.includes("quota.allow"), "produksi tidak boleh memakai quota.allow");
+  assert.ok(!kode.includes("dedupe.note"), "produksi tidak boleh memakai dedupe.note");
+  assert.ok(!kode.includes("quota.note"), "produksi tidak boleh memakai quota.note");
+});
+
+test("admisi: SETIAP jalur keluar sesudah reservasi melepas atau mengunci", () => {
+  // Syarat 9: tidak boleh ada kebocoran reservasi.
+  const kode = kodeSaja(fs.readFileSync(path.join(__dirname, "..", "qa", "price-qa.js"), "utf8"));
+  const iDedupe = kode.indexOf("dedupe.reserve");
+  const sesudah = kode.slice(iDedupe);
+  // setiap `return` sesudah titik reservasi harus didahului lepasSemua/
+  // kunciSemua, ATAU berupa penolakan reservasi itu sendiri
+  const baris = sesudah.split("\n");
+  let pelindung = 0;
+  for (const l of baris) {
+    if (/lepasSemua\(\)|kunciSemua\(\)/.test(l)) pelindung += 1;
+  }
+  assert.ok(pelindung >= 5, `jalur keluar terlindungi harus banyak, ada ${pelindung}`);
+  // dan catch TERLUAR juga melepas
+  const iCatchTerluar = kode.lastIndexOf("} catch (err) {");
+  assert.ok(kode.slice(iCatchTerluar).includes("lepasSemua()"), "catch terluar harus melepas reservasi");
 });

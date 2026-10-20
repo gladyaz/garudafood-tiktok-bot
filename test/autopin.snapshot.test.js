@@ -41,7 +41,11 @@ const MENTAH = (n, title, extra = {}) => ({
   ...extra,
 });
 
-const FULL = (titles) => ({
+// Bentuknya mengikuti collectProducts PRODUKSI, termasuk `coverage` dan
+// `completeness`. Fake yang tidak membawa coverage akan ditolak toko katalog
+// sebagai unknown-coverage - dan itu memang yang seharusnya terjadi: kalau
+// fake di sini mengarang bentuk, yang diuji bukan jalur yang dipakai produksi.
+const FULL = (titles, extra = {}) => ({
   products: titles.map((t, i) => withPriceFields(MENTAH(i + 1, t))),
   livePinButtonsOnPage: titles.length,
   invalidRows: 0,
@@ -49,6 +53,20 @@ const FULL = (titles) => ({
   stoppedEarly: false,
   ranOutOfTime: false,
   numberInputsOnPage: titles.length,
+  coverage: "full",
+  completeness: {
+    scope: "clean",
+    declaredTotal: titles.length,
+    declaredTotalStable: true,
+    positions: titles.map((_, i) => i + 1),
+    positionsCoverTotal: true,
+    contradictoryPositions: 0,
+    scrollerStable: true,
+    exhaustedScrolls: false,
+    bottomReached: false,
+    rowsSane: true,
+  },
+  ...extra,
 });
 
 const VIEWPORT = (titles) => ({
@@ -154,14 +172,14 @@ test("snapshot: alias price/stock lama tetap terbawa", async () => {
 test("snapshot: daftar yang DIPOTONG anggaran tidak pernah disimpan", async () => {
   // Daftar yang dipotong tidak boleh pernah ditandai "full": ketidakhadiran
   // produk di dalamnya bukan bukti produk itu tidak ada.
-  const { svc } = rig({ full: { ...FULL(["Produk Satu"]), ranOutOfTime: true } });
+  const { svc } = rig({ full: FULL(["Produk Satu"], { ranOutOfTime: true, coverage: "viewport" }) });
   const r = await svc.handlePin({ scene: "PAX-1", productKey: "produk satu", playId: 1 });
   assert.equal(r.reason, "collect-incomplete-budget");
   assert.equal(svc.catalogue.state().has, false, "daftar tidak lengkap tidak boleh tersimpan");
 });
 
 test("snapshot: daftar yang berhenti dini tidak pernah disimpan", async () => {
-  const { svc } = rig({ full: { ...FULL(["Produk Satu"]), stoppedEarly: true } });
+  const { svc } = rig({ full: FULL(["Produk Satu"], { stoppedEarly: true, coverage: "viewport" }) });
   await svc.handlePin({ scene: "PAX-1", productKey: "produk satu", playId: 1 });
   assert.equal(svc.catalogue.state().has, false);
 });
@@ -318,11 +336,26 @@ test("kepemilikan: bot tidak pernah memuat Puppeteer maupun discovery Controller
 // CAKUPAN: penyegaran ringan menandai dirinya viewport
 // ---------------------------------------------------------------------------
 
-test("cakupan: warmUp mengisi snapshot awal sebagai viewport, bukan full", async () => {
+test("cakupan: warmUp membaca viewport LALU satu sapuan penuh", async () => {
+  // Sejak v0.3.0 warmUp melakukan keduanya: satu lintasan viewport supaya
+  // pembaca pertama tidak menemukan katalog kosong, LALU satu sapuan penuh
+  // supaya pertanyaan berbasis nama produk bisa dijawab sejak awal run - bukan
+  // hanya 30 detik sesudah pin pertama.
   const { svc, jejak } = rig();
   await svc.warmUp();
-  assert.equal(jejak.once, 1, "warmUp membaca satu lintasan");
-  assert.equal(jejak.collect, 0, "warmUp TIDAK melakukan sapuan gulir penuh");
+  assert.equal(jejak.once, 1, "satu lintasan viewport");
+  assert.equal(jejak.collect, 1, "satu sapuan penuh");
+  const r = await svc.handleProducts();
+  assert.equal(r.ok, true);
+  assert.equal(r.coverage, "full", "sapuan penuh menang atas viewport");
+  assert.equal(r.source, "full-warmup");
+});
+
+test("cakupan: sapuan warmUp yang DIPOTONG meninggalkan viewport, bukan full", async () => {
+  // Hari yang buruk: sapuan tidak selesai. Daftar terpotong TIDAK boleh
+  // ditandai full, dan snapshot viewport dari lintasan pertama tetap berlaku.
+  const { svc } = rig({ full: FULL(["Produk Satu"], { ranOutOfTime: true, coverage: "viewport" }) });
+  await svc.warmUp();
   const r = await svc.handleProducts();
   assert.equal(r.ok, true);
   assert.equal(r.coverage, "viewport");
@@ -443,6 +476,60 @@ test("serialisasi: penyegaran katalog tidak tumpang-tindih dengan pin", async ()
   await pin;
   await baca;
 
+  // Sesudah pin selesai, ia sudah menerbitkan snapshot FULL yang lebih baru
+  // daripada permintaan penyegaran ini - jadi pembacaan ringannya memang
+  // MUBAZIR dan dilewati. Yang dibuktikan tes ini tetap sama: ia tidak pernah
+  // menyelip di tengah pin. Bahwa ia juga tidak jalan SESUDAHNYA adalah
+  // perbaikan, bukan kemunduran.
+  assert.ok(!urutan.includes("refresh:baca"), "penyegaran mubazir tidak perlu membaca halaman: " + urutan.join(" > "));
+  assert.ok(urutan.indexOf("pin:klik") >= 0, "pin tetap mengklik: " + urutan.join(" > "));
+});
+
+test("serialisasi: TANPA full yang lebih baru, penyegaran tetap menunggu pin lalu jalan", async () => {
+  // Pasangan tes di atas: di sini pin TIDAK menerbitkan full (coverage viewport,
+  // mis. daftar yang tersaring), jadi penyegaran ringan tidak mubazir. Yang
+  // diuji adalah URUTANNYA - ia harus jalan SESUDAH klik pin, tidak menyelip.
+  const urutan = [];
+  let lepas = null;
+  let t = 1_000_000;
+  const page = { url: () => CONSOLE, isClosed: () => false, bringToFront: async () => {} };
+  const svc = createService({
+    config: CONFIG,
+    deps: {
+      launchBrowser: async () => ({ id: "fake" }),
+      getPage: async () => page,
+      openConsole: async () => ({ url: CONSOLE, settled: true, readyMs: 1 }),
+      closeBrowser: async () => {},
+      readIdentity: async () => ["agen_mulia_abadi"],
+      collectProducts: async () => {
+        urutan.push("pin:collect-mulai");
+        if (!lepas) await new Promise((r) => { lepas = r; });
+        urutan.push("pin:collect-selesai");
+        return FULL(["Produk Satu"], { coverage: "viewport" });
+      },
+      readProductsOnce: async () => {
+        urutan.push("refresh:baca");
+        return VIEWPORT(["Produk Satu"]);
+      },
+      pinProductByTitle: async (_p, key) => { urutan.push("pin:klik"); return { ok: true, title: key }; },
+      readPinState: async () => ({ found: true, text: "Unpin", disabled: false, buttons: 1 }),
+      sleep: async () => {},
+      now: () => t,
+    },
+  });
+
+  const pin = svc.handlePin({ scene: "PAX-1", productKey: "produk satu", playId: 1 });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(typeof lepas, "function", "pin harus sedang mengoleksi produk");
+
+  const baca = svc.handleProducts({ maxAgeMs: 0 });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(!urutan.includes("refresh:baca"), "pembacaan TIDAK boleh menyelip saat pin bekerja");
+
+  lepas();
+  await pin;
+  await baca;
+
   const iKlik = urutan.indexOf("pin:klik");
   const iBaca = urutan.indexOf("refresh:baca");
   assert.ok(iKlik >= 0 && iBaca > iKlik, "penyegaran harus menunggu pin selesai: " + urutan.join(" > "));
@@ -463,7 +550,7 @@ test("serialisasi: anggaran penyegaran jauh di bawah anggaran pin", () => {
 
 test("health: melaporkan snapshot tanpa membawa produknya", async () => {
   const { svc, maju } = rig();
-  assert.deepEqual(svc.healthPayload().productSnapshot, { has: false });
+  assert.deepEqual(svc.healthPayload().productSnapshot, { has: false, refusals: [] });
   await svc.handlePin({ scene: "PAX-1", productKey: "produk satu", playId: 1 });
   maju(3_000);
   const h = svc.healthPayload();
@@ -558,7 +645,11 @@ test("maxAgeMs=0 TIDAK BISA dipenuhi, dan itu keputusan - bukan kecelakaan", asy
   // dan permintaan yang masuk akal pada snapshot yang sama BERHASIL
   const wajar = await svc.handleProducts({ maxAgeMs: 1_000 });
   assert.equal(wajar.ok, true);
-  assert.equal(wajar.coverage, "viewport");
+  // DULU "viewport": penyegaran ringan yang dipicu maxAgeMs=0 menimpa snapshot
+  // full milik warmUp. Itu BALAPANNYA, bukan perilaku yang diinginkan - satu
+  // pertanyaan bernomor mematikan jalur nama. Penjaga would-downgrade sekarang
+  // menahannya selama full-nya masih bisa dikutip.
+  assert.equal(wajar.coverage, "full", "viewport tidak boleh menurunkan full yang masih segar");
 });
 
 test("rute: tanpa snapshot -> ok:false tanpa produk", async () => {

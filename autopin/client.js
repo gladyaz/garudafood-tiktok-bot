@@ -84,7 +84,7 @@ function createCatalogueReader({ url, timeoutMs = CATALOGUE_TIMEOUT_MS, fetchFn,
 
     const qs = [];
     if (Number.isFinite(Number(maxAgeMs))) qs.push(`maxAgeMs=${Number(maxAgeMs)}`);
-    if (refresh === "never" || refresh === "if-stale") qs.push(`refresh=${refresh}`);
+    if (refresh === "never" || refresh === "if-stale" || refresh === "full") qs.push(`refresh=${refresh}`);
     const full = qs.length ? `${target}?${qs.join("&")}` : target;
 
     const controller = new AbortController();

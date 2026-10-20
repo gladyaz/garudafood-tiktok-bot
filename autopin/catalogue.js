@@ -39,7 +39,14 @@
 const QUOTE_FRESH_MS = 30_000;
 const HARD_STALE_MS = 120_000;
 
-const COVERAGE = { FULL: "full", VIEWPORT: "viewport" };
+// Kosakata cakupan, didefinisikan SATU KALI di sini dan diimpor oleh
+// autopin/products.js. Dua definisi untuk hal yang sama adalah cara paling
+// mudah membuat lapisan pembaca dan lapisan penyimpan menyimpang.
+//
+// UNKNOWN sengaja TIDAK BISA disimpan: lihat put(). Ia berarti "barisnya
+// sendiri tidak boleh dipercaya", dan invarian penyimpanan ini adalah apa pun
+// yang ada di dalamnya boleh dikutip kalau masih segar.
+const COVERAGE = { FULL: "full", VIEWPORT: "viewport", UNKNOWN: "unknown" };
 
 // Bentuk produk yang keluar dari snapshot. Sempit dengan sengaja, dengan alasan
 // yang sama seperti toPublicProduct di Controller: priceNodes, pinClass, icons,
@@ -77,18 +84,75 @@ function toSnapshotProduct(p) {
 // nowFn disuntikkan supaya kebijakan kesegaran bisa diuji tanpa menunggu nyata.
 function createCatalogueStore({ now = () => Date.now() } = {}) {
   let last = null;
+  const refusals = [];
+
+  // `at` DIOPER, tidak dibaca ulang dari jam. Setiap pembacaan jam tambahan
+  // adalah efek samping yang terlihat oleh pemanggil - tes memakai jam
+  // pencacah (now: () => t += 1), dan put() yang membaca jam beberapa kali
+  // menggeser umur yang diukur pemanggil berikutnya.
+  function tolak(reason, at, extra) {
+    refusals.push({ reason, at });
+    if (refusals.length > 20) refusals.shift();
+    return Object.assign({ ok: false, reason }, extra || {});
+  }
 
   // Dipanggil dari tempat service MEMANG sudah membaca katalog. Tidak boleh
   // pernah melempar: menyimpan snapshot tidak boleh bisa menggagalkan pin.
-  function put({ products, coverage, source } = {}) {
-    if (!Array.isArray(products)) return { ok: false, reason: "products-not-array" };
+  //
+  // --------------------------------------------------------------------------
+  // observedAt: KAPAN HALAMANNYA DIBACA, bukan kapan hasilnya diterbitkan
+  //
+  // Dulu capturedAt = now() pada saat put(). Untuk sapuan penuh yang memakan 6
+  // detik, itu MELEBIH-LEBIHKAN kesegaran sebesar seluruh durasi pembacaan, dan
+  // untuk task yang mengantre, sebesar seluruh waktu tunggunya. Kesegaran
+  // sekarang selalu diukur dari pengamatan.
+  //
+  // --------------------------------------------------------------------------
+  // KEBIJAKAN PENERBITAN
+  //
+  // Dua penolakan, dan keduanya menjawab satu balapan yang sudah terbukti bisa
+  // terjadi: penyegaran ringan yang mengantre di belakang sapuan penuh, lalu
+  // menimpa hasil sapuan itu dengan pembacaan viewport yang lebih tua nilainya.
+  //
+  //   out-of-order            pengamatan yang LEBIH TUA dari yang tersimpan
+  //                           tidak boleh menang hanya karena datang terakhir.
+  //   would-downgrade         viewport tidak boleh menggantikan full yang MASIH
+  //                           BISA DIKUTIP. Di dalam jendela kutip keduanya sah
+  //                           menurut kebijakan, jadi yang dipilih adalah yang
+  //                           bisa menjawab lebih banyak - membuang cakupan
+  //                           mematikan jalur nama sepenuhnya, sementara
+  //                           membuang <=30 detik umur harga tidak mematikan
+  //                           apa pun yang pernah dijanjikan.
+  //
+  // KESEGARAN TETAP MENANG. Penjaga downgrade hanya menyala selagi full yang
+  // tersimpan masih di dalam QUOTE_FRESH_MS. Begitu ia basi, pengamatan
+  // viewport yang benar-benar baru menggantikannya dan hasilnya dilaporkan
+  // apa adanya sebagai coverage="viewport".
+  function put({ products, coverage, source, observedAt } = {}) {
+    // SATU pembacaan jam untuk seluruh pemanggilan. Lihat catatan di tolak().
+    const sekarang = now();
+    if (!Array.isArray(products)) return tolak("products-not-array", sekarang);
     if (coverage !== COVERAGE.FULL && coverage !== COVERAGE.VIEWPORT) {
       // Cakupan yang tidak jelas ditolak, bukan ditebak: "full" yang salah
       // membuat ketidakhadiran produk terlihat seperti bukti produk tidak ada.
-      return { ok: false, reason: "unknown-coverage" };
+      // COVERAGE.UNKNOWN ikut tertolak di sini, dan itu disengaja.
+      return tolak("unknown-coverage", sekarang);
     }
+    const n = Number(observedAt);
+    const at = Number.isFinite(n) && n > 0 ? n : sekarang;
+
+    if (last) {
+      if (at < last.capturedAt) {
+        return tolak("out-of-order", sekarang, { storedAt: last.capturedAt, observedAt: at });
+      }
+      const umurTersimpan = Math.max(0, sekarang - last.capturedAt);
+      if (last.coverage === COVERAGE.FULL && coverage === COVERAGE.VIEWPORT && umurTersimpan <= QUOTE_FRESH_MS) {
+        return tolak("would-downgrade", sekarang, { storedCoverage: last.coverage, storedAgeMs: umurTersimpan });
+      }
+    }
+
     last = {
-      capturedAt: now(),
+      capturedAt: at,
       coverage,
       source: typeof source === "string" && source ? source : "unknown",
       products: products.map(toSnapshotProduct),
@@ -156,11 +220,22 @@ function createCatalogueStore({ now = () => Date.now() } = {}) {
     };
   }
 
+  // Apakah ada snapshot FULL yang masih bisa dikutip dan TIDAK lebih tua dari
+  // `since`? Dipakai jalur penyegaran ringan sesudah ia dapat giliran: kalau
+  // sudah ada yang lebih baru dan lebih lengkap, pembacaannya memang mubazir.
+  function hasFreshFullSince(since) {
+    if (!last || last.coverage !== COVERAGE.FULL) return false;
+    const n = Number(since);
+    if (Number.isFinite(n) && last.capturedAt < n) return false;
+    return ageOf(last) <= QUOTE_FRESH_MS;
+  }
+
   // Diagnostik untuk /health. Tidak pernah membawa produk.
   function state() {
-    if (!last) return { has: false };
+    if (!last) return { has: false, refusals: refusals.slice(-5) };
     return {
       has: true,
+      refusals: refusals.slice(-5),
       capturedAt: last.capturedAt,
       ageMs: ageOf(last),
       coverage: last.coverage,
@@ -170,7 +245,7 @@ function createCatalogueStore({ now = () => Date.now() } = {}) {
     };
   }
 
-  return { put, read, state, needsRefresh };
+  return { put, read, state, needsRefresh, hasFreshFullSince };
 }
 
 module.exports = {

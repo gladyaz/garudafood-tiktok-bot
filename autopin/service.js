@@ -71,6 +71,27 @@ const PIN_DEDUPE_MEMORY = 1_000;
 // waktu sebelum setiap tahap, bukan memakai withDeadline.
 const CATALOGUE_REFRESH_DEADLINE_MS = 1_500;
 
+// --- SAPUAN KATALOG PENUH untuk Product Q&A ---------------------------------
+//
+// Resolusi lewat JUDUL menuntut coverage="full", dan satu-satunya yang
+// menghasilkannya adalah koleksi bergulir. Tanpa sapuan terjadwal, pertanyaan
+// berbasis nama produk hanya bisa dijawab 30 detik sesudah tiap pin - terukur
+// 4 dari 61 titik waktu pada LIVE 10 menit dengan satu pin.
+//
+// Sapuan ini BUKAN periodik. Ia diminta ON-DEMAND oleh jalur Q&A saat sebuah
+// pertanyaan nama ditolak karena cakupan, dan dijaga tiga lapis:
+//
+//   1. SINGLE-FLIGHT   paling banyak satu sapuan berjalan; pertanyaan lain
+//                      menempel pada yang sedang berjalan, tidak memulai yang baru
+//   2. JEDA LANTAI     minimal 20 detik antar sapuan, jadi banjir komentar
+//                      penonton tidak bisa menjadi badai gulir
+//   3. ANGGARAN        sapuan memotong dirinya sendiri; daftar terpotong TIDAK
+//                      PERNAH disimpan sebagai "full"
+//
+// Dan yang terpenting: AUTOPIN MENANG. Lihat pinPending di bawah.
+const FULL_REFRESH_BUDGET_MS = 6_000;
+const FULL_REFRESH_MIN_INTERVAL_MS = 20_000;
+
 function isExpectedConsole(actualUrl, consoleUrl) {
   try {
     const a = new URL(actualUrl);
@@ -140,6 +161,25 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   // Snapshot katalog produk. Diisi dari pembacaan yang service MEMANG sudah
   // lakukan; lihat autopin/catalogue.js untuk kebijakan kesegarannya.
   const catalogue = createCatalogueStore({ now: () => d.now() });
+
+  // --- PRIORITAS: pekerjaan pin SUNGGUHAN mengalahkan sapuan Q&A -----------
+  //
+  // Dinaikkan di PINTU MASUK handlePin, yaitu SEBELUM pin memasuki runExclusive.
+  // Letaknya itu yang membuat ini pembatalan sungguhan, bukan sekadar "nanti
+  // kebagian giliran": sapuan yang sedang berjalan membaca penanda ini dari
+  // dalam fungsi `remaining`-nya, memotong dirinya sendiri di gelombang gulir
+  // berikutnya (~350-400 ms), lalu melepas giliran browser.
+  //
+  // runExclusive TIDAK punya preemption. Kalau penanda ini hanya dibaca dari
+  // dalam task yang mengantre, pin akan tetap menunggu sapuan selesai penuh.
+  let pinPending = 0;
+
+  // Sapuan penuh yang sedang berjalan (single-flight) + jam jeda lantai.
+  let fullRefresh = null;
+  let lastFullAttemptAt = -Infinity;
+  // Dinyalakan stop(): sapuan harus berhenti dan tidak boleh dimulai lagi.
+  let stopping = false;
+
   let browser = null;
   let page = null;
     let chatPage = null;
@@ -352,7 +392,11 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     // koleksi untuk KONFIRMASI, bukan yang ini.
     const sebelumCollect = d.now();
     const snapshot = await stage("collect-before", () => d.collectProducts(p, { remaining: left }));
-    const collectMs = d.now() - sebelumCollect;
+    // Saat pembacaan SELESAI. Inilah yang jadi capturedAt snapshot, bukan saat
+    // ia diterbitkan: collect 6 detik yang distempel pada saat put() akan
+    // melebih-lebihkan kesegarannya sebesar seluruh durasi pembacaan.
+    const collectedAt = d.now();
+    const collectMs = collectedAt - sebelumCollect;
     // Daftar yang dipotong anggaran TIDAK boleh dipakai untuk resolusi: produk
     // kedua yang cocok bisa belum terlihat, dan itu mengubah penolakan "ambigu"
     // menjadi klik ke produk yang kebetulan ketemu lebih dulu.
@@ -375,9 +419,34 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     //
     // Dibungkus try/catch: menyimpan snapshot tidak boleh pernah bisa
     // menggagalkan pin.
+    // coverage DATANG DARI KOLEKTOR, tidak disimpulkan di sini.
+    //
+    // Dulu baris ini menyimpulkan "full" dari dua flag negatif
+    // (ranOutOfTime/stoppedEarly). Kesimpulan itu terbukti salah pada tiga
+    // jalan keluar: kuota gelombang habis, container gulir keliru, dan daftar
+    // yang tersaring kotak pencarian/filter. Sekarang collectProducts yang
+    // menyaksikan dan memutuskan; di sini tinggal menyimpan apa yang disaksikan.
+    //
+    // coverage="unknown" ditolak oleh catalogue.put() dengan sengaja - barisnya
+    // tidak boleh dipercaya, jadi ia tidak boleh masuk penyimpanan sama sekali.
+    // Gerbang "jangan simpan yang dipotong" DIPERTAHANKAN apa adanya: daftar
+    // yang dipotong anggaran atau dihentikan dini tidak masuk penyimpanan sama
+    // sekali, sama seperti sebelum v0.3.0. Yang berubah hanya LABELNYA - dulu
+    // disimpulkan di sini, sekarang disaksikan oleh kolektor.
     if (snapshot.ranOutOfTime !== true && snapshot.stoppedEarly !== true) {
       try {
-        catalogue.put({ products: snapshot.products, coverage: COVERAGE.FULL, source: "pin-collect" });
+        const simpan = catalogue.put({
+          products: snapshot.products,
+          coverage: snapshot.coverage,
+          source: "pin-collect",
+          observedAt: collectedAt,
+        });
+        if (!simpan.ok) {
+          log("SERVICE_CATALOGUE_NOT_STORED", {
+            source: "pin-collect", reason: simpan.reason, coverage: snapshot.coverage,
+            why: (snapshot.coverageReasons || []).join(",").slice(0, 80),
+          });
+        }
       } catch (e) {
         log("SERVICE_CATALOGUE_STORE_FAILED", { detail: String(e && e.message).slice(0, 120) });
       }
@@ -481,6 +550,24 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     }
     // Jam anggaran mulai DI SINI, sebelum antre. Lihat guardedPin.
     const acceptedAt = d.now();
+
+    // PRIORITAS: ditandai SEKARANG, sebelum gerbang apa pun dan sebelum
+    // runExclusive. Sapuan katalog Q&A yang sedang berjalan membaca penanda ini
+    // dari dalam fungsi `remaining`-nya dan memotong dirinya sendiri di
+    // gelombang gulir berikutnya, jadi giliran browser lepas untuk pin ini
+    // dalam ~350-400 ms - bukan sesudah sapuan selesai penuh.
+    //
+    // Dinaikkan di luar try supaya SETIAP jalur keluar di bawah ini melewati
+    // finally dan menurunkannya kembali.
+    pinPending += 1;
+    try {
+      return await handlePinInner({ scene, productKey, playId, sessionId, acceptedAt });
+    } finally {
+      pinPending -= 1;
+    }
+  }
+
+  async function handlePinInner({ scene, productKey, playId, sessionId, acceptedAt }) {
     const id = Number.isFinite(playId) ? playId : 0;
     if (isStale(sessionId, id)) return { ok: false, reason: "stale" };
     // Satu pemutaran = satu pin. Permintaan kedua untuk playId yang sama bukan
@@ -573,10 +660,136 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     return page && !page.isClosed() ? page : null;
   }
 
+  // Sapuan katalog PENUH, bergulir, dengan tiga penjaga dan satu pembatalan.
+  //
+  // Mengembalikan segera: { ok:false, reason } kalau ditolak, atau
+  // { ok:true, reason:"scheduled"|"joined", task } kalau berjalan. Pemanggil
+  // di jalur chat TIDAK PERNAH menunggu `task` - tidak ada balasan tertunda.
+  function scheduleFullRefresh(trigger = "qa") {
+    if (stopping) return { ok: false, reason: "stopping" };
+    // SINGLE-FLIGHT: banyak pertanyaan penonton menempel pada sapuan yang
+    // sedang berjalan, tidak memulai sapuan kedua.
+    if (fullRefresh) return { ok: true, reason: "joined", task: fullRefresh };
+    // AUTOPIN MENANG: jangan mulai apa pun kalau pin sedang menunggu/berjalan.
+    if (pinPending > 0) return { ok: false, reason: "pin-pending" };
+
+    const t = d.now();
+    const sejak = t - lastFullAttemptAt;
+    if (sejak < FULL_REFRESH_MIN_INTERVAL_MS) {
+      return { ok: false, reason: "too-soon", retryAfterMs: FULL_REFRESH_MIN_INTERVAL_MS - sejak };
+    }
+    const p = pageIfOpen();
+    if (!p) return { ok: false, reason: "page-not-open" };
+    if (!isExpectedConsole(p.url(), config.consoleUrl)) return { ok: false, reason: "unexpected-page" };
+
+    // Jam jeda lantai dimulai di SINI, saat dijadwalkan - bukan saat selesai.
+    // Dengan begitu sapuan yang gagal atau dibatalkan pun tidak bisa memicu
+    // percobaan ulang beruntun.
+    lastFullAttemptAt = t;
+
+    const task = runExclusive(async () => {
+      // Diperiksa LAGI di dalam antrean: keadaan bisa berubah selama menunggu.
+      if (stopping) return { ok: false, reason: "stopping" };
+      if (pinPending > 0) return { ok: false, reason: "pin-pending" };
+      const hidup = pageIfOpen();
+      if (!hidup) return { ok: false, reason: "page-not-open" };
+      if (!isExpectedConsole(hidup.url(), config.consoleUrl)) return { ok: false, reason: "unexpected-page" };
+
+      const mulai = d.now();
+      const deadline = mulai + FULL_REFRESH_BUDGET_MS;
+      // SATU fungsi, DUA tugas: anggaran waktu dan pembatalan.
+      //
+      // collectProducts memeriksanya di puncak setiap gelombang gulir dan
+      // berhenti SENDIRI dengan ranOutOfTime=true - bukan ditinggalkan di
+      // tengah jalan. Operasi yang ditinggalkan tetap berjalan di latar dan
+      // bisa tumpang tindih dengan pin berikutnya; yang berhenti sendiri
+      // selesai rapi dan melaporkan bahwa daftarnya tidak lengkap.
+      const remaining = () => {
+        if (stopping || pinPending > 0) return 0;
+        return deadline - d.now();
+      };
+
+      try {
+        const snap = await d.collectProducts(hidup, { remaining });
+        const sweptAt = d.now();
+        const ms = sweptAt - mulai;
+        // Daftar yang DIPOTONG tidak boleh pernah ditandai "full": ketidakhadiran
+        // produk di dalamnya bukan bukti produk itu tidak ada, dan resolusi
+        // judul bersandar pada keunikan di dalam daftar LENGKAP.
+        if (snap.ranOutOfTime === true || snap.stoppedEarly === true) {
+          const sebab = stopping ? "stopping" : (pinPending > 0 ? "pin-preempted" : "budget");
+          log("SERVICE_CATALOGUE_FULL_ABORTED", {
+            trigger, cause: sebab, ms, passes: snap.passes, products: snap.products.length,
+            note: "daftar tidak lengkap: TIDAK disimpan sebagai full",
+          });
+          return { ok: false, reason: `aborted-${sebab}`, ms, passes: snap.passes };
+        }
+        if (snap.products.length === 0) {
+          log("SERVICE_CATALOGUE_FULL_EMPTY", { trigger, ms, passes: snap.passes });
+          return { ok: false, reason: "empty", ms };
+        }
+        // Lagi: coverage dari KOLEKTOR. Sapuan yang selesai tanpa terpotong pun
+        // belum tentu lengkap - daftar yang tersaring filter juga "selesai".
+        const simpan = catalogue.put({
+          products: snap.products,
+          coverage: snap.coverage,
+          source: `full-${trigger}`,
+          observedAt: sweptAt,
+        });
+        if (!simpan.ok) {
+          log("SERVICE_CATALOGUE_NOT_STORED", {
+            source: `full-${trigger}`, reason: simpan.reason, coverage: snap.coverage,
+            why: (snap.coverageReasons || []).join(",").slice(0, 80),
+          });
+          return { ok: false, reason: simpan.reason, coverage: snap.coverage, ms, passes: snap.passes };
+        }
+        log("SERVICE_CATALOGUE_FULL_REFRESHED", {
+          trigger, count: snap.products.length, ms, passes: snap.passes, coverage: snap.coverage,
+          declaredTotal: snap.completeness ? snap.completeness.declaredTotal : null,
+        });
+        return { ok: true, count: snap.products.length, ms, passes: snap.passes, coverage: snap.coverage };
+      } catch (err) {
+        // Halaman bisa tertutup di tengah sapuan (STOP). Kegagalan di sini
+        // TIDAK memperbarui capturedAt apa pun - snapshot lama tetap apa adanya,
+        // termasuk umurnya.
+        log("SERVICE_CATALOGUE_FULL_FAILED", { trigger, detail: String(err && err.message).slice(0, 120) });
+        return { ok: false, reason: "error" };
+      }
+    });
+
+    // Pembersih single-flight. `.catch` sebelum `.then` supaya penolakan dari
+    // runExclusive pun tetap membersihkan penanda - kalau tidak, satu kegagalan
+    // akan memblokir setiap sapuan berikutnya selamanya.
+    fullRefresh = task
+      .catch((err) => ({ ok: false, reason: "error", detail: String(err && err.message).slice(0, 120) }))
+      .then((hasil) => {
+        fullRefresh = null;
+        return hasil;
+      });
+
+    return { ok: true, reason: "scheduled", task: fullRefresh };
+  }
+
   // Katalog produk BACA-SAJA. Tidak mengklik, tidak menavigasi, tidak menyentuh
   // .pc_top_product, tidak pin/unpin, tidak menggulir, dan tidak pernah membuka
   // browser kedua.
   async function handleProducts({ maxAgeMs, refresh } = {}) {
+    // refresh="full": jadwalkan sapuan penuh di LATAR, lalu jawab dengan vonis
+    // yang ada SEKARANG. Rute ini tidak pernah menunggu sapuan - sapuan penuh
+    // berbiaya detik, sementara pembaca sisi bot beranggaran 1500 ms, dan
+    // jawaban harga yang telat lebih buruk daripada diam.
+    //
+    // Dipakai jalur Q&A saat sebuah pertanyaan nama ditolak coverage-insufficient:
+    // pertanyaan ITU tetap tidak terjawab, pertanyaan berikutnya bisa.
+    if (refresh === "full") {
+      const jadwal = scheduleFullRefresh("qa");
+      if (!jadwal.ok) {
+        log("SERVICE_CATALOGUE_FULL_REFUSED", { reason: jadwal.reason, retryAfterMs: jadwal.retryAfterMs || 0 });
+      }
+      const sekarang = catalogue.read({ maxAgeMs });
+      return Object.assign(sekarang, { fullRefresh: jadwal.reason || "scheduled" });
+    }
+
     const cached = catalogue.read({ maxAgeMs });
     if (cached.ok) return cached;
 
@@ -589,12 +802,42 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       return cached;
     }
 
-    const acceptedAt = d.now();
+    // requestedAt: kapan penyegaran ini DIMINTA, bukan kapan ia dapat giliran.
+    // Dipakai untuk menjawab satu pertanyaan sesudah antrean: apakah ada yang
+    // menerbitkan snapshot yang LEBIH BARU dari permintaan ini selagi ia
+    // menunggu?
+    const requestedAt = d.now();
+    const acceptedAt = requestedAt;
     await runExclusive(async () => {
+      // --- BALAPAN YANG DITUTUP DI SINI ---
+      //
+      // Terbukti bisa terjadi: penyegaran ringan mengantre, sapuan penuh (atau
+      // collect-before milik pin) menerbitkan snapshot FULL yang segar selagi ia
+      // menunggu, lalu penyegaran ringan akhirnya jalan dan menimpanya dengan
+      // pembacaan VIEWPORT. Satu pertanyaan BERNOMOR dengan begitu mematikan
+      // jalur NAMA, dan hanya terjadi kalau waktu tunggunya di bawah 1500 ms -
+      // yaitu di dalam jangkauan collect 1080 ms milik customer.
+      //
+      // Dulu baris di bawah HANYA memeriksa jam anggarannya sendiri dan tidak
+      // pernah membaca ulang keadaan katalog.
+      if (catalogue.hasFreshFullSince(requestedAt)) {
+        log("SERVICE_PRODUCTS_REFRESH_SKIPPED", {
+          waited: d.now() - requestedAt,
+          reason: "newer-full-exists",
+          note: "snapshot full yang lebih baru sudah ada: pembacaan ringan mubazir",
+        });
+        return;
+      }
       // Anggarannya sudah habis dimakan antrean? Jangan mulai sama sekali.
       const sisa = acceptedAt + CATALOGUE_REFRESH_DEADLINE_MS - d.now();
       if (sisa <= 0) {
         log("SERVICE_PRODUCTS_REFRESH_SKIPPED", { waited: d.now() - acceptedAt, reason: "queue-wait" });
+        return;
+      }
+      // STOP yang tiba selagi task ini mengantre: jangan membaca, jangan
+      // menerbitkan.
+      if (stopping) {
+        log("SERVICE_PRODUCTS_REFRESH_SKIPPED", { waited: d.now() - requestedAt, reason: "stopping" });
         return;
       }
       const alive = pageIfOpen();
@@ -609,16 +852,30 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       const t0 = d.now();
       try {
         const batch = await d.readProductsOnce(alive);
+        const readAt = d.now();
         // Pembacaan viewport yang KOSONG tidak disimpan. Nol baris tidak bisa
         // dibedakan dari "daftar belum ter-render", dan menyimpannya berarti
         // melayani ok:true dengan nol produk - tepat bentuk jawaban yang
         // membuat "tidak terlihat" terbaca sebagai "tidak ada".
         if (batch.products.length === 0) {
-          log("SERVICE_PRODUCTS_REFRESH_EMPTY", { ms: d.now() - t0 });
+          log("SERVICE_PRODUCTS_REFRESH_EMPTY", { ms: readAt - t0 });
           return;
         }
-        catalogue.put({ products: batch.products, coverage: COVERAGE.VIEWPORT, source: "refresh" });
-        log("SERVICE_PRODUCTS_REFRESHED", { count: batch.products.length, ms: d.now() - t0, coverage: COVERAGE.VIEWPORT });
+        // Penjaga kedua, SESUDAH pembacaan: penerbitan sendiri bisa kalah cepat.
+        // catalogue.put() juga menolaknya (would-downgrade), jadi ini dua lapis
+        // untuk satu invarian - yang di sini menghemat penulisan, yang di sana
+        // yang menjamin.
+        const simpan = catalogue.put({
+          products: batch.products,
+          coverage: COVERAGE.VIEWPORT,
+          source: "refresh",
+          observedAt: readAt,
+        });
+        if (!simpan.ok) {
+          log("SERVICE_PRODUCTS_REFRESH_SKIPPED", { reason: simpan.reason, waited: readAt - requestedAt });
+          return;
+        }
+        log("SERVICE_PRODUCTS_REFRESHED", { count: batch.products.length, ms: readAt - t0, coverage: COVERAGE.VIEWPORT });
       } catch (err) {
         log("SERVICE_PRODUCTS_REFRESH_FAILED", { detail: String(err && err.message).slice(0, 120) });
       }
@@ -666,6 +923,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       runtimeConfigId: runtimeConfigId || null,
       // Diagnostik snapshot katalog. TIDAK pernah membawa produknya.
       productSnapshot: catalogue.state(),
+      fullRefresh: { inFlight: !!fullRefresh, pinPending, stopping },
     };
   }
 
@@ -723,11 +981,29 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       try {
         const batch = await d.readProductsOnce(page);
         if (batch.products.length > 0) {
-          catalogue.put({ products: batch.products, coverage: COVERAGE.VIEWPORT, source: "warmup" });
+          catalogue.put({ products: batch.products, coverage: COVERAGE.VIEWPORT, source: "warmup", observedAt: d.now() });
           log("SERVICE_CATALOGUE_WARMED", { count: batch.products.length, coverage: COVERAGE.VIEWPORT });
         }
       } catch (e) {
         log("SERVICE_CATALOGUE_WARMUP_FAILED", { detail: String(e && e.message).slice(0, 120) });
+      }
+
+      // Satu sapuan PENUH di awal, supaya pertanyaan berbasis nama produk bisa
+      // dijawab sejak detik-detik pertama run - bukan hanya sesudah pin pertama.
+      //
+      // Tidak menunda kesiapan START: warmUp() sendiri dipanggil SESUDAH
+      // server listen() dan tidak ditunggu oleh siapa pun. Ia memakai anggaran
+      // dan pembatalan yang sama dengan sapuan on-demand, jadi kalau pin
+      // pertama tiba selagi sapuan ini berjalan, pin yang menang.
+      //
+      // Jam jeda lantai sengaja TIDAK dipakai di sini: ini sapuan pertama run.
+      lastFullAttemptAt = -Infinity;
+      const awal = scheduleFullRefresh("warmup");
+      if (awal.ok && awal.task) {
+        const hasil = await awal.task;
+        log("SERVICE_CATALOGUE_FULL_WARMED", { ok: hasil.ok, reason: hasil.reason || "-", count: hasil.count || 0, ms: hasil.ms || 0 });
+      } else {
+        log("SERVICE_CATALOGUE_FULL_WARMUP_SKIPPED", { reason: awal.reason });
       }
       return { ok: true };
     } catch (err) {
@@ -794,6 +1070,21 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   }
 
   async function stop() {
+    // Ditandai LEBIH DULU: sapuan yang sedang berjalan membacanya lewat
+    // `remaining`, memotong dirinya sendiri di gelombang gulir berikutnya, dan
+    // melepas giliran browser.
+    stopping = true;
+
+    // Lalu DITUNGGU sebentar. Menutup browser di bawah page.evaluate yang masih
+    // berjalan menghasilkan penolakan yang tidak perlu dan meninggalkan sapuan
+    // yang masih menggulir halaman yang sudah mati. Batas atasnya ada supaya
+    // STOP tidak pernah menggantung: kalau sapuan tidak berhenti tepat waktu,
+    // kami tetap menutup - dan sapuan itu akan gagal rapi di catch-nya.
+    if (fullRefresh) {
+      const batas = new Promise((r) => setTimeout(r, 1_500));
+      await Promise.race([fullRefresh.catch(() => {}), batas]);
+    }
+
     if (browser) await d.closeBrowser(browser).catch(() => {});
     browser = null;
     chatPage = null;
@@ -804,6 +1095,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     app,
     handlePin,
     handleProducts,
+    scheduleFullRefresh,
     catalogue,
     handleCommentDryRun,
     handleCommentSend,
@@ -823,6 +1115,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     __state: () => ({
       latestPlayId: generation.latest(), botId: generation.session(),
       hasPage: !!page, hasChatPage: !!chatPage, timeouts: budget,
+      pinPending, fullRefreshInFlight: !!fullRefresh, stopping,
     }),
   };
 }

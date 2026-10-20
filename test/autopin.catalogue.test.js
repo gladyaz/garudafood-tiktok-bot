@@ -140,14 +140,77 @@ test("put: produk yang bukan array ditolak", () => {
   assert.equal(s.put({ coverage: COVERAGE.FULL }).reason, "products-not-array");
 });
 
-test("put: viewport SESUDAH full dilaporkan viewport, bukan full", () => {
-  // Kejujuran di atas optimisme: begitu yang terakhir dibaca hanya viewport,
-  // itulah yang dilaporkan.
-  const { s } = toko();
+// KEBIJAKAN PENERBITAN. Dulu tes ini menuntut viewport SELALU menimpa full,
+// dengan alasan "kejujuran di atas optimisme". Itu benar soal pelaporan tapi
+// salah soal penerbitan: ia adalah balapan yang terbukti mematikan jalur nama -
+// satu pertanyaan bernomor yang mengantre di belakang sapuan penuh menimpa
+// hasil sapuan itu. Yang dijaga sekarang: kesegaran tetap menang, tapi di DALAM
+// jendela kutip yang menang adalah yang bisa menjawab lebih banyak.
+test("put: viewport TIDAK menimpa full yang masih segar", () => {
+  const { s, maju } = toko();
   s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "pin-collect" });
-  s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "refresh" });
+  maju(5_000);
+  const r = s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "refresh" });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "would-downgrade");
+  assert.equal(s.read().coverage, "full");
+  assert.equal(s.read().source, "pin-collect");
+});
+
+test("put: viewport yang benar-benar baru MENGGANTIKAN full yang sudah basi", () => {
+  const { s, maju } = toko();
+  s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "pin-collect" });
+  // Lewat ambang kutip: full-nya tidak bisa dipakai lagi, jadi ia tidak boleh
+  // menghalangi pengamatan yang masih berguna.
+  maju(31_000);
+  const r = s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "refresh" });
+  assert.equal(r.ok, true);
   assert.equal(s.read().coverage, "viewport");
   assert.equal(s.read().source, "refresh");
+});
+
+test("put: full BOLEH menimpa full, dan viewport boleh menimpa viewport", () => {
+  const { s, maju } = toko();
+  s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "warmup" });
+  maju(1_000);
+  assert.equal(s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "refresh" }).ok, true);
+  maju(1_000);
+  assert.equal(s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "full-qa" }).ok, true);
+  maju(1_000);
+  assert.equal(s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "pin-collect" }).ok, true);
+  assert.equal(s.read().coverage, "full");
+});
+
+test("put: pengamatan yang LEBIH TUA dari yang tersimpan ditolak (out-of-order)", () => {
+  const { s, maju, waktu } = toko();
+  const t0 = waktu();
+  maju(10_000);
+  s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "full-qa", observedAt: waktu() });
+  // Pengamatan yang SELESAI lebih dulu tapi diterbitkan terakhir.
+  const r = s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "pin-collect", observedAt: t0 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "out-of-order");
+  assert.equal(s.read().source, "full-qa");
+});
+
+test("put: capturedAt memakai observedAt, bukan saat penerbitan", () => {
+  const { s, maju, waktu } = toko();
+  const dibaca = waktu();
+  // Sapuan 6 detik: hasilnya diterbitkan jauh sesudah halamannya dibaca.
+  maju(6_000);
+  s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "full-qa", observedAt: dibaca });
+  assert.equal(s.read().capturedAt, dibaca);
+  assert.equal(s.read().ageMs, 6_000, "umurnya dihitung dari pembacaan, bukan penerbitan");
+});
+
+test("put: observedAt yang tidak masuk akal jatuh ke jam sekarang", () => {
+  const { s, waktu } = toko();
+  for (const buruk of [undefined, null, 0, -5, "kemarin", NaN]) {
+    const { s: bersih, waktu: w } = toko();
+    bersih.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "x", observedAt: buruk });
+    assert.equal(bersih.read().capturedAt, w(), "observedAt=" + String(buruk));
+  }
+  assert.ok(waktu() > 0);
 });
 
 test("put: snapshot adalah salinan — mengubah produk mentah tidak mengubahnya", () => {
@@ -275,7 +338,7 @@ test("needsRefresh: hanya saat melewati ambang", () => {
 
 test("state: diagnostik tanpa produk, dan menghitung harga unknown", () => {
   const { s, maju } = toko();
-  assert.deepEqual(s.state(), { has: false });
+  assert.deepEqual(s.state(), { has: false, refusals: [] });
   s.put({
     products: [RAW(), RAW({ number: 2, priceState: "unknown", currentPriceText: "" })],
     coverage: COVERAGE.FULL,
@@ -306,6 +369,38 @@ test("cakupan: snapshot viewport tetap menyebut dirinya viewport saat dibaca", (
   assert.notEqual(r.coverage, "full");
 });
 
-test("cakupan: hanya dua nilai yang sah", () => {
-  assert.deepEqual(Object.values(COVERAGE).sort(), ["full", "viewport"]);
+test("cakupan: tiga nilai ada, tapi hanya DUA yang bisa disimpan", () => {
+  assert.deepEqual(Object.values(COVERAGE).sort(), ["full", "unknown", "viewport"]);
+  // "unknown" berarti barisnya sendiri tidak boleh dipercaya. Ia sengaja tidak
+  // bisa masuk penyimpanan: invariannya adalah apa pun yang ada di dalam toko
+  // boleh dikutip kalau masih segar.
+  const { s } = toko();
+  const r = s.put({ products: [RAW()], coverage: COVERAGE.UNKNOWN, source: "x" });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "unknown-coverage");
+  assert.equal(s.read().ok, false, "toko tetap kosong");
+});
+
+test("state: penolakan terakhir ikut dilaporkan untuk penelusuran", () => {
+  const { s, maju } = toko();
+  s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "pin-collect" });
+  maju(1_000);
+  s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "refresh" });
+  const st = s.state();
+  assert.ok(Array.isArray(st.refusals));
+  assert.equal(st.refusals[st.refusals.length - 1].reason, "would-downgrade");
+});
+
+test("hasFreshFullSince: hanya full yang segar DAN tidak lebih tua dari batas", () => {
+  const { s, maju, waktu } = toko();
+  assert.equal(s.hasFreshFullSince(waktu()), false, "toko kosong");
+  s.put({ products: [RAW()], coverage: COVERAGE.VIEWPORT, source: "warmup" });
+  assert.equal(s.hasFreshFullSince(0), false, "viewport bukan full");
+  maju(1_000);
+  const saatPenuh = waktu();
+  s.put({ products: [RAW()], coverage: COVERAGE.FULL, source: "full-qa" });
+  assert.equal(s.hasFreshFullSince(saatPenuh - 1), true);
+  assert.equal(s.hasFreshFullSince(saatPenuh + 1), false, "lebih tua dari yang diminta");
+  maju(31_000);
+  assert.equal(s.hasFreshFullSince(0), false, "sudah basi");
 });
