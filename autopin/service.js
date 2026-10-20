@@ -25,6 +25,7 @@ const { createPlayGeneration } = require("./session");
 const { planPinTimeouts, describePinTimeouts } = require("./pin-budget");
 const { loadConfig: loadAutoCommentConfig } = require("../autocomment/config");
 const { createCatalogueStore, COVERAGE } = require("./catalogue");
+const { createCatalogueMaintenance } = require("./catalogue-maintenance");
 
 const DEFAULT_PORT = 5055;
 const LOOPBACK = "127.0.0.1";
@@ -887,6 +888,33 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     return catalogue.read({ maxAgeMs });
   }
 
+  // --- PEMELIHARAAN KESEGARAN KATALOG DI LATAR ---------------------------
+  //
+  // Memakai scheduleFullRefresh YANG SAMA: tidak ada implementasi sapuan
+  // kedua, tidak ada browser kedua, tidak ada discovery Controller. Yang
+  // ditambahkan modul ini hanya KEPUTUSAN KAPAN - digerakkan umur snapshot,
+  // bukan tik buta.
+  //
+  // Timer-nya di-unref: ia tidak boleh menjadi alasan proses service tetap
+  // hidup sesudah STOP. Itu pelajaran yang sama dengan .bot.lock yang
+  // tertinggal pada 2026-10-09 - yang menahan proses harus selalu pekerjaan
+  // nyata, bukan penjadwal.
+  const maintenance = createCatalogueMaintenance({
+    now: () => d.now(),
+    setTimer: (fn, ms) => {
+      const t = setTimeout(fn, ms);
+      if (t && typeof t.unref === "function") t.unref();
+      return t;
+    },
+    clearTimer: (t) => clearTimeout(t),
+    readState: () => catalogue.state(),
+    isPinPending: () => pinPending > 0,
+    isStopping: () => stopping === true,
+    isSweepInFlight: () => !!fullRefresh,
+    requestRefresh: () => scheduleFullRefresh("maintenance"),
+    log,
+  });
+
   const app = express();
   app.use(express.json({ limit: "16kb" }));
 
@@ -924,6 +952,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       // Diagnostik snapshot katalog. TIDAK pernah membawa produknya.
       productSnapshot: catalogue.state(),
       fullRefresh: { inFlight: !!fullRefresh, pinPending, stopping },
+      maintenance: maintenance.stats(),
     };
   }
 
@@ -1005,6 +1034,11 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
       } else {
         log("SERVICE_CATALOGUE_FULL_WARMUP_SKIPPED", { reason: awal.reason });
       }
+
+      // Pemeliharaan dinyalakan SESUDAH sapuan awal, dan tidak menunda apa pun:
+      // warmUp sendiri tidak ditunggu siapa pun, dan pemeriksaan pertamanya
+      // hanya membaca umur snapshot di memori.
+      if (!stopping) maintenance.start();
       return { ok: true };
     } catch (err) {
       log("SERVICE_WARMUP_FAILED", { detail: String(err && err.message).slice(0, 120) });
@@ -1070,6 +1104,9 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
   }
 
   async function stop() {
+    // Penjadwal dimatikan LEBIH DULU: tidak boleh ada pemeriksaan baru yang
+    // menyelip sesudah ini, dan tidak boleh ada timer yang tertinggal.
+    maintenance.stop();
     // Ditandai LEBIH DULU: sapuan yang sedang berjalan membacanya lewat
     // `remaining`, memotong dirinya sendiri di gelombang gulir berikutnya, dan
     // melepas giliran browser.
@@ -1109,6 +1146,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     stop,
     warmUp,
     healthPayload,
+    maintenance,
     pinConfirmer,
     timeouts: budget,
     pinTimeouts: pinBudget,
