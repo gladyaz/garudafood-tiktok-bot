@@ -244,7 +244,11 @@ test("DINAMIS F: produk BARU yang tidak pernah dipetakan tetap bisa dijawab PRIC
 
   const rep = buildPriceReply(r.product);
   assert.equal(rep.ok, true, JSON.stringify(rep));
-  assert.equal(rep.price, "Rp7.900");
+  // Yang dibuktikan di sini adalah KEMANDIRIAN dari pemetaan PAX: produk tak
+  // terpetakan tetap TERESOLUSI dan tetap DIJAWAB. Angkanya tidak dikutip -
+  // tanpa bukti SKU tidak ada harga numerik (qa/reply-price.js).
+  assert.equal(rep.numeric, false);
+  assert.ok(!/Rp/.test(rep.text), rep.text);
 });
 
 test("KETERSEDIAAN: produk ADA tapi tombol pin-nya tidak -> peringatan, bukan pemblokir", () => {

@@ -72,13 +72,35 @@ test("G. stok agregat produk > 0 TIDAK membuat harga termurah bisa dipercaya", (
 // B/E. Varian yang lebih mahal / satu varian terverifikasi
 // ===========================================================================
 
-test("B+E. produk tanpa penanda varian: angka tetap boleh dikutip", () => {
+test("B+E. produk TANPA penanda varian pun TIDAK dikutip sebagai angka", () => {
+  // Koreksi 2026-10-21: judul tanpa "[PILIH VARIAN]" bukan bukti produknya
+  // satu SKU, dan bukan bukti harganya bisa dibeli. Penanda hanya bisa
+  // membuktikan ADANYA varian, tidak pernah ketiadaannya.
   const [p] = tersimpan([mentah(1, SATU, { currentPriceText: "Rp14.299", priceState: "sale" })]);
   const r = buildPriceReply(p);
-  assert.equal(r.ok, true);
+  assert.equal(r.ok, true, "tetap dijawab");
+  assert.equal(r.numeric, false, "tapi tanpa angka");
+  assert.equal(r.reason, "sku-unverified");
+  assert.ok(!/Rp/.test(r.text), r.text);
+});
+
+test("B+E. cabang numerik tetap BENAR kalau bukti SKU suatu hari ada", () => {
+  // Disuntikkan supaya cabang itu tetap teruji - kode yang tidak pernah
+  // dijalankan akan membusuk sebelum sempat dipakai. Produksi TIDAK PERNAH
+  // menyuntikkan ini: hasVerifiedSkuEvidence() selalu false.
+  const [p] = tersimpan([mentah(1, SATU, { currentPriceText: "Rp14.299", priceState: "sale" })]);
+  const r = buildPriceReply(p, { skuEvidence: () => true });
   assert.equal(r.numeric, true);
   assert.equal(r.price, "Rp14.299");
   assert.match(r.text, /Rp14\.299/);
+});
+
+test("PRODUKSI: hasVerifiedSkuEvidence SELALU false hari ini", () => {
+  const { hasVerifiedSkuEvidence } = require("../qa/reply-price");
+  for (const p of [{}, null, { pinAvailable: true, stockText: "In stock: 999" },
+                   { priceState: "single", currentPriceText: "Rp1" }]) {
+    assert.equal(hasVerifiedSkuEvidence(p), false, JSON.stringify(p));
+  }
 });
 
 test("B. harga varian yang lebih mahal TIDAK dikarang dari data produk", () => {

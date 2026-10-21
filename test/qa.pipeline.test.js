@@ -63,7 +63,11 @@ test("pipeline: pertanyaan harga yang jelas dijawab satu kali", async () => {
   const hasil = await r.tanya("harga garuda atom berapa");
   assert.equal(hasil.handled, true);
   assert.equal(r.kirim.length, 1);
-  assert.equal(r.kirim[0].text, "Harga yang tampil di etalase saat ini Rp14.299 ya kak 😊");
+  // KEBIJAKAN 2026-10-21: tanpa bukti SKU terverifikasi tidak ada angka yang
+  // dikutip. Yang diuji di sini tetap "dijawab TEPAT SATU KALI", bukan isi
+  // angkanya - dan jawabannya kini kalimat aman tanpa angka.
+  assert.equal(r.kirim[0].text, require("../qa/reply-price").FALLBACK_TEXT);
+  assert.ok(!/Rp/.test(r.kirim[0].text), r.kirim[0].text);
 });
 
 test("pipeline: permintaan kirim memakai requirePin=false dan NORMAL", async () => {
@@ -267,8 +271,17 @@ test("dedupe: produk LAIN tetap boleh dijawab di dalam jendela", async () => {
   r.maju(3_000);
   const h = await r.tanya("ting ting berapa");
   assert.equal(h.handled, true, "produk berbeda -> boleh");
-  assert.equal(r.kirim.length, 2);
-  assert.ok(r.kirim[1].text.includes("Rp30.000"));
+
+  // DUA PENGIRIMAN Q&A YANG BERDIRI SENDIRI, dua-duanya berangkat. Sampai
+  // 2026-10-21 yang kedua ditolak `duplicate-play-id` karena semua jawaban
+  // Q&A memakai slot playId 0 - lihat test/autocomment.deliveryidentity.test.js.
+  assert.equal(r.kirim.length, 2, "dua jawaban harus terkirim, bukan satu");
+
+  // Isinya kalimat aman tanpa angka: tanpa bukti SKU tidak ada harga numerik.
+  const { FALLBACK_TEXT } = require("../qa/reply-price");
+  assert.equal(r.kirim[0].text, FALLBACK_TEXT);
+  assert.equal(r.kirim[1].text, FALLBACK_TEXT);
+  assert.ok(!/Rp/.test(r.kirim[1].text), r.kirim[1].text);
 });
 
 test("dedupe: kiriman GAGAL tidak memakan jendela", async () => {

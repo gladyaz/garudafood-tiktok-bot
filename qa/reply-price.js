@@ -66,10 +66,17 @@ const TEMPLATE = "Harga yang tampil di etalase saat ini {price} ya kak 😊";
 //   "...Family Pack 100gr All Variant Sarapan [PILIH VARIAN] - GRY"
 //   "Garuda Kacang / Kacang Telur / Kacang Telur Rasa Original / 100gr"
 //
-// Arah dugaannya SELALU ke arah aman: penanda menandakan BAHAYA, bukan
-// keamanan. Judul tanpa penanda tidak dianggap "terbukti satu varian" - ia
-// hanya tidak punya bukti sebaliknya, dan itu sisa risiko yang dilaporkan
-// terbuka, bukan disembunyikan.
+// KOREKSI 2026-10-21 (putaran kedua): PENANDA JUDUL TIDAK CUKUP.
+//
+// Versi pertama gerbang ini memakai penanda judul untuk memilih produk mana
+// yang dapat kalimat tanpa angka. Itu salah arah logikanya: judul TANPA
+// "[PILIH VARIAN]" bukan bukti bahwa produknya hanya punya satu SKU, dan bukan
+// bukti bahwa harga yang dipajang bisa dibeli sekarang. Penanda hanya bisa
+// membuktikan ADANYA varian, tidak pernah ketiadaannya.
+//
+// Jadi penandanya tetap berguna untuk diagnosis, tapi KEPUTUSANNYA tidak lagi
+// bergantung padanya: tanpa bukti SKU yang segar dan terverifikasi, TIDAK ADA
+// produk yang dikutip sebagai angka.
 const VARIANT_MARKERS = Object.freeze([
   /\bpilih\s+varian\b/i,
   /\ball\s+variants?\b/i,
@@ -79,6 +86,28 @@ const VARIANT_MARKERS = Object.freeze([
 
 // Daftar pilihan yang dipisah garis miring: "A / B / C / 100gr".
 const SLASH_OPTIONS = 2;
+
+// ---------------------------------------------------------------------------
+// BUKTI SKU: BELUM ADA
+//
+// Mengutip angka menuntut bukti bahwa SATU SKU tertentu (a) harganya itu dan
+// (b) bisa dibeli SEKARANG. Tidak satu pun field snapshot katalog membuktikan
+// itu: `currentPriceText` adalah harga tingkat produk (varian termurah yang
+// TERDAFTAR, termasuk yang habis), dan `stockText` adalah jumlah agregat.
+//
+// Sumbernya ada - halaman detail produk, lewat "Select options" - tapi satu-
+// satunya halaman otomasi sedang dipakai dashboard untuk AutoPIN dan sapuan
+// katalog. Membawanya pergi akan mematikan keduanya, dan membuka halaman kedua
+// pada profil yang sama berebut kepemilikan profil. Jadi hari ini: tidak ada
+// bukti SKU.
+//
+// Fungsi ini adalah SATU titik tempat keadaan itu dinyatakan, dan satu titik
+// yang perlu diubah kalau sumber SKU yang aman nanti ada. Ia dapat disuntikkan
+// supaya cabang numeriknya tetap DIUJI - kode mati yang tidak pernah dijalankan
+// akan membusuk sebelum sempat dipakai.
+function hasVerifiedSkuEvidence(/* product */) {
+  return false;
+}
 
 function looksMultiVariant(title) {
   const t = typeof title === "string" ? title : "";
@@ -96,7 +125,7 @@ const FALLBACK_TEXT = "Harga tergantung varian ya kak. Cek pilihan varian dan st
 // Gerbang panjang/HTML/karakter kontrol DIIMPOR dari autocomment/formatter.js,
 // bukan ditulis ulang: ada satu gerbang teks di repo ini dan ia dipakai
 // bersama oleh jalur scene dan jalur Q&A.
-function buildPriceReply(product, { template = TEMPLATE } = {}) {
+function buildPriceReply(product, { template = TEMPLATE, skuEvidence = hasVerifiedSkuEvidence } = {}) {
   const p = product && typeof product === "object" ? product : {};
 
   const state = typeof p.priceState === "string" ? p.priceState : "";
@@ -104,19 +133,30 @@ function buildPriceReply(product, { template = TEMPLATE } = {}) {
     return { ok: false, reason: `price-state-${state || "missing"}` };
   }
 
-  // Produk yang mungkin punya banyak varian: JANGAN kutip angka. Harga
-  // dashboard-nya bisa milik varian yang habis - lihat catatan di atas.
-  if (looksMultiVariant(p.title)) {
-    const v = validateText(FALLBACK_TEXT);
-    if (!v.ok) return v;
-    return { ok: true, text: v.text, price: "", numeric: false, reason: "variant-unverified" };
-  }
 
   // currentPriceText adalah SATU-SATUNYA sumber angka. Tidak ada cadangan ke
   // `price` legacy (yang sengaja tetap terisi walau priceState unknown) dan
   // tidak ada cadangan ke originalPriceText.
   const price = typeof p.currentPriceText === "string" ? p.currentPriceText.trim() : "";
   if (!price) return { ok: false, reason: "empty-price" };
+
+  // TANPA bukti SKU: tidak ada angka, untuk produk APA PUN. Penanda judul
+  // hanya ikut dilaporkan sebagai alasan, tidak memutuskan apa pun.
+  //
+  // Diletakkan SESUDAH gerbang priceState/harga-kosong dengan sengaja: kartu
+  // yang tidak kami pahami tetap DIAM, bukan dijawab kalimat cadangan. Kami
+  // hanya menjawab produk yang kartunya terbaca - cuma tanpa angkanya.
+  if (skuEvidence(p) !== true) {
+    const v = validateText(FALLBACK_TEXT);
+    if (!v.ok) return v;
+    return {
+      ok: true,
+      text: v.text,
+      price: "",
+      numeric: false,
+      reason: looksMultiVariant(p.title) ? "variant-unverified" : "sku-unverified",
+    };
+  }
 
   if (typeof template !== "string" || !template.includes("{price}")) {
     return { ok: false, reason: "invalid-template" };
@@ -127,4 +167,4 @@ function buildPriceReply(product, { template = TEMPLATE } = {}) {
   return { ok: true, text: v.text, price, numeric: true };
 }
 
-module.exports = { buildPriceReply, QUOTABLE_PRICE_STATES, TEMPLATE, looksMultiVariant, FALLBACK_TEXT, VARIANT_MARKERS };
+module.exports = { buildPriceReply, QUOTABLE_PRICE_STATES, TEMPLATE, looksMultiVariant, hasVerifiedSkuEvidence, FALLBACK_TEXT, VARIANT_MARKERS };

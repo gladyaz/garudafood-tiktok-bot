@@ -12,6 +12,11 @@ const path = require("path");
 
 const { resolveProductForQuestion, productIdentity } = require("../qa/resolve-product");
 const { buildPriceReply, TEMPLATE } = require("../qa/reply-price");
+// KEBIJAKAN 2026-10-21: tanpa bukti SKU yang terverifikasi, TIDAK ADA produk
+// yang dikutip sebagai angka. Tes yang memang menguji KALIMAT numerik
+// menyuntikkan bukti SKU (`skuEvidence: () => true`) supaya cabang itu tetap
+// teruji; produksi tidak pernah melakukannya. Lihat qa/reply-price.js.
+const SKU = { skuEvidence: () => true };
 const { createQaDedupe, DEFAULT_COOLDOWN_MS } = require("../qa/dedupe");
 const { detectPriceIntent } = require("../qa/intent-price");
 const { normalizeForMatching } = require("../tiktok/normalize");
@@ -199,7 +204,7 @@ test("resolver: memakai normalizeTitleKey yang DIIMPOR", () => {
 // --- kalimat jawaban -----------------------------------------------------
 
 test("balasan: kalimat yang disetujui, dan panjangnya aman", () => {
-  const r = buildPriceReply(PRODUK[0]);
+  const r = buildPriceReply(PRODUK[0], SKU);
   assert.equal(r.ok, true);
   assert.equal(r.text, "Harga yang tampil di etalase saat ini Rp14.299 ya kak 😊");
   assert.ok(r.text.length <= MAX_LENGTH, `${r.text.length} <= ${MAX_LENGTH}`);
@@ -219,37 +224,31 @@ test("balasan: kelima produk nyata menghasilkan kalimat yang lolos gerbang", () 
     assert.equal(r.ok, true, p.title);
     assert.ok(r.text.length <= MAX_LENGTH, `${p.number}: ${r.text.length}`);
 
-    if (looksMultiVariant(p.title)) {
-      // Tidak ada angka sama sekali - bukan angka yang berbeda.
-      assert.equal(r.numeric, false, p.title);
-      assert.equal(r.text, FALLBACK_TEXT, p.title);
-      assert.ok(!/Rp/.test(r.text), p.title + " -> " + r.text);
-      fallback += 1;
-    } else {
-      assert.equal(r.numeric, true, p.title);
-      assert.ok(r.text.includes(p.currentPriceText), p.title);
-      numerik += 1;
-    }
+    // SEMUA produk: tanpa bukti SKU, tidak ada angka. Penanda judul hanya
+    // mengubah ALASAN yang dilaporkan, bukan keputusannya.
+    assert.equal(r.numeric, false, p.title);
+    assert.equal(r.text, FALLBACK_TEXT, p.title);
+    assert.ok(!/Rp/.test(r.text), p.title + " -> " + r.text);
+    assert.equal(r.reason, looksMultiVariant(p.title) ? "variant-unverified" : "sku-unverified", p.title);
+    fallback += 1;
+    void numerik;
   }
-  // Fixture ini memang memuat keduanya; kalau tidak, tesnya tidak membuktikan
-  // bahwa kedua cabang dipakai.
-  assert.ok(numerik > 0, "harus ada produk satu-varian di fixture");
-  assert.ok(fallback > 0, "harus ada produk multi-varian di fixture");
+  assert.equal(fallback, PRODUK.length, "kelimanya harus tanpa angka");
 });
 
 test("balasan: TIDAK PERNAH menyebut originalPriceText", () => {
   // Produk #1 sedang diskon dan kedua angkanya tersedia & benar. v0.3.0 hanya
   // menyebut harga sekarang.
-  const r = buildPriceReply(PRODUK[0]);
+  const r = buildPriceReply(PRODUK[0], SKU);
   assert.ok(!r.text.includes("Rp23.000"), "harga pembanding tidak boleh ikut");
   for (const p of PRODUK) {
     if (!p.originalPriceText) continue;
-    assert.ok(!buildPriceReply(p).text.includes(p.originalPriceText), p.title);
+    assert.ok(!buildPriceReply(p, SKU).text.includes(p.originalPriceText), p.title);
   }
 });
 
 test("balasan: TIDAK mengklaim kepastian", () => {
-  const r = buildPriceReply(PRODUK[0]);
+  const r = buildPriceReply(PRODUK[0], SKU);
   for (const kata of ["pasti", "dijamin", "fix", "tetap"]) {
     assert.ok(!r.text.toLowerCase().includes(kata), `tidak boleh mengklaim "${kata}"`);
   }
@@ -259,7 +258,7 @@ test("balasan: TIDAK mengklaim kepastian", () => {
 
 test("balasan: priceState tak terdukung -> TIDAK ada kalimat", () => {
   for (const st of ["unknown", "range", "", undefined, "SINGLE"]) {
-    const r = buildPriceReply({ ...PRODUK[0], priceState: st });
+    const r = buildPriceReply({ ...PRODUK[0], priceState: st }, SKU);
     assert.equal(r.ok, false, String(st));
     assert.match(r.reason, /^price-state-/, String(st));
   }
@@ -267,7 +266,7 @@ test("balasan: priceState tak terdukung -> TIDAK ada kalimat", () => {
 
 test("balasan: currentPriceText kosong -> TIDAK ada kalimat", () => {
   for (const v of ["", "   ", null, undefined, 14299]) {
-    const r = buildPriceReply({ ...PRODUK[0], currentPriceText: v });
+    const r = buildPriceReply({ ...PRODUK[0], currentPriceText: v }, SKU);
     assert.equal(r.ok, false, String(v));
     assert.equal(r.reason, "empty-price");
   }
@@ -276,7 +275,7 @@ test("balasan: currentPriceText kosong -> TIDAK ada kalimat", () => {
 test("balasan: TIDAK ada cadangan ke price legacy", () => {
   // `price` legacy sengaja tetap terisi walau priceState unknown (v0.2.2).
   // Jalur kutipan tidak boleh pernah memakainya.
-  const r = buildPriceReply({ ...PRODUK[0], priceState: "unknown", currentPriceText: "", price: "Rp14.299" });
+  const r = buildPriceReply({ ...PRODUK[0], priceState: "unknown", currentPriceText: "", price: "Rp14.299" }, SKU);
   assert.equal(r.ok, false);
   const src = fs.readFileSync(path.join(__dirname, "..", "qa", "reply-price.js"), "utf8");
   assert.ok(!/\bp\.price\b/.test(src), "tidak boleh membaca field price legacy");
@@ -291,13 +290,13 @@ test("balasan: gerbang teks DIIMPOR, bukan ditulis ulang", () => {
 });
 
 test("balasan: template yang terlalu panjang DITOLAK, bukan dipotong", () => {
-  const r = buildPriceReply(PRODUK[0], { template: "x".repeat(120) + " {price}" });
+  const r = buildPriceReply(PRODUK[0], { template: "x".repeat(120) + " {price}", ...SKU });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "too-long");
 });
 
 test("balasan: template wajib punya {price}", () => {
-  assert.equal(buildPriceReply(PRODUK[0], { template: "tanpa placeholder" }).reason, "invalid-template");
+  assert.equal(buildPriceReply(PRODUK[0], { template: "tanpa placeholder", ...SKU }).reason, "invalid-template");
   assert.ok(TEMPLATE.includes("{price}"));
 });
 
@@ -313,7 +312,7 @@ test("balasan: teks penonton tidak pernah bisa masuk", () => {
   }
   // Satu-satunya masukannya adalah produk + template: teksnya SELALU sama
   // dengan template yang diisi currentPriceText, apa pun yang penonton tulis.
-  const r = buildPriceReply(PRODUK[0]);
+  const r = buildPriceReply(PRODUK[0], SKU);
   assert.equal(r.text, TEMPLATE.split("{price}").join(PRODUK[0].currentPriceText));
 });
 
