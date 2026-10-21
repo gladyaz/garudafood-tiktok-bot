@@ -105,6 +105,12 @@ const aturanPin = (scene, title) => ({
 //      berdekatan bisa digabung menjadi satu entri;
 //   2. gerbang kelayakan menunggu satu pembacaan katalog (microtask).
 async function trigger(rule) {
+  // JUDUL PRODUK hidup di PETA RUNTIME, bukan di objek aturan - persis seperti
+  // produksi. buildRuleFromMapping() membawa `key`, bukan `product`, dan
+  // gerbang mencari judulnya lewat runtime.getProductForScene(key). Fixture
+  // yang menaruh judul di rule.product itulah yang menyembunyikan bug LIVE
+  // 2026-10-21 (`empty-title-key`).
+  bot.__test.setProductMap({ [rule.scene]: rule.product && rule.product.title });
   bot.enqueueTrigger(rule, "penonton");
   await tunggu(90);
 }

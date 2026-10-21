@@ -328,7 +328,12 @@ function createAutoComment({
 
       let sent;
       try {
-        sent = Promise.resolve(send({ text, scene, playId, pin: req.pin }));
+        // `deliveryId` hanya disertakan kalau pemanggil memang memberinya.
+        // Balasan scene TIDAK boleh berubah bentuk payload-nya - termasuk
+        // tidak membawa kunci undefined yang akan ikut ke JSON.
+        const kiriman = { text, scene, playId, pin: req.pin };
+        if (req.deliveryId !== undefined) kiriman.deliveryId = req.deliveryId;
+        sent = Promise.resolve(send(kiriman));
       } catch (err) {
         log(`[AUTOCOMMENT_FAILED] scene=${scene} playId=${playId} reason=send-threw detail=${brief(err)}`);
         return Promise.resolve(done(false, "send-threw"));

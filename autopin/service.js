@@ -261,19 +261,34 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     clickStrategy,
   });
 
-  async function handleCommentSend({ text, scene, playId, sessionId }) {
+  async function handleCommentSend({ text, scene, playId, deliveryId, sessionId }) {
     if (allowAutoCommentSend !== true) return { ok: false, reason: "real-comment-send-disabled" };
-    const id = Number.isFinite(playId) ? playId : 0;
-    if (isStale(sessionId, id)) return { ok: false, reason: "stale" };
-    noteScenePlayId(sessionId, id);
+
+    // IDENTITAS PENGIRIMAN. `deliveryId` dipakai jalur yang TIDAK memutar apa
+    // pun (Product PRICE Q&A).
+    //
+    // Baris ini dulu `Number.isFinite(playId) ? playId : 0`, dan nol itu dua
+    // kesalahan sekaligus: ia memakan jatah kirim-sekali playId 0 untuk SETIAP
+    // jawaban Q&A, dan ia membuat Q&A dinilai BASI terhadap generasi scene
+    // (0 < playId scene mana pun). Pada LIVE nyata 2026-10-21 jawaban harga
+    // kedua dan seterusnya ditolak `duplicate-play-id`.
+    const dId = typeof deliveryId === "string" && deliveryId.trim() !== "" ? deliveryId.trim() : null;
+    const id = dId === null ? (Number.isFinite(playId) ? playId : 0) : null;
+
+    // Basi hanya berlaku untuk balasan scene. Q&A tidak punya pemutaran yang
+    // bisa ketinggalan, jadi menilainya basi akan membungkamnya tanpa sebab.
+    if (dId === null) {
+      if (isStale(sessionId, id)) return { ok: false, reason: "stale" };
+      noteScenePlayId(sessionId, id);
+    }
     return runExclusive(async () => {
       // Diperiksa lagi di dalam antrean: scene bisa berganti selagi menunggu giliran.
-      if (isStale(sessionId, id)) {
+      if (dId === null && isStale(sessionId, id)) {
         log("SERVICE_COMMENT_STALE", { scene, playId: id, latest: generation.latest(), phase: "queued" });
         return { ok: false, reason: "stale" };
       }
       try {
-        return await browserSender.send({ text, scene, playId: id });
+        return await browserSender.send(dId === null ? { text, scene, playId: id } : { text, scene, deliveryId: dId });
       } catch (err) {
         log("SERVICE_COMMENT_ERROR", { scene, detail: String(err && err.message).slice(0, 120) });
         return { ok: false, reason: "comment-send-error" };
@@ -1058,7 +1073,7 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     app.post("/comment/send", async (req, res) => {
     const { text, scene, playId, sessionId } = req.body || {};
     try {
-      res.json(await handleCommentSend({ text, scene, playId, sessionId }));
+      res.json(await handleCommentSend({ text, scene, playId, deliveryId: body.deliveryId, sessionId }));
     } catch {
       res.json({ ok: false, reason: "service-error" });
     }

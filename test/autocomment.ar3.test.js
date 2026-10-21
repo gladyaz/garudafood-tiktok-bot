@@ -495,3 +495,60 @@ test("service: health melaporkan status AR3 tanpa membocorkan apa pun yang sensi
   assert.equal(typeof s.latestPlayId, "number");
   assert.ok(!JSON.stringify(s).match(/cookie|token|session/i));
 });
+
+// ===========================================================================
+// IDENTITAS PENGIRIMAN (bug LIVE 2026-10-21)
+// ===========================================================================
+//
+// Jatah kirim-sekali dulu di-key playId saja. Product PRICE Q&A tidak memutar
+// apa pun, dan autopin/service.js menjatuhkan playId-nya ke 0 - jadi jawaban
+// harga PERTAMA terkirim lalu SEMUA jawaban berikutnya sepanjang run ditolak
+// `duplicate-play-id`, apa pun produknya. Nol juga membuat Q&A dinilai BASI
+// terhadap generasi scene mana pun.
+//
+// Diuji lewat pengirim SUNGGUHAN, bukan transport palsu yang permisif: justru
+// transport palsu yang membuat simulasi "10/10 terjawab" lolos.
+
+test("IDENTITAS: dua pengiriman Q&A yang BERBEDA dua-duanya berangkat", async () => {
+  const page = chatPage({ typeWrites: TEXT });
+  const s = senderFor(page);
+  const a = await s.send({ text: TEXT, scene: "QA-PRICE", deliveryId: "qa:1" });
+  const b = await s.send({ text: TEXT, scene: "QA-PRICE", deliveryId: "qa:2" });
+  assert.equal(a.ok, true, "jawaban pertama: " + JSON.stringify(a));
+  assert.equal(b.ok, true, "jawaban KEDUA harus ikut berangkat: " + JSON.stringify(b));
+});
+
+test("IDENTITAS: percobaan ulang identitas yang SAMA tidak mengirim dua kali", async () => {
+  const page = chatPage({ typeWrites: TEXT });
+  const s = senderFor(page);
+  assert.equal((await s.send({ text: TEXT, scene: "QA-PRICE", deliveryId: "qa:7" })).ok, true);
+  const ulang = await s.send({ text: TEXT, scene: "QA-PRICE", deliveryId: "qa:7" });
+  assert.equal(ulang.ok, false);
+  assert.equal(ulang.reason, "duplicate-play-id");
+});
+
+test("IDENTITAS: balasan scene tetap memakai semantik playId", async () => {
+  const page = chatPage({ typeWrites: TEXT });
+  const s = senderFor(page);
+  assert.equal((await s.send({ text: TEXT, scene: "PAX-1", playId: 1 })).ok, true);
+  assert.equal((await s.send({ text: TEXT, scene: "PAX-1", playId: 1 })).reason, "duplicate-play-id");
+  assert.equal((await s.send({ text: TEXT, scene: "PAX-2", playId: 2 })).ok, true);
+});
+
+test("IDENTITAS: tanpa playId DAN tanpa deliveryId tetap ditolak", async () => {
+  const page = chatPage({ typeWrites: TEXT });
+  const s = senderFor(page);
+  const r = await s.send({ text: TEXT, scene: "QA-PRICE" });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "play-id-required");
+  assert.deepEqual(page.actions, [], "halaman tidak boleh disentuh");
+});
+
+test("IDENTITAS: Q&A tidak dinilai basi terhadap generasi scene", async () => {
+  const page = chatPage({ typeWrites: TEXT });
+  const s = senderFor(page, { isStale: (playId) => playId < 5 });
+  // Balasan scene yang memang ketinggalan tetap ditolak.
+  assert.equal((await s.send({ text: TEXT, scene: "PAX-1", playId: 1 })).reason, "stale");
+  // Q&A lewat identitasnya sendiri.
+  assert.equal((await s.send({ text: TEXT, scene: "QA-PRICE", deliveryId: "qa:1" })).ok, true);
+});

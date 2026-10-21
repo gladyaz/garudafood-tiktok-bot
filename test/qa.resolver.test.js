@@ -205,13 +205,36 @@ test("balasan: kalimat yang disetujui, dan panjangnya aman", () => {
   assert.ok(r.text.length <= MAX_LENGTH, `${r.text.length} <= ${MAX_LENGTH}`);
 });
 
+// KEBIJAKAN DIUBAH 2026-10-21 sesudah kejadian nyata: harga tingkat produk di
+// LIVE Manager adalah varian TERMURAH yang terdaftar, termasuk yang HABIS.
+// "Dilan - Waffle [PILIH VARIAN]" tampil Rp11.500 padahal varian itu habis dan
+// satu-satunya yang bisa dibeli Rp32.250. Jadi produk yang mungkin punya banyak
+// varian TIDAK dikutip sebagai angka - lihat test/qa.variantprice.test.js.
 test("balasan: kelima produk nyata menghasilkan kalimat yang lolos gerbang", () => {
+  const { looksMultiVariant, FALLBACK_TEXT } = require("../qa/reply-price");
+  let numerik = 0;
+  let fallback = 0;
   for (const p of PRODUK) {
     const r = buildPriceReply(p);
     assert.equal(r.ok, true, p.title);
-    assert.ok(r.text.includes(p.currentPriceText), p.title);
     assert.ok(r.text.length <= MAX_LENGTH, `${p.number}: ${r.text.length}`);
+
+    if (looksMultiVariant(p.title)) {
+      // Tidak ada angka sama sekali - bukan angka yang berbeda.
+      assert.equal(r.numeric, false, p.title);
+      assert.equal(r.text, FALLBACK_TEXT, p.title);
+      assert.ok(!/Rp/.test(r.text), p.title + " -> " + r.text);
+      fallback += 1;
+    } else {
+      assert.equal(r.numeric, true, p.title);
+      assert.ok(r.text.includes(p.currentPriceText), p.title);
+      numerik += 1;
+    }
   }
+  // Fixture ini memang memuat keduanya; kalau tidak, tesnya tidak membuktikan
+  // bahwa kedua cabang dipakai.
+  assert.ok(numerik > 0, "harus ada produk satu-varian di fixture");
+  assert.ok(fallback > 0, "harus ada produk multi-varian di fixture");
 });
 
 test("balasan: TIDAK PERNAH menyebut originalPriceText", () => {

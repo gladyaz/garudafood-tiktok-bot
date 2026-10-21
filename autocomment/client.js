@@ -49,7 +49,7 @@ function createCommentSender({
 } = {}) {
   const target = url || commentUrl(mode, env);
 
-  return async function send({ text, scene, playId, pin }) {
+  return async function send({ text, scene, playId, deliveryId, pin }) {
     if (!target) return { ok: false, reason: `unknown-transport-${String(mode)}` };
 
     const doFetch = fetchFn || globalThis.fetch;
@@ -63,7 +63,7 @@ function createCommentSender({
         headers: { "content-type": "application/json" },
         // `pin` hanya dibawa sebagai bukti/telemetri; service tetap memeriksa
         // gerbangnya sendiri dan tidak mempercayai klaim dari sisi pemanggil.
-        body: JSON.stringify({ text, scene, playId, pin, sessionId }),
+        body: JSON.stringify({ text, scene, playId, deliveryId, pin, sessionId }),
         signal: controller.signal,
       });
       if (!res.ok) return { ok: false, reason: `http-${res.status}` };

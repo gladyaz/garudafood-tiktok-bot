@@ -107,6 +107,9 @@ function createPriceQa({
   enabled = true,
   log = () => {},
 } = {}) {
+  // Nomor pengiriman Q&A, naik satu per JAWABAN yang benar-benar dikirim.
+  // Bukan playId: tidak ada pemutaran di jalur ini.
+  let pengirimanKe = 0;
   const say = (line) => {
     try {
       log(line);
@@ -283,11 +286,21 @@ function createPriceQa({
         // Ditandai SEBELUM pemanggilan: sesudah titik ini kami tidak bisa lagi
         // membuktikan bahwa nol byte menuju TikTok.
         dispatched = true;
+        // IDENTITAS PENGIRIMAN, bukan playId palsu.
+        //
+        // Q&A tidak memutar apa pun, jadi ia tidak boleh mengarang playId
+        // scene - itu akan meracuni semantik basi balasan scene. Yang dipakai
+        // adalah identitas sendiri yang naik satu per JAWABAN, jadi dua jawaban
+        // yang berbeda tidak pernah berebut jatah kirim-sekali yang sama,
+        // sementara percobaan ulang jawaban yang SAMA tetap memakai identitas
+        // yang sama dan tetap ditolak.
+        pengirimanKe += 1;
         res = await requestComment({
           scene: QA_SCENE,
           text: reply.text,
           requirePin: false,
           requesters: 1,
+          deliveryId: "qa:" + pengirimanKe,
         });
       } catch (err) {
         // autocomment/core.js TIDAK PERNAH menolak - setiap jalurnya pulang
@@ -305,7 +318,10 @@ function createPriceQa({
       // --- 7. keputusan reservasi ----------------------------------------
       if (res && res.ok === true) {
         kunciSemua();
-        say(`[QA_PRICE_REPLY] product=${r.product.number} via=${r.via} price="${reply.price}" reason=${res.reason}`);
+        // `numeric=false` berarti yang terkirim adalah kalimat aman tanpa
+        // angka (produk banyak varian yang tidak terverifikasi). Dicatat apa
+        // adanya supaya log dukungan tidak terbaca seolah harga dikutip.
+        say(`[QA_PRICE_REPLY] product=${r.product.number} via=${r.via} numeric=${reply.numeric === true} price="${reply.price || ""}" reason=${res.reason}`);
         return { handled: true, reason: res.reason, product: r.product.number, text: reply.text };
       }
 

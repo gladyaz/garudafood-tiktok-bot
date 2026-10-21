@@ -237,12 +237,39 @@ function createBrowserSender({
     }
   }
 
-  async function attempt({ text, scene, playId }, timer) {
+  // IDENTITAS PENGIRIMAN.
+  //
+  // Jatah kirim-sekali dulu di-key oleh playId saja, dan itu benar untuk
+  // balasan scene: satu pemutaran = paling banyak satu kiriman. Tapi Product
+  // PRICE Q&A tidak memutar apa pun, jadi ia tidak punya playId - dan
+  // autopin/service.js menjatuhkannya ke 0. Akibatnya di LIVE nyata
+  // 2026-10-21: jawaban harga PERTAMA terkirim, lalu SEMUA jawaban berikutnya
+  // sepanjang run ditolak `duplicate-play-id`, apa pun produknya.
+  //
+  // Jadi kuncinya sekarang identitas pengiriman:
+  //
+  //   balasan scene  "play:<playId>"   + pemeriksaan basi generasi scene
+  //   Q&A            "<deliveryId>"    tanpa pemeriksaan basi - tidak ada
+  //                                    pemutaran yang bisa ketinggalan
+  //
+  // Jatahnya TIDAK dilonggarkan: identitas yang sama diminta dua kali tetap
+  // ditolak, dan itulah yang membuat percobaan ulang tidak bisa mengirim ganda.
+  function deliveryKeyOf(req) {
+    const d = req && typeof req.deliveryId === "string" ? req.deliveryId.trim() : "";
+    if (d) return { key: d, playId: null };
+    const n = Number.isFinite(req && req.playId) ? req.playId : null;
+    return { key: n === null ? null : "play:" + n, playId: n };
+  }
+
+  async function attempt(req, timer) {
+    const { text, scene } = req;
     if (!armed) return REFUSE("real-comment-send-disabled");
 
-    const id = Number.isFinite(playId) ? playId : null;
-    if (id === null) return REFUSE("play-id-required");
-    if (attempted.has(id)) {
+    const { key, playId } = deliveryKeyOf(req);
+    if (key === null) return REFUSE("play-id-required");
+    // Dicatat apa adanya: untuk Q&A ini id pengiriman, bukan playId.
+    const id = playId === null ? key : playId;
+    if (attempted.has(key)) {
       log(`[AUTOCOMMENT_SEND_SKIPPED] scene=${scene} playId=${id} reason=duplicate-play-id`);
       return REFUSE("duplicate-play-id");
     }
@@ -250,8 +277,9 @@ function createBrowserSender({
     // Satuan UTF-16, menyamai penghitung TikTok.
     if (text.length > maxLength) return REFUSE("message-too-long");
 
-    // Gerbang basi #1: sebelum menyentuh apa pun.
-    if (stale(id)) {
+    // Gerbang basi #1: sebelum menyentuh apa pun. HANYA untuk balasan scene -
+    // Q&A tidak punya generasi pemutaran yang bisa ketinggalan.
+    if (playId !== null && stale(playId)) {
       log(`[AUTOCOMMENT_SEND_STALE] scene=${scene} playId=${id} phase=before-type`);
       return REFUSE("stale");
     }
@@ -287,7 +315,7 @@ function createBrowserSender({
     // ---- mulai dari sini halaman benar-benar disentuh ----
     // Jatah playId dipakai SEKARANG: hasil setengah jadi atau ambigu pun tidak
     // boleh membuka percobaan kedua.
-    remember(id);
+    remember(key);
     log(`[AUTOCOMMENT_SEND_TYPING] scene=${scene} playId=${id} shop="${(observed || []).join(" | ")}" chars=${text.length}`);
 
     // Deadline milik kita sendiri, dihitung mundur dari sini. Service harus
@@ -354,7 +382,7 @@ function createBrowserSender({
 
     // Gerbang basi #2: tepat sebelum klik. Scene bisa berganti selama mengetik,
     // dan pesan scene lama TIDAK BOLEH muncul setelah scene baru mengambil alih.
-    if (timer.sync("stale", () => stale(id))) {
+    if (timer.sync("stale", () => (playId !== null && stale(playId)))) {
       const cleanup = await timer.step("cleanup", () => clearOwnText(p, text));
       log(`[AUTOCOMMENT_SEND_STALE] scene=${scene} playId=${id} phase=before-click cleared=${cleanup.cleared}`);
       return REFUSE("stale", { clicked: false, cleared: cleanup.cleared });

@@ -1049,7 +1049,23 @@ const lastProductSkip = new Map();
 // kedua, tanpa discovery Controller) lalu memutuskan dengan resolver pin yang
 // SAMA. Tidak pernah melempar.
 async function checkProductEligibility(rule) {
-  const title = rule && rule.product && typeof rule.product.title === "string" ? rule.product.title : "";
+  // SUMBER JUDUL: peta produk runtime, lewat kunci aturan - SAMA dengan yang
+  // dipakai pin.
+  //
+  // Versi pertama membaca `rule.product.title`, dan field itu TIDAK ADA:
+  // buildRuleFromMapping() di runtime/mappings.js membawa `key`, `actions`,
+  // `keywords`, dan detail pemutaran - bukan objek produk. Judulnya hidup di
+  // runtime.productMap, di-key oleh kunci aturan yang sama, dan objek itulah
+  // yang dioper ke createScenePin({ mapping: autopinMap }).
+  //
+  // Akibatnya di LIVE nyata 2026-10-21: setiap aturan autoPin tidur dengan
+  // `empty-title-key`, termasuk PAX-1 yang produknya ada dan bisa dipin.
+  //
+  // Membaca peta yang SAMA berarti gerbang dan pin tidak bisa menarget produk
+  // yang berbeda - dan kalau customer mengubah pemetaan, keduanya ikut berubah
+  // bersama karena hanya ada satu peta.
+  const key = ruleKeyOf(rule, rule && rule.scene);
+  const title = runtime.getProductForScene(key) || "";
   // refresh="never": jawab dari snapshot yang ADA. Gerbang ini duduk di depan
   // pemutaran, jadi ia tidak boleh menunggu sapuan penuh berdetik-detik.
   let read;
@@ -2010,6 +2026,14 @@ module.exports = {
     // ganti PEMBACA katalog saja, supaya gerbang kelayakan yang NYATA bisa
     // diuji ujung-ke-ujung tanpa service.
     setCatalogueReader: fake => { readCatalogue = fake; },
+    // Mengganti isi PETA PRODUK runtime. Objeknya DIMUTASI di tempat, bukan
+    // ditukar: objek yang sama sudah dioper ke createScenePin({ mapping }),
+    // jadi memutasinya mempertahankan sifat "satu peta" yang diuji
+    // test/runtime.paxmappingsource.test.js.
+    setProductMap: (map) => {
+      for (const k of Object.keys(autopinMap)) delete autopinMap[k];
+      Object.assign(autopinMap, map || {});
+    },
     productEligibilityOf: (rule) => checkProductEligibility(rule),
     priceQaScene: () => priceQa.QA_SCENE,
     autocommentEnabled: () => AUTOCOMMENT_ENABLED,
