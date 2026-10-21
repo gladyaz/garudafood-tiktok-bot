@@ -1071,9 +1071,16 @@ function createService({ config = loadConfig(), dryRun = false, allowCommentSend
     });
 
     app.post("/comment/send", async (req, res) => {
-    const { text, scene, playId, sessionId } = req.body || {};
+    // `deliveryId` HARUS ikut diurai dari req.body.
+    //
+    // LIVE nyata 2026-10-21: baris di bawah pernah berbunyi `body.deliveryId`,
+    // dan tidak ada binding bernama `body` di lingkup ini - hanya `req.body`.
+    // Jadi SETIAP kiriman melempar ReferenceError, ditelan `catch` di bawah,
+    // dan pulang sebagai `service-error` dalam 7ms: balasan HIGH scene maupun
+    // Product Q&A ikut mati, tanpa satu pun baris log di sisi service.
+    const { text, scene, playId, deliveryId, sessionId } = req.body || {};
     try {
-      res.json(await handleCommentSend({ text, scene, playId, deliveryId: body.deliveryId, sessionId }));
+      res.json(await handleCommentSend({ text, scene, playId, deliveryId, sessionId }));
     } catch {
       res.json({ ok: false, reason: "service-error" });
     }
