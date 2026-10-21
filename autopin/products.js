@@ -527,7 +527,7 @@ function readPinStateInPage(sel, opts) {
 // BUKTI KELENGKAPAN KATALOG
 //
 // Semua selector di bawah ditemukan dari DOM NYATA dan DIVERIFIKASI pada LIVE
-// 2026-10-20 (akun agen_mulia_abadi, katalog 5 produk). Lihat
+// 2026-10-20 (akun pilot, katalog 5 produk). Lihat
 // .autopin-debug/*_dom-probe.json dan *_scroll-probe.json.
 //
 // Kenapa ini ada: sampai v0.2.2, coverage="full" adalah KESIMPULAN dari dua
