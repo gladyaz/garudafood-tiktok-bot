@@ -305,10 +305,28 @@
     if (!validation) rows.push(unknown("ui.row.mappings"));
     else if (validation.ok) {
       var n = Array.isArray(validation.mappings) ? validation.mappings.length : 0;
-      // Kalimatnya netral-angka di setiap bahasa: bentuk jamak tidak dihitung
-      // di sini, karena Indonesia dan Mandarin tidak menandainya dan Inggris
-      // sudah ditulis supaya benar pada angka berapa pun.
-      rows.push({ label: tr(lang, "ui.row.mappings"), value: tr(lang, "ui.row.mappingsOk", { n: n }), tone: TONE.READY });
+      // Pemetaan yang TIDAK TERSEDIA di LIVE ini: verdict-nya hijau (START
+      // boleh), tapi aturan itu tidak bisa memin sekarang. Mengatakan
+      // "5 aturan siap" di situ adalah kalimat yang salah - dan ini satu-satunya
+      // tempat operator akan melihatnya.
+      //
+      // Tone ATTENTION, bukan blocker: daftar pemblokir dibentuk terpisah dari
+      // verdict SERVER, jadi baris ini tidak bisa menghijaukan/memerahkan START.
+      var degraded = Array.isArray(validation.mappings)
+        ? validation.mappings.filter(function (r) { return r && r.unavailable === true; }).length
+        : 0;
+      if (degraded > 0) {
+        rows.push({
+          label: tr(lang, "ui.row.mappings"),
+          value: tr(lang, "ui.row.mappingsDegraded", { n: degraded, ready: n - degraded }),
+          tone: TONE.ATTENTION,
+        });
+      } else {
+        // Kalimatnya netral-angka di setiap bahasa: bentuk jamak tidak dihitung
+        // di sini, karena Indonesia dan Mandarin tidak menandainya dan Inggris
+        // sudah ditulis supaya benar pada angka berapa pun.
+        rows.push({ label: tr(lang, "ui.row.mappings"), value: tr(lang, "ui.row.mappingsOk", { n: n }), tone: TONE.READY });
+      }
     } else {
       var bad = Array.isArray(validation.mappings) ? validation.mappings.filter(notOk).length : 0;
       rows.push({

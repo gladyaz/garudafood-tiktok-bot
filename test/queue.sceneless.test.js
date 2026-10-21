@@ -141,6 +141,10 @@ beforeEach(() => {
     },
   });
 
+  // Gerbang kelayakan produk DIMATIKAN untuk berkas ini: yang diuji di sini
+  // adalah antrean/pemutaran, bukan ketersediaan produk di etalase LIVE.
+  // Ketersediaan punya berkasnya sendiri (controller.productavailability).
+  bot.__test.setProductEligibility(() => Promise.resolve({ ok: true, reason: null }));
   bot.__test.setScenePin(scenePin);
   bot.__test.setAutoComment(autoComment);
   bot.__test.reset();

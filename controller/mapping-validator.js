@@ -35,6 +35,56 @@ const { resolveActions, declaresActions, anyEnabled } = require("../runtime/rule
 // Interaksi saat sepi: bentuk yang berlaku. Lihat runtime/idle.js.
 const { resolveIdle } = require("../runtime/idle");
 
+// ---------------------------------------------------------------------------
+// KETERSEDIAAN PRODUK BUKAN KERUSAKAN STRUKTURAL
+//
+// Ditemukan pada preflight LIVE NYATA 2026-10-21: tiga dari lima pemetaan
+// menunjuk produk yang tidak ada di etalase hari itu, dan SELURUH runtime
+// menolak start. Padahal etalase LIVE memang boleh berisi produk apa saja
+// dalam urutan apa saja - itu bukan kesalahan customer, dan bukan alasan untuk
+// mematikan AutoPIN pada dua pemetaan yang SEHAT, Product PRICE Q&A, balasan
+// FAQ, maupun interaksi saat sepi.
+//
+// Maka alasan di bawah DITURUNKAN menjadi peringatan per-baris. Barisnya tetap
+// `ok:false` - operator harus tetap melihat bahwa aturan itu tidak bisa memin
+// sekarang - tapi ia TIDAK lagi menjatuhkan verdict global.
+//
+// Daftarnya SENGAJA pendek, dan hanya memuat kondisi yang dihitung dari
+// KATALOG LIVE SAAT ITU:
+//
+//   product-not-found               produknya tidak ada di etalase sekarang
+//   live-pin-control-not-available  produknya ada, tombol pin-nya tidak
+//   ambiguous-product               produknya ada LEBIH DARI SATU sekarang
+//
+// ambiguous-product ikut DITURUNKAN pada 2026-10-21, sesudah pertimbangan
+// kedua. Ia memang bukan "produk tidak ada", tapi ia sama-sama dihitung dari
+// isi etalase saat itu: operator menambahkan satu produk bernama mirip, dan
+// kunci judul yang tadinya unik berhenti unik. Membiarkannya fatal berarti
+// satu produk baru bisa mematikan SELURUH otomasi - kelas kegagalan yang sama
+// yang perubahan ini ada untuk menghapus.
+//
+// Yang menjaga keselamatannya BUKAN preflight, dan tidak dilonggarkan:
+// resolveProductForPin menolak menebak di antara kandidat, gerbang kelayakan
+// di autopin/pin-eligibility.js menidurkan aturannya SEBELUM scene diputar,
+// dan aturan itu sembuh sendiri begitu etalase kembali tidak ambigu.
+//
+// Yang TIDAK masuk, dan alasannya:
+//
+//   empty-product-title / product-missing
+//                       Pin dinyalakan tanpa produk dipilih. Itu config yang
+//                       belum selesai, bukan etalase yang berubah.
+//   obs-scene-missing / scene-playback-unknown / duplicate-scene /
+//   ambiguous-trigger / no-triggers / no-actions-enabled / scene-required /
+//   reply-required*     semuanya murni dari config, tidak menyentuh katalog.
+//
+// Aturan yang TIDAK memin tidak pernah sampai ke sini: pemeriksaan produknya
+// dilewati seluruhnya di bawah (lihat `if (!actions.autoPin)`).
+const AVAILABILITY_REASONS = Object.freeze(new Set([
+  "product-not-found",
+  "live-pin-control-not-available",
+  "ambiguous-product",
+]));
+
 // Mengembalikan { ok, reason?, count?, product? } untuk satu kunci judul.
 function resolveProduct(catalogue, titleKey) {
   const want = normalizeTitleKey(titleKey);
@@ -188,6 +238,16 @@ function validateMappings({
       // Satu alasan utama untuk ditampilkan, daftar lengkap untuk yang mau tahu.
       row.reason = problems[0];
       row.reasons = problems;
+      // KLASIFIKASI. `reason`/`reasons` SENGAJA tidak diubah bentuknya: UI dan
+      // tes yang sudah ada membacanya. Yang ditambahkan di sini menjawab
+      // pertanyaan yang BERBEDA - "apakah ini menghalangi START?"
+      const blocking = problems.filter((p) => !AVAILABILITY_REASONS.has(p));
+      row.blocking = blocking.length > 0;
+      if (row.blocking) row.blockingReason = blocking[0];
+      if (problems.some((p) => AVAILABILITY_REASONS.has(p))) {
+        row.unavailable = true;
+        row.unavailableReason = problems.find((p) => AVAILABILITY_REASONS.has(p));
+      }
     }
     rows.push(row);
   }
@@ -246,7 +306,11 @@ function validateMappings({
     }
   }
 
-  const ok = mappings.length > 0 && rows.every((r) => r.ok) && idleOk;
+  // Verdict global dihitung dari baris yang MENGHALANGI, bukan dari baris yang
+  // sekadar tidak siap. Pemetaan kosong tetap bukan "semua lolos".
+  const blockingRows = rows.filter((r) => r.blocking === true);
+  const degradedRows = rows.filter((r) => r.unavailable === true);
+  const ok = mappings.length > 0 && blockingRows.length === 0 && idleOk;
   return {
     ok,
     // Pemetaan kosong bukan "semua lolos": sistem yang gunanya memin produk
@@ -256,7 +320,12 @@ function validateMappings({
     // Baris interaksi TERPISAH dari baris pemetaan: UI menyorot dua daftar yang
     // berbeda, dan menggabungkannya akan membuat nomor barisnya salah.
     idle: idleRows,
+    // Yang benar-benar MENGHALANGI start, dan yang hanya tidak tersedia
+    // sekarang. Keduanya diekspos: menyembunyikan `degraded` akan membuat
+    // "ok:true" terbaca sebagai "kelima aturan siap memin".
+    blocking: blockingRows,
+    degraded: degradedRows,
   };
 }
 
-module.exports = { validateMappings, resolveProduct, normalizeTitleKey };
+module.exports = { validateMappings, resolveProduct, normalizeTitleKey, AVAILABILITY_REASONS };

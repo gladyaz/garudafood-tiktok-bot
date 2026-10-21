@@ -603,14 +603,20 @@ const realAutoCommentState = autoComment.__state;
 // pembaca HTTP tipis yang sama idiomnya dengan jalur pin. Bot tetap TIDAK
 // memuat Puppeteer dan tidak pernah jatuh ke discovery Controller.
 const { createCatalogueReader } = require("./autopin/client");
+const { decidePinEligibility, needsProductEligibility } = require("./autopin/pin-eligibility");
 const { createPriceQa } = require("./qa/price-qa");
 const { createQaDedupe, createQaQuota } = require("./qa/dedupe");
+
+// SATU pembaca katalog untuk kedua pembacanya: Q&A dan gerbang kelayakan
+// produk. Dua instance akan berarti dua batas waktu dan dua alamat yang bisa
+// menyimpang; yang dibaca memang rute yang sama dan tidak beraksi.
+let readCatalogue = createCatalogueReader({ env: process.env });
 
 let priceQa = createPriceQa({
   // Mati kalau AutoComment mati: Q&A tidak punya jalan lain untuk bicara, dan
   // menyalakannya tanpa transport hanya menghasilkan log tanpa balasan.
   enabled: AUTOCOMMENT_ENABLED,
-  readProducts: createCatalogueReader({ env: process.env }),
+  readProducts: readCatalogue,
   requestComment: (req) => autoComment.requestComment(req),
   dedupe: createQaDedupe(),
   quota: createQaQuota(),
@@ -1026,9 +1032,69 @@ if (playedScenes.has(scene)) {
   }
 }
 
+// --- GERBANG KELAYAKAN PRODUK -----------------------------------------------
+//
+// Dipegang selagi pembacaan katalog berjalan, supaya processQueue() yang
+// dipanggil lagi di tengahnya tidak memulai pemutaran kedua. `busy` belum
+// boleh disetel di titik itu: aturan yang ternyata tidak layak TIDAK pernah
+// memutar apa pun, jadi ia juga tidak boleh meninggalkan busy yang menggantung.
+let productGateInFlight = false;
+
+// Alasan skip terakhir per kunci aturan. Satu aturan yang produknya hilang
+// seharian tidak boleh menulis satu baris log untuk setiap trigger - yang
+// dicatat adalah PERUBAHAN keadaan.
+const lastProductSkip = new Map();
+
+// Membaca katalog SAAT INI lewat service (baca-saja, loopback, tanpa Chrome
+// kedua, tanpa discovery Controller) lalu memutuskan dengan resolver pin yang
+// SAMA. Tidak pernah melempar.
+async function checkProductEligibility(rule) {
+  const title = rule && rule.product && typeof rule.product.title === "string" ? rule.product.title : "";
+  // refresh="never": jawab dari snapshot yang ADA. Gerbang ini duduk di depan
+  // pemutaran, jadi ia tidak boleh menunggu sapuan penuh berdetik-detik.
+  let read;
+  try {
+    read = await readCatalogue({ refresh: "never" });
+  } catch {
+    read = { ok: false, error: "product-snapshot-unavailable" };
+  }
+  const verdict = decidePinEligibility({ read, title });
+  // Bukti yang tidak cukup DINUDGE supaya trigger BERIKUTNYA bisa jalan -
+  // tanpa ditunggu, persis seperti jalur Q&A. Service sendiri yang menjaga
+  // single-flight, jeda lantai, dan prioritas pin.
+  if (!verdict.ok && String(verdict.reason).startsWith("catalogue-")) {
+    try {
+      const p = readCatalogue({ refresh: "full" });
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch { /* nudge yang gagal bukan alasan berhenti */ }
+  }
+  return verdict;
+}
+
+// Pemeriksa yang DIPAKAI antrean. Bisa ditukar oleh tes lewat
+// __test.setProductEligibility, sama seperti scenePin dan autoComment: tes
+// pemutaran/antrean tidak menjalankan service, jadi ia menyatakan sendiri
+// bahwa ketersediaan produk bukan yang sedang diuji.
+let productEligibility = checkProductEligibility;
+
+// SATU tempat yang menyerahkan entri antrean ke pemutaran. Diekstrak supaya
+// jalur bergerbang dan jalur biasa tidak pernah bisa menyimpang soal apa yang
+// ditandai sudah diputar.
+function commitAndPlay(next) {
+  busy = true;
+  activeScene = next.scene;
+
+  // === tandai scene ini sudah diputar ===
+  playedScenes.add(next.scene);
+
+  console.log(`[PLAY] scene=${next.scene} count=${next.count} requesters=${next.requesters ? next.requesters.size : 0}`);
+  currentPlayRequesters = next.requesters ? next.requesters.size : 0;
+  processTrigger(next.rule);
+}
+
 // processQueue updated: pick highest priority aggregate first (but preserve FIFO as tiebreak)
 function processQueue() {
-  if (busy) return;
+  if (busy || productGateInFlight) return;
   if (sceneAggregates.length === 0) {
     console.log("📭 Aggregate queue kosong.");
     return;
@@ -1054,15 +1120,46 @@ if (next) {
     return processQueue();
   }
 
-  busy = true;
-  activeScene = next.scene;
+  // === KELAYAKAN PRODUK: aturan yang memin tidak boleh MEMUTAR apa pun
+  //     sampai targetnya terbukti bisa ditarget terhadap katalog SAAT INI ===
+  //
+  // Hanya aksi pin yang bergantung produk. FAQ, scene-only, interaksi saat
+  // sepi, dan Product PRICE Q&A tidak pernah lewat sini.
+  // Saklar GLOBAL ikut diperiksa. ruleActionsOf() hanya menjawab apa yang
+  // DIMINTA aturan; AUTOPIN_ENABLED menjawab apakah pin benar-benar bisa
+  // terjadi, dan ia tertanam di instance scenePin. Kalau AutoPIN mati secara
+  // global, aturan ini tidak memin apa pun - jadi ketersediaan produk tidak
+  // relevan, dan menidurkan scene-nya akan membuat saklar darurat itu
+  // mematikan seluruh pemutaran PAX, bukan hanya pin-nya.
+  if (AUTOPIN_ENABLED && needsProductEligibility(ruleActionsOf(next.rule))) {
+    const key = ruleKeyOf(next.rule, next.scene);
+    productGateInFlight = true;
+    productEligibility(next.rule)
+      .then((v) => {
+        productGateInFlight = false;
+        if (v.ok) {
+          lastProductSkip.delete(key);
+          commitAndPlay(next);
+          return;
+        }
+        // Tidak ada scene, tidak ada pin, tidak ada balasan, tidak ada aksi
+        // tertunda yang menunggu produknya muncul. Entrinya sudah keluar dari
+        // antrean, dan TIDAK ditandai sudah diputar - ia memang tidak diputar.
+        if (lastProductSkip.get(key) !== v.reason) {
+          lastProductSkip.set(key, v.reason);
+          console.log(`[SKIP_PRODUCT_UNAVAILABLE] scene=${next.scene} reason=${v.reason}`);
+        }
+        processQueue();
+      })
+      .catch(() => {
+        // Gerbang yang melempar tidak boleh menggantungkan antrean.
+        productGateInFlight = false;
+        processQueue();
+      });
+    return;
+  }
 
-  // === tandai scene ini sudah diputar ===
-  playedScenes.add(next.scene);
-
-  console.log(`[PLAY] scene=${next.scene} count=${next.count} requesters=${next.requesters ? next.requesters.size : 0}`);
-  currentPlayRequesters = next.requesters ? next.requesters.size : 0;
-  processTrigger(next.rule);
+  commitAndPlay(next);
 }
 }
 
@@ -1908,6 +2005,12 @@ module.exports = {
     setAutoComment: fake => { autoComment = fake; },
     // ganti jalur Product Q&A dengan palsu (tes prioritas tanpa HTTP)
     setPriceQa: fake => { priceQa = fake; },
+    // ganti gerbang kelayakan produk (tes antrean/pemutaran tanpa service)
+    setProductEligibility: fake => { productEligibility = fake; },
+    // ganti PEMBACA katalog saja, supaya gerbang kelayakan yang NYATA bisa
+    // diuji ujung-ke-ujung tanpa service.
+    setCatalogueReader: fake => { readCatalogue = fake; },
+    productEligibilityOf: (rule) => checkProductEligibility(rule),
     priceQaScene: () => priceQa.QA_SCENE,
     autocommentEnabled: () => AUTOCOMMENT_ENABLED,
     autocommentTransport: () => AUTOCOMMENT_TRANSPORT,
@@ -1974,6 +2077,10 @@ module.exports = {
       idleArmed = false;
       idleCursor = 0;
       lastActivityAt = 0;
+      // Dedupe baris skip ikut dibersihkan: run baru harus mencatat baris
+      // pertamanya, bukan menganggapnya ulangan dari run sebelumnya.
+      lastProductSkip.clear();
+      productGateInFlight = false;
     },
   },
 };

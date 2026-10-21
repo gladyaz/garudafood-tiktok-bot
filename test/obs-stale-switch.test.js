@@ -70,6 +70,10 @@ beforeEach(() => {
     return Promise.resolve();
   };
 
+  // Gerbang kelayakan produk DIMATIKAN untuk berkas ini: yang diuji di sini
+  // adalah antrean/pemutaran, bukan ketersediaan produk di etalase LIVE.
+  // Ketersediaan punya berkasnya sendiri (controller.productavailability).
+  bot.__test.setProductEligibility(() => Promise.resolve({ ok: true, reason: null }));
   bot.__test.setScenePin({ requestPin(req) { pinRequests.push(req); return Promise.resolve({ ok: true }); } });
   bot.__test.setAutoComment({ requestComment(req) { commentRequests.push(req); return Promise.resolve({ ok: true, dryRun: true }); } });
   bot.__test.reset();

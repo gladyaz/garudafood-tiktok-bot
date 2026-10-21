@@ -347,29 +347,84 @@ test("Start DITOLAK kalau scene pemetaan tidak ada di OBS, dan NOL proses menyal
   assert.equal(h.controller.state(), STATES.STOPPED);
 });
 
-test("Start DITOLAK kalau produk yang dipetakan tidak ada di katalog LIVE", async () => {
+// KEBIJAKAN DIUBAH 2026-10-21, sesudah preflight LIVE nyata.
+//
+// Tes ini DULU menuntut Start DITOLAK ketika sebuah produk yang dipetakan tidak
+// ada di katalog LIVE. Itu terbukti terlalu keras pada LIVE sungguhan: tiga dari
+// lima pemetaan customer menunjuk produk yang tidak ada di etalase hari itu, dan
+// SELURUH runtime menolak menyala - termasuk dua pemetaan yang sehat, Product
+// PRICE Q&A, balasan FAQ, dan interaksi saat sepi.
+//
+// Etalase LIVE memang boleh berisi produk apa saja dalam urutan apa saja. Produk
+// yang absen adalah keadaan DUNIA, bukan config yang rusak, jadi ia sekarang
+// peringatan per-baris. Yang menjaga keselamatannya ada di tempat lain dan tidak
+// dilonggarkan: resolveProductForPin tetap menolak memin apa pun saat produknya
+// tidak ketemu, dan gerbang bukti pin di autocomment/core.js tetap membungkam
+// balasan "sudah aku pin" untuk pin yang gagal.
+test("Start DIIZINKAN kalau produk yang dipetakan tidak ada di katalog LIVE, dengan peringatan", async () => {
   const cfg = goodConfig();
   cfg.mappings = [{ scene: "PAX-1", product: { title: "Produk Hantu" }, triggers: ["etalase satu"], reply: "ok" }];
   const h = harnessWith({ config: cfg });
 
   const r = await h.controller.startAutomation();
 
-  assert.equal(r.ok, false);
-  assert.equal(r.error.code, "mapping-validation-failed");
-  assert.equal(h.world.spawned.length, 0);
+  assert.equal(r.ok, true, "produk absen tidak boleh memblokir START: " + JSON.stringify(r.error || null));
+  assert.ok(h.world.spawned.length > 0, "runtime harus benar-benar menyala");
+
+  // Dan operator TETAP diberi tahu: barisnya tidak diam-diam dianggap siap.
+  const mp = r.preflight.checks.mappings;
+  assert.equal(mp.ok, true);
+  assert.equal(mp.warning, "mapping-product-unavailable");
+  assert.equal(mp.degradedCount, 1);
+  assert.equal(mp.degraded[0].scene, "PAX-1");
+  assert.equal(mp.degraded[0].ok, false, "baris itu TIDAK siap");
+  assert.equal(mp.degraded[0].blocking, false, "tapi ia tidak menghalangi START");
+  assert.equal(mp.degraded[0].unavailableReason, "product-not-found");
 });
 
-test("Start DITOLAK kalau produk ambigu", async () => {
+test("Start TETAP DIIZINKAN walau TIDAK ADA SATU PUN pemetaan pin yang tersedia", async () => {
+  // Tidak ada aturan "minimal satu PAX valid" supaya START hijau. Product PRICE
+  // Q&A bekerja atas katalog LIVE, bukan atas pemetaan, jadi runtime yang menyala
+  // tanpa satu pun target pin tetap berguna.
+  const cfg = goodConfig();
+  cfg.mappings = [
+    { scene: "PAX-1", product: { title: "Hantu Satu" }, triggers: ["etalase satu"], reply: "ok" },
+    { scene: "PAX-2", product: { title: "Hantu Dua" }, triggers: ["etalase dua"], reply: "ok" },
+  ];
+  const h = harnessWith({ config: cfg });
+
+  const r = await h.controller.startAutomation();
+
+  assert.equal(r.ok, true, JSON.stringify(r.error || null));
+  const mp = r.preflight.checks.mappings;
+  assert.equal(mp.ok, true);
+  assert.equal(mp.degradedCount, 2);
+  assert.deepEqual(mp.degraded.map((x) => x.scene).sort(), ["PAX-1", "PAX-2"]);
+});
+
+// KEBIJAKAN DIUBAH 2026-10-21 (putaran kedua): ambiguitas katalog juga bukan
+// kegagalan global. Operator yang menambahkan satu produk bernama mirip tidak
+// boleh mematikan seluruh otomasi. Yang menjaganya pindah ke DUA tempat yang
+// keduanya menolak menebak: gerbang kelayakan sebelum scene diputar
+// (autopin/pin-eligibility.js), dan resolveProductForPin saat pin.
+test("Start DIIZINKAN kalau produk ambigu, dengan peringatan", async () => {
   const cfg = goodConfig();
   cfg.mappings = [{ scene: "PAX-1", product: { title: "Gery Potato Cracker" }, triggers: ["etalase satu"], reply: "ok" }];
   const h = harnessWith({ config: cfg });
 
   const r = await h.controller.startAutomation();
-  assert.equal(r.ok, false);
-  assert.equal(h.world.spawned.length, 0);
-  // Baris yang bermasalah ikut dilaporkan, supaya UI bisa menyorotnya.
-  const rows = r.preflight.checks.mappings.mappings;
-  assert.equal(rows[0].reason, "ambiguous-product");
+  assert.equal(r.ok, true, JSON.stringify(r.error || null));
+  assert.ok(h.world.spawned.length > 0, "runtime harus menyala");
+
+  const mp = r.preflight.checks.mappings;
+  assert.equal(mp.ok, true);
+  assert.equal(mp.warning, "mapping-product-unavailable");
+  assert.equal(mp.degradedCount, 1);
+  assert.equal(mp.degraded[0].unavailableReason, "ambiguous-product");
+  // Barisnya tetap TIDAK siap, dan jumlah kandidatnya tetap dilaporkan.
+  assert.equal(mp.degraded[0].ok, false);
+  assert.equal(mp.degraded[0].reason, "ambiguous-product");
+  assert.equal(mp.degraded[0].matches, 2);
 });
 
 test("Start DITOLAK kalau dua scene memakai trigger yang sama sesudah normalisasi", async () => {

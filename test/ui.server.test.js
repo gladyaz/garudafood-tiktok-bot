@@ -305,12 +305,18 @@ test("frontend tidak pernah meminta password OBS, dan server tidak mengirimnya",
 
 // --- kalimat untuk customer datang dari server ------------------------------
 
+// KEBIJAKAN DIUBAH 2026-10-21: produk yang tidak ada di etalase LIVE adalah
+// PERINGATAN per-baris, bukan pemblokir global. Lihat AVAILABILITY_REASONS di
+// controller/mapping-validator.js dan test/controller.productavailability.test.js.
 test("/api/mappings/validate mengirim userMessage per baris", async () => {
   const cfg = configForCatalogue();
   cfg.mappings[0].product.title = "Produk Hantu";
   await withServer({ config: cfg }, async ({ base }) => {
     const r = await send(base, "/api/mappings/validate", "POST");
-    assert.equal(r.body.ok, false);
+    // Verdict global hijau; kalimat PER BARIS tetap dikirim - dan itu justru
+    // yang diuji di sini, karena sekarang ia satu-satunya tempat operator
+    // melihat bahwa baris ini tidak bisa memin.
+    assert.equal(r.body.ok, true);
     assert.equal(r.body.mappings[0].reason, "product-not-found");
     // Inilah yang ditampilkan UI; ia tidak membentuk kalimat sendiri.
     assert.equal(r.body.mappings[0].userMessage, "The mapped product was not found in the LIVE product list.");

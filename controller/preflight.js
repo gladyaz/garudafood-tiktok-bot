@@ -341,16 +341,28 @@ function createPreflight({
         autoCommentEnabled: s.autoCommentEnabled === true,
         playableScenes: scenesOf(),
       });
+      // Produk yang tidak ada di etalase TIDAK menjatuhkan check ini. Ia
+      // dilaporkan sebagai PERINGATAN dan START tetap diizinkan - lihat
+      // AVAILABILITY_REASONS di controller/mapping-validator.js.
+      //
+      // Baris yang tidak tersedia tetap dikirim, baik check-nya hijau maupun
+      // merah. Kalau tidak, satu-satunya tempat operator bisa melihat bahwa
+      // tiga aturannya tidak bisa memin justru hilang ketika kita berhenti
+      // memblokirnya.
+      const degraded = Array.isArray(verdict.degraded) ? verdict.degraded : [];
+      const warn = degraded.length > 0
+        ? { warning: "mapping-product-unavailable", degraded, degradedCount: degraded.length }
+        : {};
       checks.mappings = verdict.ok
-        ? { ok: true, count: config.mappings.length, idleCount: verdict.idle.length }
-        : {
+        ? Object.assign({ ok: true, count: config.mappings.length, idleCount: verdict.idle.length }, warn)
+        : Object.assign({
             ok: false,
             reason: verdict.reason || "mapping-validation-failed",
             // Hasil per baris ikut, supaya UI bisa menyorot pemetaan yang salah
             // tanpa menebak dari kalimat ringkasannya.
             mappings: verdict.mappings.filter((row) => !row.ok),
             idle: verdict.idle.filter((row) => !row.ok),
-          };
+          }, warn);
     } catch {
       checks.mappings = { ok: false, reason: "mapping-validation-failed" };
     }

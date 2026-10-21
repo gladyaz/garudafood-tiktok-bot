@@ -219,11 +219,18 @@ test("preflight GAGAL: TIDAK ada arming, dan nol proses", async () => {
   assert.equal(h.controller.status().run.armed, false);
 });
 
+// KEBIJAKAN DIUBAH 2026-10-21: produk yang tidak ada di etalase LIVE adalah
+// PERINGATAN per-baris, bukan pemblokir global. Lihat AVAILABILITY_REASONS di
+// controller/mapping-validator.js dan test/controller.productavailability.test.js.
+//
+// Fixture-nya diganti menjadi kerusakan STRUKTURAL (scene yang tidak ada di
+// OBS), karena itulah yang tes ini sebenarnya uji: pemetaan yang TIDAK VALID
+// tidak boleh menghasilkan otoritas run. Produk yang absen tidak lagi termasuk.
 test("pemetaan tidak valid: tidak ada arming", async () => {
   const cfg = goodConfig();
   cfg.settings.autoCommentEnabled = true;
   cfg.settings.autoCommentTransport = "browser";
-  cfg.mappings = [{ scene: "PAX-1", product: { title: "Produk Hantu" }, triggers: ["etalase satu"], reply: "x" }];
+  cfg.mappings = [{ scene: "PAX-9", product: { title: "O'CORN Sea Salt" }, triggers: ["etalase satu"], reply: "x" }];
   const h = harness({ config: cfg });
 
   const r = await h.controller.startAutomation();

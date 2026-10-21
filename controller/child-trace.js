@@ -80,6 +80,14 @@ const TRACE_TAGS = Object.freeze([
   // adalah membaca kode, dan itu persis yang terjadi pada audit 2026-10-16.
   "PAUSE_CANCELLED",
   "SKIP_ACTIVE",
+  // Aturan yang BERGANTUNG PRODUK dilewati karena targetnya tidak bisa
+  // ditarget dengan aman terhadap katalog saat itu. Didaftarkan satu-satu,
+  // seperti tag SKIP_* lainnya: tanpa baris ini, "kenapa scene PAX-3 tidak
+  // pernah main" hanya bisa dijawab dengan membaca kode.
+  //
+  // Isinya hanya scene dan satu token alasan tertutup - tidak ada judul
+  // produk, harga, identitas penonton, maupun komentar mentah.
+  "SKIP_PRODUCT_UNAVAILABLE",
   "SKIP_COOLDOWN",
   "SKIP_PLAYED",
   "SKIP_QUEUED",

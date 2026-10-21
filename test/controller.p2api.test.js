@@ -249,15 +249,22 @@ test("POST /api/mappings/validate: pemetaan benar -> ok, dan menyebut apa yang d
   });
 });
 
-test("POST /api/mappings/validate: produk tidak ada -> baris yang salah disebutkan", async () => {
+// KEBIJAKAN DIUBAH 2026-10-21: produk yang tidak ada di etalase LIVE adalah
+// PERINGATAN per-baris, bukan pemblokir global. Lihat AVAILABILITY_REASONS di
+// controller/mapping-validator.js dan test/controller.productavailability.test.js.
+test("POST /api/mappings/validate: produk tidak ada -> baris yang salah tetap disebutkan", async () => {
   const cfg = configForCatalogue();
   cfg.mappings[0].product.title = "Produk Hantu";
   await withServer({ config: cfg }, async ({ base }) => {
     const { body } = await send(base, "/api/mappings/validate", "POST");
-    assert.equal(body.ok, false);
+    // Verdict global TIDAK lagi merah karena satu produk absen...
+    assert.equal(body.ok, true);
+    // ...tapi barisnya tetap ditunjuk, dan tetap TIDAK dianggap siap.
     assert.equal(body.mappings[0].ok, false);
     assert.equal(body.mappings[0].reason, "product-not-found");
     assert.equal(body.mappings[0].scene, "PAX-1");
+    assert.equal(body.mappings[0].blocking, false);
+    assert.equal(body.mappings[0].unavailable, true);
     // Baris yang benar tetap dilaporkan benar.
     assert.equal(body.mappings[1].ok, true);
   });
@@ -456,15 +463,35 @@ test("POST /api/preflight menyertakan check mappings", async () => {
   });
 });
 
-test("POST /api/preflight: pemetaan salah membuat preflight merah dan menyebut barisnya", async () => {
+// KEBIJAKAN DIUBAH 2026-10-21: produk yang tidak ada di etalase LIVE adalah
+// PERINGATAN per-baris, bukan pemblokir global. Lihat AVAILABILITY_REASONS di
+// controller/mapping-validator.js dan test/controller.productavailability.test.js.
+//
+// Dipecah menjadi dua, karena sejak perubahan itu keduanya adalah hasil yang
+// BERBEDA: kerusakan struktural tetap merah, produk absen menjadi peringatan.
+test("POST /api/preflight: pemetaan RUSAK membuat preflight merah dan menyebut barisnya", async () => {
   const cfg = configForCatalogue();
-  cfg.mappings[1].product.title = "Produk Hantu";
+  cfg.mappings[1].scene = "PAX-9"; // tidak ada di OBS -> struktural
   await withServer({ config: cfg }, async ({ base }) => {
     const { body } = await send(base, "/api/preflight", "POST");
     assert.equal(body.ok, false);
     assert.equal(body.checks.mappings.ok, false);
-    assert.equal(body.checks.mappings.mappings[0].scene, "PAX-2");
-    assert.equal(body.checks.mappings.mappings[0].reason, "product-not-found");
+    assert.equal(body.checks.mappings.mappings[0].scene, "PAX-9");
+    assert.equal(body.checks.mappings.mappings[0].reason, "obs-scene-missing");
+  });
+});
+
+test("POST /api/preflight: produk ABSEN -> preflight HIJAU dengan peringatan, barisnya tetap disebut", async () => {
+  const cfg = configForCatalogue();
+  cfg.mappings[1].product.title = "Produk Hantu";
+  await withServer({ config: cfg }, async ({ base }) => {
+    const { body } = await send(base, "/api/preflight", "POST");
+    assert.equal(body.ok, true, JSON.stringify(body.checks.mappings));
+    assert.equal(body.checks.mappings.ok, true);
+    assert.equal(body.checks.mappings.warning, "mapping-product-unavailable");
+    assert.equal(body.checks.mappings.degradedCount, 1);
+    assert.equal(body.checks.mappings.degraded[0].scene, "PAX-2");
+    assert.equal(body.checks.mappings.degraded[0].unavailableReason, "product-not-found");
   });
 });
 

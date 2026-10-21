@@ -102,6 +102,10 @@ beforeEach(() => {
     obsSwitches.push(params.sceneName);
     return Promise.resolve();
   };
+  // Gerbang kelayakan produk DIMATIKAN untuk berkas ini: yang diuji di sini
+  // adalah antrean/pemutaran, bukan ketersediaan produk di etalase LIVE.
+  // Ketersediaan punya berkasnya sendiri (controller.productavailability).
+  bot.__test.setProductEligibility(() => Promise.resolve({ ok: true, reason: null }));
   bot.__test.setScenePin(fakePin());
   bot.__test.setAutoComment(fakeComment());
   bot.__test.reset();
