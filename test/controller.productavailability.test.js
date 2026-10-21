@@ -54,7 +54,14 @@ const { inspectPinResult } = require("../autopin/pin-result");
 const OBS_SCENES = ["MAIN", "PAX-1", "PAX-2", "PAX-3", "PAX-4", "PAX-5"];
 const PLAYABLE = OBS_SCENES;
 
-// Produk etalase. `pinButtons` dibutuhkan resolveProductForPin.
+// Produk etalase. Berkas ini menguji DUA lapis sekaligus, jadi fixture-nya
+// membawa kedua bentuk dengan sengaja:
+//
+//   pinButtons/pinVisible  dibaca resolveProductForPin (jalur pin, MENTAH)
+//   pinAvailable           dibaca validator pemetaan Controller (preflight)
+//
+// Gerbang kelayakan TIDAK diuji dari sini - bentuk ternormalisasinya diikat di
+// test/autopin.eligibilityshape.test.js lewat jalur penyimpanan produksi.
 const P = (number, title, extra = {}) =>
   Object.assign(
     { number, title, pinButtons: 1, pinVisible: true, pinDisabled: false, pinAvailable: true },

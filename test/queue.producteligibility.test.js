@@ -16,8 +16,19 @@ const { COVERAGE } = require("../autopin/catalogue");
 const TARGET = "Garuda - Kacang ATOM 16gr 1 RENCENG ISI 10 PCS oat - GRD";
 const LAIN = "Chocolatos Wafer Roll Chocolate 32gr";
 
+// BENTUK FIXTURE: TERNORMALISASI, bukan mentah.
+//
+// Gerbang kelayakan membaca snapshot katalog, dan snapshot itu membawa
+// pinAvailable/pinDisabled - BUKAN pinButtons/pinVisible (lihat
+// toSnapshotProduct di autopin/catalogue.js). Fixture versi pertama mengarang
+// `pinButtons: 1`, dan karena itu ia menyembunyikan bug yang baru terlihat di
+// LIVE nyata 2026-10-21: setiap produk sehat ditolak
+// live-pin-control-not-available.
+//
+// Kontrak bentuknya diikat terpisah, lewat jalur penyimpanan PRODUKSI, di
+// test/autopin.eligibilityshape.test.js.
 const P = (number, title, extra = {}) =>
-  Object.assign({ number, title, pinButtons: 1, pinVisible: true, pinDisabled: false }, extra);
+  Object.assign({ number, title, pinAvailable: true, pinDisabled: false }, extra);
 
 let logs;
 let obsSwitches;
@@ -143,7 +154,7 @@ test("TARGET AMBIGU: tanpa scene, tanpa pin, tanpa balasan, tanpa kandidat diteb
 });
 
 test("KONTROL PIN TIDAK TERSEDIA: tidur, bukan memutar", async () => {
-  setKatalog([P(1, TARGET, { pinButtons: 0 })]);
+  setKatalog([P(1, TARGET, { pinAvailable: false })]);
   await trigger(aturanPin("PAX-1", TARGET));
 
   assert.deepEqual(obsSwitches, []);

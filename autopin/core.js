@@ -98,20 +98,53 @@ function normalizeTitleKey(value) {
     .toLowerCase();
 }
 
-// Resolusi target untuk aksi PIN SEBENARNYA (button[data-pin-performance-source="product_card"]).
-// Menolak: tidak ketemu, ambigu, kontrol pin LIVE tidak ada, kontrol ganda, tersembunyi, disabled.
-// Tidak pernah jatuh ke shopping_list, teks "Pin" generik, atau .pc_top_product.
-function resolveProductForPin(products, titleKey) {
+// IDENTITAS produk, dan HANYA identitas: 0 / 1 / banyak terhadap judul yang
+// dinormalkan. Tidak satu pun field kontrol pin dibaca di sini.
+//
+// KENAPA DIPISAH
+//
+// Ada DUA bentuk produk di sistem ini, dan keduanya sah:
+//
+//   mentah (jalur pin)        pinButtons, pinVisible, pinDisabled
+//   ternormalisasi (katalog)  pinAvailable, pinDisabled, pinText
+//                             - lihat toSnapshotProduct di autopin/catalogue.js
+//
+// Snapshot katalog MENYULING pinButtons menjadi pinAvailable dan tidak
+// menyimpan pinButtons. Jadi fungsi yang memeriksa product.pinButtons hanya
+// benar untuk bentuk MENTAH, dan pada LIVE nyata 2026-10-21 gerbang kelayakan
+// pra-scene memakainya atas bentuk TERNORMALISASI: setiap produk yang sehat
+// ditolak sebagai live-pin-control-not-available, dan setiap aturan PAX yang
+// valid tertidur.
+//
+// Identitas tidak punya masalah itu - `title` ada di kedua bentuk. Jadi ia
+// menjadi primitif BERSAMA, dipakai gerbang dan jalur pin, supaya semantik
+// judul (normalisasi yang sama, penolakan ambigu yang sama, tanpa cadangan ke
+// nomor etalase) tidak bisa menyimpang di antara keduanya.
+function resolveProductIdentity(products, titleKey) {
   const want = normalizeTitleKey(titleKey);
   if (!want) return { ok: false, reason: "empty-title-key" };
 
-  const matches = products.filter((p) => normalizeTitleKey(p.title).includes(want));
+  const list = Array.isArray(products) ? products : [];
+  const matches = list.filter((p) => normalizeTitleKey(p.title).includes(want));
   if (matches.length === 0) return { ok: false, reason: "product-not-found" };
-  if (matches.length > 1) {
-    return { ok: false, reason: "ambiguous-product", count: matches.length };
-  }
+  // Dua produk yang cocok berarti kunci judulnya tidak cukup unik. Memilih
+  // salah satu berarti memin yang salah separuh waktu.
+  if (matches.length > 1) return { ok: false, reason: "ambiguous-product", count: matches.length };
+  return { ok: true, product: matches[0] };
+}
 
-  const product = matches[0];
+// Resolusi target untuk aksi PIN SEBENARNYA (button[data-pin-performance-source="product_card"]).
+// Menolak: tidak ketemu, ambigu, kontrol pin LIVE tidak ada, kontrol ganda, tersembunyi, disabled.
+// Tidak pernah jatuh ke shopping_list, teks "Pin" generik, atau .pc_top_product.
+//
+// Pemeriksaan kontrolnya TETAP atas bentuk MENTAH, dan itu disengaja: ini
+// dijalankan tepat sebelum klik, terhadap DOM saat itu. Gerbang pra-scene
+// adalah keputusan keselamatan AWAL, bukan penggantinya.
+function resolveProductForPin(products, titleKey) {
+  const id = resolveProductIdentity(products, titleKey);
+  if (!id.ok) return id;
+
+  const product = id.product;
   if (!product.pinButtons) return { ok: false, reason: "live-pin-control-not-available", product };
   if (product.pinButtons > 1) return { ok: false, reason: "ambiguous-control", product };
   if (product.pinVisible === false) return { ok: false, reason: "control-not-visible", product };
@@ -201,6 +234,7 @@ module.exports = {
   checkIdentity,
   decidePinMode,
   normalizeTitleKey,
+  resolveProductIdentity,
   resolveProductForPin,
   resolveProductForQuery,
   resolveProduct,

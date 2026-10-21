@@ -17,14 +17,27 @@
 // dipetakan bisa ditarget dengan AMAN terhadap katalog SAAT INI?
 //
 // ---------------------------------------------------------------------------
-// TIDAK ADA RESOLVER KEDUA
+// SATU PRIMITIF IDENTITAS, DUA BENTUK PRODUK
 //
-// Keputusannya memakai resolveProductForPin() yang SAMA dengan yang dipakai pin
-// itu sendiri. Itu disengaja: resolver kedua yang "mirip" akan menyimpang, dan
-// penyimpangan di sini berarti gerbang mengatakan BOLEH sementara pin kemudian
-// mengatakan tidak ketemu - atau sebaliknya, scene yang sehat ikut tertidur.
-// Satu implementasi, satu semantik: identitas judul yang dinormalkan, penolakan
-// saat ambigu, tanpa cadangan ke posisi/nomor etalase.
+// Identitasnya memakai resolveProductIdentity() yang SAMA dengan jalur pin,
+// jadi semantik judul tidak bisa menyimpang: normalisasi yang sama, penolakan
+// ambigu yang sama, tanpa cadangan ke posisi/nomor etalase.
+//
+// Yang TIDAK boleh dibagi adalah pemeriksaan KONTROL PIN, karena bentuk
+// produknya berbeda:
+//
+//   mentah (jalur pin)        pinButtons, pinVisible, pinDisabled
+//   ternormalisasi (katalog)  pinAvailable, pinDisabled   <- yang dibaca DI SINI
+//
+// toSnapshotProduct() di autopin/catalogue.js menyuling pinButtons menjadi
+// pinAvailable dan TIDAK menyimpan pinButtons (maupun pinVisible). Versi
+// pertama modul ini memanggil resolveProductForPin() atas snapshot katalog,
+// jadi `product.pinButtons` selalu undefined dan SETIAP produk sehat ditolak
+// live-pin-control-not-available. Pada LIVE nyata 2026-10-21 itu berarti PAX-1
+// dan PAX-2 - keduanya ada dan bisa dipin - ikut tertidur.
+//
+// Perbaikannya bukan mengarang pinButtons di snapshot, melainkan membaca
+// kontrak yang memang dimiliki snapshot.
 //
 // ---------------------------------------------------------------------------
 // KELAYAKAN POSITIF MENUNTUT CAKUPAN PENUH YANG DISAKSIKAN
@@ -49,25 +62,27 @@
 // bentuk yang tidak utuh - gagal tertutup untuk aturan ITU saja, dengan alasan
 // yang jujur, dan TIDAK pernah menjadi peringatan pemetaan di preflight:
 // kesegaran katalog adalah kondisi runtime, bukan cacat konfigurasi.
-const { resolveProductForPin } = require("./core");
+const { resolveProductIdentity } = require("./core");
 const { COVERAGE } = require("./catalogue");
 
 // Alasan tidur yang TERTUTUP. Token teknis, tanpa judul produk, tanpa harga,
 // tanpa identitas penonton - baris ini ikut ke log dukungan customer.
 const SLEEP_REASONS = Object.freeze([
-  // dari resolveProductForPin
+  // identitas, dari resolveProductIdentity
   "product-not-found",
   "ambiguous-product",
-  "live-pin-control-not-available",
-  "ambiguous-control",
-  "control-not-visible",
-  "control-disabled",
   "empty-title-key",
-  // dari bukti katalognya sendiri
+  // kesehatan kontrol pin, dari field KATALOG (pinAvailable / pinDisabled)
+  "live-pin-control-not-available",
+  "control-disabled",
+  // bukti katalognya sendiri
   "catalogue-unavailable",
   "catalogue-stale",
   "catalogue-coverage-insufficient",
 ]);
+// `ambiguous-control` dan `control-not-visible` SENGAJA tidak ada di sini:
+// keduanya diturunkan dari pinButtons/pinVisible, yang tidak disimpan snapshot.
+// Keduanya tetap hidup di jalur pin, yang memeriksa DOM saat itu sebelum klik.
 
 // KEPUTUSAN MURNI. `read` adalah jawaban apa adanya dari pembaca katalog
 // (autopin/client.js createCatalogueReader), yaitu bentuk catalogue.read().
@@ -94,9 +109,19 @@ function decidePinEligibility({ read, title } = {}) {
     return { ok: false, reason: "catalogue-coverage-insufficient" };
   }
 
-  const r = resolveProductForPin(read.products, title);
-  if (r.ok === true) return { ok: true, reason: null };
-  return { ok: false, reason: r.reason };
+  // --- 1. IDENTITAS (primitif bersama) ---
+  const id = resolveProductIdentity(read.products, title);
+  if (id.ok !== true) return { ok: false, reason: id.reason };
+
+  // --- 2. KESEHATAN KONTROL PIN, dari field katalog yang SUNGGUHAN ---
+  //
+  // pinAvailable sudah merupakan hasil `Number(pinButtons) > 0` saat snapshot
+  // disimpan, jadi membacanya di sini adalah membaca pertanyaan yang sama
+  // lewat kontrak yang memang ada - bukan menebaknya dari pinText.
+  const p = id.product;
+  if (p.pinAvailable !== true) return { ok: false, reason: "live-pin-control-not-available" };
+  if (p.pinDisabled === true) return { ok: false, reason: "control-disabled" };
+  return { ok: true, reason: null };
 }
 
 // Apakah aturan ini BERGANTUNG pada produk? Hanya aksi pin yang bergantung.

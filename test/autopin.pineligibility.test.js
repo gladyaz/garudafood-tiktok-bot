@@ -30,8 +30,19 @@ const assert = require("node:assert/strict");
 const { decidePinEligibility, needsProductEligibility, SLEEP_REASONS } = require("../autopin/pin-eligibility");
 const { COVERAGE } = require("../autopin/catalogue");
 
+// BENTUK FIXTURE: TERNORMALISASI, bukan mentah.
+//
+// Gerbang kelayakan membaca snapshot katalog, dan snapshot itu membawa
+// pinAvailable/pinDisabled - BUKAN pinButtons/pinVisible (lihat
+// toSnapshotProduct di autopin/catalogue.js). Fixture versi pertama mengarang
+// `pinButtons: 1`, dan karena itu ia menyembunyikan bug yang baru terlihat di
+// LIVE nyata 2026-10-21: setiap produk sehat ditolak
+// live-pin-control-not-available.
+//
+// Kontrak bentuknya diikat terpisah, lewat jalur penyimpanan PRODUKSI, di
+// test/autopin.eligibilityshape.test.js.
 const P = (number, title, extra = {}) =>
-  Object.assign({ number, title, pinButtons: 1, pinVisible: true, pinDisabled: false }, extra);
+  Object.assign({ number, title, pinAvailable: true, pinDisabled: false }, extra);
 
 const TARGET = "Garuda - Kacang ATOM 16gr 1 RENCENG ISI 10 PCS oat - GRD";
 
@@ -63,11 +74,13 @@ test("TIDUR: target AMBIGU -> ambiguous-product, tidak menebak kandidat", () => 
   assert.equal(v.product, undefined, "tidak boleh membawa kandidat pilihan");
 });
 
-test("TIDUR: kontrol pin tidak tersedia / tidak terlihat / mati", () => {
+test("TIDUR: kontrol pin tidak tersedia / mati, memakai field KATALOG", () => {
+  // Hanya DUA keadaan yang bisa dilihat dari snapshot. `ambiguous-control` dan
+  // `control-not-visible` diturunkan dari pinButtons/pinVisible, yang tidak
+  // disimpan katalog - keduanya tetap dijaga di jalur pin, lihat
+  // test/autopin.eligibilityshape.test.js.
   for (const [extra, reason] of [
-    [{ pinButtons: 0 }, "live-pin-control-not-available"],
-    [{ pinButtons: 2 }, "ambiguous-control"],
-    [{ pinVisible: false }, "control-not-visible"],
+    [{ pinAvailable: false }, "live-pin-control-not-available"],
     [{ pinDisabled: true }, "control-disabled"],
   ]) {
     const v = decidePinEligibility({ read: bacaFull([P(1, TARGET, extra)]), title: TARGET });
